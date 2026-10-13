@@ -1,0 +1,15 @@
+packages:
+  - apps/*
+  - packages/*
+
+engineStrict: true
+strictPeerDependencies: true
+saveExact: true
+
+# Argon2 needs its native password hashing addon; other dependency builds stay disabled: ssh2 (via Testcontainers) falls back to pure JS
+# without the optional cpu-features addon, and protobufjs postinstall is only a version check.
+allowBuilds:
+  argon2: true
+  cpu-features: false
+  protobufjs: false
+  ssh2: false
