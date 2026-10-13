@@ -1,0 +1,47 @@
+{
+  "name": "base-authorization",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Reusable authorization core and NestJS/PostgreSQL adapters",
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": ">=24.15.0 <25",
+    "pnpm": "12.3.4"
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b tsconfig.build.json && tsc -p tsconfig.json",
+    "lint": "tsc -b tsconfig.build.json && eslint .",
+    "test:unit": "tsc -b tsconfig.build.json && node tools/test.ts unit",
+    "test:integration": "tsc -b tsconfig.build.json && node tools/test.ts integration",
+    "db:migrate": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts migrate",
+    "db:provision": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts provision",
+    "start:dev": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.api apps/api/dist/main.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:e2e": "tsc -b tsconfig.build.json && node tools/test.ts e2e",
+    "db:provision:legacy": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env tools/provision.ts",
+    "db:migrate:legacy": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env tools/migrate.ts",
+    "manifest:sync": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts sync",
+    "root:bootstrap": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts bootstrap",
+    "identity:enroll": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts enroll",
+    "identity:invite": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts invite"
+  },
+  "devDependencies": {
+    "@base-authorization/core": "workspace:*",
+    "@base-authorization/typeorm-postgres": "workspace:*",
+    "@eslint/js": "10.0.1",
+    "@testcontainers/postgresql": "12.2.0",
+    "@types/node": "24.9.2",
+    "@types/pg": "8.23.1",
+    "eslint": "10.12.0",
+    "openid-client": "6.8.8",
+    "pg": "8.23.1",
+    "prettier": "3.9.10",
+    "testcontainers": "12.2.0",
+    "typeorm": "1.1.2",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
+  }
+}
