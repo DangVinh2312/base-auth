@@ -236,7 +236,13 @@ async function readPlan(tx: ProductTransaction) {
   const [clock] = await tx.manager.query<{ now: string; until: string }[]>(
     `SELECT ${utc('statement_timestamp()')} now, ${utc("statement_timestamp()+interval '2 seconds'")} until`,
   );
-  const snapshot = await readProductAuthority(tx, userId, release.declarations, registry);
+  const snapshot = await readProductAuthority(
+    tx,
+    userId,
+    'event.read',
+    release.declarations,
+    registry,
+  );
   const decision = core.planUser(
     {
       principal: { id: userId, assurance: 1 },
