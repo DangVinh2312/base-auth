@@ -57,4 +57,12 @@ test('system grants require exact declared permission/template and unique stable
       systemGrants: [...source.systemGrants, ...source.systemGrants],
     }),
   );
+  // A system grant on a runtime-assignable role would escape the offline-only rule.
+  assert.throws(() =>
+    product.prepareProductRelease({
+      ...source,
+      roles: [...source.roles, { key: 'reviewer', label: 'Reviewer', authorityLevel: 10 }],
+      systemGrants: [{ ...source.systemGrants[0]!, role: 'reviewer' }],
+    }),
+  );
 });

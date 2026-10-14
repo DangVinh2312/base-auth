@@ -10,6 +10,7 @@ import {
   ProductManifestReconciler,
   prepareProductRelease,
   bootstrapProductRoot,
+  revokeProductRoot,
   systemGrantHash,
   createProductPasswordHasher,
   ProductIdentityService,
@@ -160,10 +161,16 @@ test('persistent bootstrap races once, mandatory boundary, no boot reseed after 
     'fixture',
   );
   assert.ok(session.secret);
-  // Offline fixture revokes assignment; marker persists and boot does not assign it again.
-  await migration.query('ALTER TABLE user_role DISABLE TRIGGER protect_product_rows');
-  await migration.query('DELETE FROM user_role WHERE user_id=$1', [target]);
-  await migration.query('ALTER TABLE user_role ENABLE TRIGGER protect_product_rows');
+  // The offline command revokes the assignment; marker persists and boot does not assign it again.
+  const revocation = {
+    operationId: randomUUID(),
+    userId: target,
+    approval: 'CHG-fixture',
+    reason: 'Fixture revocation',
+  };
+  await assert.rejects(revokeProductRoot(runner, { ...revocation, reason: ' ' }), /invalid/);
+  assert.deepEqual(await revokeProductRoot(runner, revocation), { revoked: true });
+  assert.deepEqual(await revokeProductRoot(runner, revocation), { revoked: false });
   await reconciler().reconcile(release2());
   assert.equal(
     (
@@ -177,6 +184,33 @@ test('persistent bootstrap races once, mandatory boundary, no boot reseed after 
   await assert.rejects(
     bootstrapProductRoot(runner, release2(), { ...input, operationId: randomUUID() }),
     /already initialized/,
+  );
+});
+test('bootstrap credential cannot assign Root by SQL once the marker is initialized', async () => {
+  const marker = await migration.query<{ initialized: boolean }[]>(
+    'SELECT initialized_at IS NOT NULL AS initialized FROM security_bootstrap_state',
+  );
+  assert.equal(marker[0]?.initialized, true);
+  const second = randomUUID();
+  await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'active')`, [second]);
+  // The previous test revoked Root, so only the permanent marker can refuse this insert.
+  await assert.rejects(
+    runner.run('bootstrap', (tx) =>
+      tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+        second,
+        Buffer.from('system.root'),
+      ]),
+    ),
+    (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501',
+  );
+  assert.equal(
+    (
+      await migration.query<{ n: number }[]>(
+        'SELECT count(*)::int n FROM user_role WHERE role_key=$1',
+        [Buffer.from('system.root')],
+      )
+    )[0]?.n,
+    0,
   );
 });
 test('system grant explicit content change/removal requires prior exact hash', async () => {
@@ -249,4 +283,101 @@ test('system grant explicit content change/removal requires prior exact hash', a
     0,
   );
   assert.equal((await reconciler().reconcile(fourth)).changed, false);
+});
+
+const denied = (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501';
+test('code-owned roles are runtime assignments; their grants leave only by explicit release removal', async () => {
+  const reviewGrant = {
+    permission: 'document.review',
+    role: 'reviewer',
+    template: { key: 'ownedDocuments', version: 1 },
+    parameters: {},
+  };
+  const declarations = {
+    ...productDeclarations,
+    resources: productDeclarations.resources.map((r) =>
+      r.key === 'document'
+        ? {
+            ...r,
+            actions: {
+              ...r.actions,
+              review: { policy: { key: 'readable', version: 1 }, boundary: 'optional' as const },
+            },
+          }
+        : r,
+    ),
+  };
+  const roles = [
+    { key: 'system.root', authorityLevel: 1000, label: 'Root' },
+    { key: 'reviewer', authorityLevel: 10, label: 'Reviewer' },
+  ];
+  const fifth = { ...base, declarations, sequence: '5', predecessor: '4', roles };
+  assert.equal(
+    prepareProductRelease({ ...fifth, removeDefaultGrants: [] }).hash,
+    prepareProductRelease(fifth).hash,
+    'an empty removal list keeps the published hash',
+  );
+  await reconciler().reconcile(prepareProductRelease({ ...fifth, defaultGrants: [reviewGrant] }));
+  const seeded = async () =>
+    (
+      await migration.query<{ n: number }[]>(
+        'SELECT count(*)::int n FROM policy_rule WHERE permission_key=$1',
+        [Buffer.from('document.review')],
+      )
+    )[0]?.n;
+  assert.equal(await seeded(), 1);
+  const user = randomUUID();
+  await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'active')`, [user]);
+  const admin = (sql: string, params: unknown[]) =>
+    runner.run('admin', (tx) => tx.manager.query(sql, params));
+  // Assigning and unassigning a code-owned, non-system role is an ordinary authority fact.
+  await admin('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+    user,
+    Buffer.from('reviewer'),
+  ]);
+  await admin('DELETE FROM user_role WHERE user_id=$1', [user]);
+  // Root assignment, code-role grants and seeded defaults stay out of runtime reach.
+  await assert.rejects(
+    admin('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+      user,
+      Buffer.from('system.root'),
+    ]),
+    denied,
+  );
+  await assert.rejects(
+    admin(
+      `INSERT INTO policy_rule(rule_id,permission_key,role_key,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{}','runtime')`,
+      [
+        randomUUID(),
+        Buffer.from('document.read'),
+        Buffer.from('reviewer'),
+        Buffer.from('ownedDocuments'),
+      ],
+    ),
+    denied,
+  );
+  await assert.rejects(
+    admin('DELETE FROM policy_rule WHERE permission_key=$1', [Buffer.from('document.review')]),
+    denied,
+  );
+  const sixth = prepareProductRelease({
+    ...fifth,
+    sequence: '6',
+    predecessor: '5',
+    removeDefaultGrants: [reviewGrant],
+  });
+  await reconciler().reconcile(sixth);
+  assert.equal(await seeded(), 0);
+  assert.equal((await reconciler().reconcile(sixth)).changed, false);
+  await assert.rejects(
+    reconciler().reconcile(
+      prepareProductRelease({
+        ...fifth,
+        sequence: '7',
+        predecessor: '6',
+        removeDefaultGrants: [reviewGrant],
+      }),
+    ),
+    /missing/,
+  );
 });

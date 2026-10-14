@@ -1,34 +1,36 @@
-import { productOpenApi } from './openapi.js';
+import { ProductAuthenticated, ProductAuthorize, ProductPublic } from '@base-authorization/nest';
 import type { ProductPage, ProductRow } from '@base-authorization/typeorm-postgres';
 import {
   Body,
-  Inject,
-  HttpCode,
   Controller,
   Get,
-  Post,
-  Patch,
+  HttpCode,
+  Inject,
+  Logger,
+  NotFoundException,
   Param,
+  Patch,
+  Post,
   Query,
   Req,
   Res,
   ServiceUnavailableException,
-  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ProductPublic, ProductAuthenticated, ProductAuthorize } from '@base-authorization/nest';
-import { PRODUCT_HTTP_SERVICES, type ProductHttpServices } from './http-services.js';
 import {
   type HttpRequest,
   type HttpResponse,
-  enforceCsrf,
   bodyFields,
-  newCsrf,
-  setCookie,
   cookieName,
   cookies,
+  enforceCsrf,
+  newCsrf,
   sessionSecret,
+  setCookie,
 } from './http-security.js';
+import { PRODUCT_HTTP_SERVICES, type ProductHttpServices } from './http-services.js';
+import { productOpenApi } from './openapi.js';
+const recoveryLogger = new Logger('ProductRecovery');
 @Controller()
 export class ProductController {
   constructor(@Inject(PRODUCT_HTTP_SERVICES) private readonly runtime: ProductHttpServices) {}
@@ -130,7 +132,11 @@ export class ProductController {
       dto.email!,
       req.ip || 'unknown',
     );
-    if (result) await this.runtime.recoveryDelivery(result.userId, result.token);
+    // Delivery runs detached: its latency or failure must not reveal whether the account exists.
+    if (result)
+      void Promise.resolve()
+        .then(() => this.runtime.recoveryDelivery!(result.userId, result.token))
+        .catch(() => recoveryLogger.warn('Recovery delivery failed'));
     return { status: 'accepted' };
   }
   @HttpCode(200)
@@ -185,7 +191,8 @@ export class ProductController {
     @Query('iss') issuer: string,
     @Res({ passthrough: true }) res: HttpResponse,
   ) {
-    const browser = cookies(req)[cookieName(this.runtime.config, 'browser')] || '';
+    const browser =
+      cookies(req, this.runtime.config)[cookieName(this.runtime.config, 'browser')] || '';
     const session = await this.runtime.oidc.callback(
       issuer,
       new URL(req.originalUrl, this.runtime.config.origin),
@@ -255,14 +262,14 @@ export class ProductController {
     @Res({ passthrough: true }) res: HttpResponse,
   ) {
     enforceCsrf(req, this.runtime.config);
-    const dto = bodyFields(body, ['issuer']);
+    const dto = bodyFields(body, ['issuer', 'token']);
     const browser = newCsrf();
     setCookie(res, this.runtime.config, 'browser', browser, 600);
     return {
       authorizationUrl: await this.runtime.oidc.begin(
         dto.issuer!,
         browser,
-        { purpose: 'activation' },
+        { purpose: 'activation', activationToken: dto.token! },
         req.ip || 'unknown',
       ),
     };

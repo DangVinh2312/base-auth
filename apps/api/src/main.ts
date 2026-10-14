@@ -11,6 +11,11 @@ try {
     logger: config.logLevels,
     abortOnError: false,
   });
+  // Rate limits key on request.ip; only the configured ingress hops may set it.
+  (app.getHttpAdapter().getInstance() as { set(name: string, value: number): void }).set(
+    'trust proxy',
+    config.trustProxy,
+  );
   app.use(
     (
       _request: unknown,

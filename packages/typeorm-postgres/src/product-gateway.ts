@@ -34,6 +34,9 @@ export interface Page {
   readonly total: string;
 }
 
+/** Caller input is malformed (HTTP 400); distinct from programming TypeErrors. */
+export class ProductInvalidRequest extends Error {}
+
 const limits = { defaultLimit: 20, maxLimit: 100, maxOffset: 10_000, maxFilterNodes: 32 };
 const orderedKinds: readonly FieldKind[] = ['integer', 'decimal', 'string', 'timestamp'];
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -55,12 +58,12 @@ export class ProductDataGateway {
     const limit = query.limit ?? limits.defaultLimit;
     const offset = query.offset ?? 0;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > limits.maxLimit)
-      throw new TypeError(`limit must be 1-${limits.maxLimit}`);
+      throw new ProductInvalidRequest(`limit must be 1-${limits.maxLimit}`);
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > limits.maxOffset)
-      throw new TypeError(`offset must be 0-${limits.maxOffset}`);
+      throw new ProductInvalidRequest(`offset must be 0-${limits.maxOffset}`);
     const direction = query.direction ?? 'asc';
     if (direction !== 'asc' && direction !== 'desc')
-      throw new TypeError('direction must be asc or desc');
+      throw new ProductInvalidRequest('direction must be asc or desc');
     const key = `r.${quoteIdentifier(binding.keyColumn)}`;
     const order =
       query.orderBy === undefined
@@ -105,7 +108,7 @@ export class ProductDataGateway {
     const { binding, bound } = this.#prepare(plan, undefined, tx);
     const declared = this.#registry.declarations.resources[plan.resource]!;
     if (key.kind !== declared.keyKind)
-      throw new TypeError(`${plan.resource} keys are ${declared.keyKind}`);
+      throw new ProductInvalidRequest(`${plan.resource} keys are ${declared.keyKind}`);
     const value = parseKey(key.kind, key.value).value;
     const parameters = [...bound.parameters, value];
     const rows = await tx.manager.query<Row[]>(
@@ -162,7 +165,7 @@ export class ProductDataGateway {
         return `CAST($${parameters.length} AS ${pgType})`;
       },
       () => {
-        throw new TypeError('Filters cannot traverse relations');
+        throw new ProductInvalidRequest('Filters cannot traverse relations');
       },
     );
     // Parenthesized and ANDed: an OR inside the filter cannot escape the authorization predicate.
@@ -173,8 +176,8 @@ export class ProductDataGateway {
     const fields = this.#registry.declarations.resources[resource]!.fields;
     let nodes = 0;
     const visit = (node: unknown): PlanExpr => {
-      if (++nodes > limits.maxFilterNodes) throw new TypeError('Filter is too large');
-      if (!isRecord(node)) throw new TypeError('Filter node must be an object');
+      if (++nodes > limits.maxFilterNodes) throw new ProductInvalidRequest('Filter is too large');
+      if (!isRecord(node)) throw new ProductInvalidRequest('Filter node must be an object');
       if (
         (node.op === 'and' || node.op === 'or') &&
         Array.isArray(node.args) &&
@@ -186,7 +189,8 @@ export class ProductDataGateway {
         typeof node.field === 'string' && binding.projection.includes(node.field)
           ? fields[node.field]
           : undefined;
-      if (!field) throw new TypeError(`Filter field ${String(node.field)} is not readable`);
+      if (!field)
+        throw new ProductInvalidRequest(`Filter field ${String(node.field)} is not readable`);
       if (node.op === 'isNull') return { op: 'isNull', field: node.field as string };
       if (
         node.op === 'eq' ||
@@ -194,16 +198,19 @@ export class ProductDataGateway {
       ) {
         const value = normalizeValue(field.kind, node.value);
         if (value === undefined)
-          throw new TypeError(`Filter value for ${String(node.field)} must be a ${field.kind}`);
+          throw new ProductInvalidRequest(
+            `Filter value for ${String(node.field)} must be a ${field.kind}`,
+          );
         return { op: node.op, field: node.field as string, kind: field.kind, value };
       }
-      throw new TypeError(`Unsupported filter operator ${JSON.stringify(node.op)}`);
+      throw new ProductInvalidRequest(`Unsupported filter operator ${JSON.stringify(node.op)}`);
     };
     return visit(input);
   }
 
   #projectedColumn(binding: ProductResourceBinding, field: string): string {
-    if (!binding.projection.includes(field)) throw new TypeError(`Field ${field} is not readable`);
+    if (!binding.projection.includes(field))
+      throw new ProductInvalidRequest(`Field ${field} is not readable`);
     return `r.${quoteIdentifier(binding.columns[field]!)}`;
   }
 

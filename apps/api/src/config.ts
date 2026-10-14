@@ -3,6 +3,8 @@ import type { ProductOidcProviderConfig } from '@base-authorization/typeorm-post
 export interface AppConfig {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly port: number;
+  /** Reverse-proxy hops whose X-Forwarded-For is trusted for the client address; 0 trusts none. */
+  readonly trustProxy: number;
   readonly logLevels: LogLevel[];
   readonly databases: Readonly<Record<'data' | 'identity' | 'authority' | 'sync', URL>>;
   readonly origin: URL;
@@ -17,6 +19,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     errors.push('NODE_ENV must be development, test or production');
   const port = Number(env.PORT || '3000');
   if (!Number.isInteger(port) || port < 0 || port > 65535) errors.push('PORT must be 0–65535');
+  const trustProxy = /^[0-9]$/.test(env.TRUST_PROXY || '0') ? Number(env.TRUST_PROXY || '0') : NaN;
+  if (Number.isNaN(trustProxy)) errors.push('TRUST_PROXY must be a proxy hop count 0–9');
   const levels: Record<string, LogLevel[]> = {
     error: ['fatal', 'error'],
     warn: ['fatal', 'error', 'warn'],
@@ -115,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   return {
     nodeEnv: nodeEnv as AppConfig['nodeEnv'],
     port,
+    trustProxy,
     logLevels,
     databases,
     origin,

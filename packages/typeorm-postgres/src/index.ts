@@ -89,6 +89,7 @@ export {
 } from './product-sql.js';
 export {
   ProductDataGateway,
+  ProductInvalidRequest,
   type Page as ProductPage,
   type Row as ProductRow,
 } from './product-gateway.js';
@@ -109,6 +110,7 @@ export {
 } from './product-manifest.js';
 export {
   ProductIdentityService,
+  rateLimitClient,
   ProductAuthenticationError,
   ProductAuthenticationUnavailable,
   createProductPasswordHasher,
@@ -126,4 +128,11 @@ export {
   type ProductOidcProvider,
   type ProductOidcProviderConfig,
 } from './product-oidc.js';
-export { bootstrapProductRoot, type RootBootstrapInput } from './product-manifest.js';
+export {
+  bootstrapProductRoot,
+  revokeProductRoot,
+  reissueRootActivation,
+  type RootBootstrapInput,
+  type RootReissueInput,
+  type RootRevocationInput,
+} from './product-manifest.js';

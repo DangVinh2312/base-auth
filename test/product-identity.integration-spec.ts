@@ -232,7 +232,7 @@ test('OIDC fixture validates a signed token with actual PKCE and nonce checks', 
 });
 
 test('local activation, opaque hash-only sessions, one-time reset races and stale login proof', async () => {
-  const activation = await runner.run('bootstrap', (tx) => identity.issueActivation(tx, userId));
+  const activation = await runner.run('revoke', (tx) => identity.issueActivation(tx, userId));
   await identity.activate(activation, 'a very strong password', 'local-fixture');
   await assert.rejects(
     identity.activate(activation, 'another long password', 'local-fixture'),
@@ -280,6 +280,86 @@ test('local activation, opaque hash-only sessions, one-time reset races and stal
     runner.run('read', (tx) => identity.authenticate(tx, fresh.secret)),
     ProductAuthenticationError,
   );
+});
+
+test('a limited client cannot grow the limiter or lock out other clients', async () => {
+  const rows = async () =>
+    (await pools.identity.query<{ n: number }[]>('SELECT count(*)::int n FROM rate_limit'))[0]!.n;
+  const before = await rows();
+  let rejected = 0;
+  for (let i = 0; i < 100; i++)
+    await identity
+      .rateLimit('flooding-client', `flood${i}@example.test`, 'flood-fixture')
+      .catch(() => rejected++);
+  assert.equal(rejected, 80);
+  // One client bucket plus the 20 identifier buckets it was allowed before being limited.
+  assert.equal((await rows()) - before, 21);
+  await identity.rateLimit('other-client', 'flood0@example.test', 'flood-fixture');
+});
+
+test('a full limiter evicts instead of denying every client', async () => {
+  // Synthetic buckets from many sources, still inside their 15 minute window.
+  await pools.identity.query(
+    `INSERT INTO rate_limit(bucket_key,window_start,attempts)
+     SELECT sha256(convert_to('saturation-fixture:'||g,'UTF8')),statement_timestamp()-interval '1 minute',1
+     FROM generate_series(1,10000) g ON CONFLICT DO NOTHING`,
+  );
+  await identity.rateLimit('fresh-client', 'fresh@example.test', 'saturation-fixture');
+  const [count] = await pools.identity.query<{ n: number }[]>(
+    'SELECT count(*)::int n FROM rate_limit',
+  );
+  assert.ok(count!.n <= 10000, `limiter holds ${count!.n} rows`);
+  await pools.identity.query(
+    `DELETE FROM rate_limit WHERE bucket_key IN
+     (SELECT sha256(convert_to('saturation-fixture:'||g,'UTF8')) FROM generate_series(1,10000) g)`,
+  );
+});
+
+test('eviction drops the fewest attempts first: a flood cannot reset a used or locked bucket', async () => {
+  for (let i = 0; i < 19; i++)
+    await identity.rateLimit(`near-${i}`, 'near@example.test', 'lock-fixture');
+  for (let i = 0; i < 20; i++)
+    await identity.rateLimit(`locker-${i}`, 'locked@example.test', 'lock-fixture');
+  await assert.rejects(
+    identity.rateLimit('locker-next', 'locked@example.test', 'lock-fixture'),
+    ProductAuthenticationError,
+  );
+  // Newer unlocked buckets from many sources fill the table.
+  await pools.identity.query(
+    `INSERT INTO rate_limit(bucket_key,window_start,attempts)
+     SELECT sha256(convert_to('lock-flood:'||g,'UTF8')),statement_timestamp(),1
+     FROM generate_series(1,10000) g ON CONFLICT DO NOTHING`,
+  );
+  await identity.rateLimit('fresh-locker', 'other@example.test', 'lock-fixture');
+  // The bucket at 19 attempts survived: one more is allowed, then it locks.
+  await identity.rateLimit('near-last', 'near@example.test', 'lock-fixture');
+  await assert.rejects(
+    identity.rateLimit('near-over', 'near@example.test', 'lock-fixture'),
+    ProductAuthenticationError,
+  );
+  await assert.rejects(
+    identity.rateLimit('another-locker', 'locked@example.test', 'lock-fixture'),
+    ProductAuthenticationError,
+  );
+  await pools.identity.query(
+    `DELETE FROM rate_limit WHERE bucket_key IN
+     (SELECT sha256(convert_to('lock-flood:'||g,'UTF8')) FROM generate_series(1,10000) g)`,
+  );
+});
+
+test('one IPv6 /48 shares 200 attempts across its /64 clients and all purposes', async () => {
+  let accepted = 0;
+  for (let i = 0; i < 220; i++)
+    await identity
+      .rateLimit(
+        `2001:db8:48:${Math.floor(i / 19).toString(16)}::1`,
+        `net${i}@example.test`,
+        i % 2 ? 'net-a' : 'net-b',
+      )
+      .then(() => accepted++)
+      .catch(() => undefined);
+  assert.equal(accepted, 200);
+  await identity.rateLimit('2001:db8:49::1', 'other-net@example.test', 'net-a');
 });
 
 test('database rate limiter is shared across service replicas and generic absent login fails', async () => {
@@ -608,7 +688,8 @@ test('session absolute and idle deadlines fail closed and suspended password res
   );
   const reset = await identity.requestPasswordReset('local@example.test', 'suspend-reset-fixture');
   assert.ok(reset);
-  await runner.run('revoke', (tx) =>
+  // Suspension is an authority decision; identity can only activate pending accounts.
+  await runner.run('admin', (tx) =>
     tx.manager.query(`UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`, [
       userId,
     ]),
@@ -632,25 +713,34 @@ test('session absolute and idle deadlines fail closed and suspended password res
   );
 });
 
-test('OIDC Root activation requires exact bootstrap proof and rejects changed bindings', async () => {
+test('OIDC invitation activates a pending non-Root account only with token and exact binding', async () => {
   const target = randomUUID();
-  await fixtureAdmin.query(
-    `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'root-fixture@example.test','pending')`,
-    [target],
-  );
-  await fixtureAdmin.query(
-    `UPDATE security_bootstrap_state SET target_user_id=$1,operation_id=$2,initialized_at=statement_timestamp()`,
-    [target, randomUUID()],
-  );
+  await fixtureAdmin.query(`INSERT INTO app_user(id,state) VALUES($1,'pending')`, [target]);
   await pools.identity.query(
     `INSERT INTO external_identity(issuer,subject,user_id) VALUES($1,'bootstrap-target',$2)`,
     [issuer, target],
   );
+  const token = await runner.run('revoke', (tx) => identity.issueActivation(tx, target, 'oidc'));
+  // An OIDC invitation never creates a local password, and a missing or wrong token cannot start.
+  await assert.rejects(
+    identity.activate(token, 'a very strong password', 'oidc-activation'),
+    ProductAuthenticationError,
+  );
+  for (const options of [{}, { activationToken: newSessionSecret() }])
+    await assert.rejects(
+      federation.begin(
+        issuer,
+        newSessionSecret(),
+        { purpose: 'activation', ...options },
+        'oidc-activation',
+      ),
+      ProductAuthenticationError,
+    );
   const wrongBrowser = newSessionSecret();
   const wrongStart = await federation.begin(
     issuer,
     wrongBrowser,
-    { purpose: 'activation' },
+    { purpose: 'activation', activationToken: token },
     'oidc-activation',
   );
   await assert.rejects(
@@ -673,7 +763,7 @@ test('OIDC Root activation requires exact bootstrap proof and rejects changed bi
   const start = await federation.begin(
     issuer,
     browser,
-    { purpose: 'activation' },
+    { purpose: 'activation', activationToken: token },
     'oidc-activation',
   );
   const activation = federation.callback(
@@ -699,11 +789,24 @@ test('OIDC Root activation requires exact bootstrap proof and rejects changed bi
     )[0]!.state,
     'pending',
   );
+  // An attempt begun with a proof that is then reissued cannot finish with the new proof.
+  const staleBrowser = newSessionSecret();
+  const staleStart = await federation.begin(
+    issuer,
+    staleBrowser,
+    { purpose: 'activation', activationToken: token },
+    'oidc-activation',
+  );
+  const reissued = await runner.run('revoke', (tx) => identity.issueActivation(tx, target, 'oidc'));
+  await assert.rejects(
+    federation.callback(issuer, responseFor(staleStart, { sub: 'bootstrap-target' }), staleBrowser),
+    ProductAuthenticationError,
+  );
   const finalBrowser = newSessionSecret();
   const finalStart = await federation.begin(
     issuer,
     finalBrowser,
-    { purpose: 'activation' },
+    { purpose: 'activation', activationToken: reissued },
     'oidc-activation',
   );
   const session = await federation.callback(
@@ -720,10 +823,16 @@ test('OIDC Root activation requires exact bootstrap proof and rejects changed bi
     federation.callback(issuer, responseFor(finalStart, { sub: 'bootstrap-target' }), finalBrowser),
     ProductAuthenticationError,
   );
-  await assert.rejects(
-    federation.begin(issuer, newSessionSecret(), { purpose: 'activation' }, 'oidc-activation'),
-    ProductAuthenticationError,
-  );
+  for (const used of [token, reissued])
+    await assert.rejects(
+      federation.begin(
+        issuer,
+        newSessionSecret(),
+        { purpose: 'activation', activationToken: used },
+        'oidc-activation',
+      ),
+      ProductAuthenticationError,
+    );
 });
 
 test('provider revoke racing network exchange denies new session; OIDC-only cannot reset into local', async () => {

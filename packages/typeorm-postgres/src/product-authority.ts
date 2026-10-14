@@ -17,7 +17,7 @@ import {
   fieldPgTypes,
   keyPgTypes,
 } from './product-sql.js';
-import { ProductDataGateway, type ListQuery } from './product-gateway.js';
+import { ProductDataGateway, ProductInvalidRequest, type ListQuery } from './product-gateway.js';
 import { sessionDigest, ProductAuthenticationError } from './product-identity.js';
 
 export class ProductAccessDenied extends Error {
@@ -26,6 +26,14 @@ export class ProductAccessDenied extends Error {
   }
 }
 const utf8 = (s: string) => Buffer.from(s, 'utf8');
+/** Request keys come from callers: a malformed key is invalid input, not a server fault. */
+function requestKey(kind: Parameters<typeof parseKey>[0], key: string) {
+  try {
+    return parseKey(kind, key);
+  } catch {
+    throw new ProductInvalidRequest('Malformed key');
+  }
+}
 interface SessionProjection {
   user_id: UserId;
   assurance: string;
@@ -214,7 +222,7 @@ export class ProductAuthorization {
     return this.access(secret, resource, action, 'read', (plan, tx) =>
       this.gateway.detail(
         plan,
-        parseKey(this.bindings.declarations.resources[resource]!.keyKind, key),
+        requestKey(this.bindings.declarations.resources[resource]!.keyKind, key),
         tx,
       ),
     );
@@ -248,7 +256,7 @@ export class ProductAuthorization {
         params.push(value);
         return `${quoteIdentifier(binding.columns[f]!)}=CAST($${params.length} AS ${fieldPgTypes[this.bindings.declarations.resources[resource]!.fields[f]!.kind]})`;
       });
-      params.push(parseKey(this.bindings.declarations.resources[resource]!.keyKind, key).value);
+      params.push(requestKey(this.bindings.declarations.resources[resource]!.keyKind, key).value);
       const rows = await tx.manager.query<unknown[]>(
         `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[this.bindings.declarations.resources[resource]!.keyKind]}) RETURNING 1) SELECT * FROM updated`,
         params,
@@ -264,7 +272,7 @@ export class ProductAuthorization {
       const row = await this.gateway.detail(plan, parseKey('uuid', target), tx);
       if (!row) return false;
       const rank = await tx.manager.query<{ id: string; rank: string }[]>(
-        `SELECT u.id,GREATEST(u.authority_level,COALESCE(max(r.authority_level),0))::text rank FROM app_user u LEFT JOIN user_role a ON a.user_id=u.id LEFT JOIN role_definition r USING(role_key) WHERE u.id=ANY($1::uuid[]) GROUP BY u.id ORDER BY u.id`,
+        `SELECT id,authority_level::text rank FROM account_rank WHERE id=ANY($1::uuid[])`,
         [[plan.userId, target]],
       );
       const actorRank = rank.find((r) => r.id === plan.userId)?.rank;

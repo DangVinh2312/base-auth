@@ -72,7 +72,7 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   const user = randomUUID() as IdentityId;
   const peer = randomUUID() as IdentityId;
   await ds.migration.query(
-    `INSERT INTO app_user(id,email_canonical,state,authority_level) VALUES($1,'root@example.test','pending',1000),($2,'reader@example.test','pending',10),($3,'peer@example.test','active',1000)`,
+    `INSERT INTO app_user(id,email_canonical,state,authority_level) VALUES($1,'root@example.test','pending',1000),($2,'reader@example.test','pending',10),($3,'peer@example.test','active',0)`,
     [root, user, peer],
   );
   const bootstrap = await bootstrapProductRoot(runner, productRelease, {
@@ -83,12 +83,6 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   });
   assert.ok(bootstrap.activationSecret);
   const userToken = await runner.run('revoke', (tx) => identity.issueActivation(tx, user));
-  await runner.run('bootstrap', (tx) =>
-    tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-      user,
-      Buffer.from('reviewer'),
-    ]),
-  );
   const visible = randomUUID(),
     hidden = randomUUID();
   await ds.migration.query(
@@ -99,12 +93,26 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
     `INSERT INTO document(id,object_id,owner_id,title,state) VALUES($1,$1,$3,'Visible','draft'),($2,$2,$4,'Hidden','draft')`,
     [visible, hidden, user, root],
   );
-  await runner.run('admin', (tx) =>
-    tx.manager.query(
+  // Runtime authority facts: the code-owned reviewer role (default document.read grant) and a direct update grant.
+  await runner.run('admin', async (tx) => {
+    await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+      user,
+      Buffer.from('reviewer'),
+    ]);
+    // The peer's rank comes only from a runtime role: the account boundary must see it.
+    await tx.manager.query(
+      "INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1000,'Operator')",
+      [Buffer.from('operator')],
+    );
+    await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+      peer,
+      Buffer.from('operator'),
+    ]);
+    await tx.manager.query(
       `INSERT INTO policy_rule(rule_id,permission_key,user_id,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{}','runtime')`,
       [randomUUID(), Buffer.from('document.update'), user, Buffer.from('ownedDocuments')],
-    ),
-  );
+    );
+  });
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
   const env: Record<string, string> = {
@@ -186,6 +194,11 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   assert.equal(missing.status, 404);
   assert.equal(denied.status, 404);
   assert.deepEqual(await missing.json(), await denied.json());
+  assert.equal((await request('/documents/not-a-key')).status, 400);
+  // Other apps' cookies on the same site, even malformed or repeated, do not break the session.
+  jar.set('other', 'x; other=y; junk');
+  assert.equal((await request('/documents')).status, 200);
+  jar.delete('other');
   assert.equal(
     (
       await request(`/documents/${visible}`, 'PATCH', {

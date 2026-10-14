@@ -129,7 +129,10 @@ const release = prepareProductRelease({
     })),
     capabilities: { validators: [], obligationHandlers: [] },
   },
-  roles: [{ key: 'system.root', label: 'Root fixture', authorityLevel: 1000 }],
+  roles: [
+    { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
+    { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
+  ],
   defaultGrants: [],
   seeds: [],
   removeSeeds: [],
@@ -189,7 +192,25 @@ before(async () => {
       userId,
       utf8('system.root'),
     ]);
+    // The first Root commits only together with the marker naming it.
+    await tx.manager.query(
+      'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
+      [randomUUID(), userId],
+    );
   });
+  // After that the bootstrap credential cannot add another Root or any other assignment.
+  const other = randomUUID();
+  await pools.identity.query("INSERT INTO app_user(id,state) VALUES($1,'active')", [other]);
+  for (const role of ['system.root', 'auditor'])
+    await assert.rejects(
+      runner.run('bootstrap', (tx) =>
+        tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+          other,
+          utf8(role),
+        ]),
+      ),
+      (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501',
+    );
   await runner.run('admin', async (tx) => {
     for (const permission of ['item.read', 'item.update'])
       await tx.manager.query(

@@ -126,7 +126,8 @@ export const productBindings: ProductStorageBindings = {
     },
     {
       resource: 'account',
-      table: 'app_user',
+      // Effective rank (column or assigned roles), never the raw column alone.
+      table: 'account_rank',
       objectIdColumn: 'id',
       keyColumn: 'id',
       columns: { state: 'state', authorityLevel: 'authority_level' },

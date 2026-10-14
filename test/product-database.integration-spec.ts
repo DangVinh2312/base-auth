@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { DataSource, QueryFailedError } from 'typeorm';
 import {
   productDataSourceOptions,
@@ -8,6 +8,8 @@ import {
   verifyProductPrivileges,
 } from '../packages/typeorm-postgres/dist/product-database.js';
 import { ProductInitial1792108800000 } from '../packages/typeorm-postgres/dist/migrations/product/001-initial.js';
+import { productRowsBody } from '../packages/typeorm-postgres/dist/migrations/product/004-protection-guards.js';
+import { requireRootMarkerBody } from '../packages/typeorm-postgres/dist/migrations/product/007-root-marker.js';
 import { ProductTransactionRunner } from '../packages/typeorm-postgres/dist/product-transaction.js';
 import { startPostgres, withClient, sqlState, type TestPostgres } from './setup-postgres.ts';
 
@@ -133,19 +135,199 @@ test('repeat provision and migrations are no-op, persisted runtime facts survive
     'Runtime',
   );
 });
-test('startup rejects actual privilege drift', async () => {
+test('startup rejects any privilege drift, not only sampled grants', async () => {
   await verifyProductPrivileges(pools);
-  await withClient(fixture.superuser, (c) =>
-    c.query('GRANT SELECT ON local_credential TO product_data'),
-  );
-  try {
-    await assert.rejects(verifyProductPrivileges(pools), /privilege drift/);
-  } finally {
-    await withClient(fixture.superuser, (c) =>
-      c.query('REVOKE SELECT ON local_credential FROM product_data'),
-    );
+  for (const [grant, revoke] of [
+    [
+      'GRANT SELECT ON local_credential TO product_data',
+      'REVOKE SELECT ON local_credential FROM product_data',
+    ],
+    // Secrets the old sampled probe did not cover: OIDC PKCE verifier/nonce and one-time tokens.
+    [
+      'GRANT SELECT ON oidc_login_attempt,one_time_token TO product_data',
+      'REVOKE SELECT ON oidc_login_attempt,one_time_token FROM product_data',
+    ],
+    [
+      'GRANT SELECT(password_hash) ON local_credential TO product_bootstrap',
+      'REVOKE SELECT(password_hash) ON local_credential FROM product_bootstrap',
+    ],
+    [
+      'GRANT INSERT ON user_boundary TO product_identity',
+      'REVOKE INSERT ON user_boundary FROM product_identity',
+    ],
+    ['GRANT SELECT ON rate_limit TO PUBLIC', 'REVOKE SELECT ON rate_limit FROM PUBLIC'],
+    [
+      'GRANT SELECT ON user_role TO product_data WITH GRANT OPTION',
+      'REVOKE GRANT OPTION FOR SELECT ON user_role FROM product_data',
+    ],
+    [
+      'REVOKE UPDATE(revision) ON authz_state FROM product_authority',
+      'GRANT UPDATE(revision) ON authz_state TO product_authority',
+    ],
+    // Outside schema public: a view re-exposing credentials.
+    [
+      'CREATE SCHEMA leak; CREATE VIEW leak.credentials AS SELECT * FROM public.local_credential; GRANT USAGE ON SCHEMA leak TO product_data; GRANT SELECT ON leak.credentials TO product_data',
+      'DROP SCHEMA leak CASCADE',
+    ],
+    // Ownership anywhere or database CREATE is unsafe even without a listed grant.
+    [
+      'CREATE FUNCTION public.owned() RETURNS int LANGUAGE sql AS $$SELECT 1$$; REVOKE ALL ON FUNCTION public.owned() FROM PUBLIC; ALTER FUNCTION public.owned() OWNER TO product_data',
+      'DROP FUNCTION public.owned()',
+    ],
+    [
+      'CREATE SCHEMA extra; GRANT USAGE,CREATE ON SCHEMA extra TO product_data',
+      'DROP SCHEMA extra',
+    ],
+    [
+      "DO $$BEGIN EXECUTE format('GRANT TEMP ON DATABASE %I TO PUBLIC',current_database()); END$$",
+      "DO $$BEGIN EXECUTE format('REVOKE TEMP ON DATABASE %I FROM PUBLIC',current_database()); END$$",
+    ],
+    [
+      "DO $$BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO product_data',current_database()); END$$",
+      "DO $$BEGIN EXECUTE format('REVOKE CREATE ON DATABASE %I FROM product_data',current_database()); END$$",
+    ],
+    // Replica mode skips every protection trigger.
+    [
+      'GRANT SET ON PARAMETER session_replication_role TO product_authority',
+      'REVOKE SET ON PARAMETER session_replication_role FROM product_authority',
+    ],
+  ] as const) {
+    await withClient(fixture.superuser, (c) => c.query(grant));
+    try {
+      await assert.rejects(
+        verifyProductPrivileges(pools),
+        /privilege drift|Unsafe product credential/,
+        grant,
+      );
+    } finally {
+      await withClient(fixture.superuser, (c) => c.query(revoke));
+    }
+    await verifyProductPrivileges(pools);
   }
-  await verifyProductPrivileges(pools);
+});
+test('startup rejects disabled or weakened protection triggers', async () => {
+  for (const [alter, restore] of [
+    [
+      'ALTER TABLE user_role DISABLE TRIGGER require_root_marker',
+      'ALTER TABLE user_role ENABLE TRIGGER require_root_marker',
+    ],
+    [
+      // Constraint triggers cannot be altered by DDL; simulate catalog drift as superuser.
+      "UPDATE pg_trigger SET tginitdeferred=false WHERE tgname='require_root_marker'",
+      "UPDATE pg_trigger SET tginitdeferred=true WHERE tgname='require_root_marker'",
+    ],
+    [
+      'ALTER TABLE one_time_token DISABLE TRIGGER protect_system_activation',
+      'ALTER TABLE one_time_token ENABLE TRIGGER protect_system_activation',
+    ],
+    [
+      'ALTER TABLE user_role DISABLE TRIGGER protect_system_activation',
+      'ALTER TABLE user_role ENABLE TRIGGER protect_system_activation',
+    ],
+    [
+      'ALTER TABLE one_time_token DISABLE TRIGGER protect_token_consumption',
+      'ALTER TABLE one_time_token ENABLE TRIGGER protect_token_consumption',
+    ],
+    [
+      'DROP TRIGGER protect_token_consumption ON one_time_token; CREATE TRIGGER protect_token_consumption AFTER INSERT ON one_time_token FOR EACH ROW EXECUTE FUNCTION protect_token_consumption()',
+      'DROP TRIGGER protect_token_consumption ON one_time_token; CREATE TRIGGER protect_token_consumption BEFORE UPDATE ON one_time_token FOR EACH ROW EXECUTE FUNCTION protect_token_consumption()',
+    ],
+    [
+      'ALTER FUNCTION protect_system_activation() SECURITY INVOKER',
+      'ALTER FUNCTION protect_system_activation() SECURITY DEFINER',
+    ],
+    [
+      'ALTER FUNCTION protect_system_activation() RESET search_path',
+      'ALTER FUNCTION protect_system_activation() SET search_path=pg_catalog,pg_temp',
+    ],
+    [
+      'ALTER FUNCTION protect_system_activation() OWNER TO product_fence_owner',
+      'ALTER FUNCTION protect_system_activation() OWNER TO product_session_owner',
+    ],
+    // A neutralized body behind the same name, owner and settings.
+    [
+      `CREATE OR REPLACE FUNCTION public.protect_product_rows() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$BEGIN IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW; END$fn$`,
+      `CREATE OR REPLACE FUNCTION public.protect_product_rows() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$${productRowsBody}$fn$`,
+    ],
+    [
+      `CREATE OR REPLACE FUNCTION public.require_root_marker() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$BEGIN RETURN NULL; END$fn$`,
+      `CREATE OR REPLACE FUNCTION public.require_root_marker() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$${requireRootMarkerBody}$fn$`,
+    ],
+    // Same trigger name bound to another function, event, column list or condition.
+    [
+      'DROP TRIGGER protect_account_lifecycle ON app_user; CREATE TRIGGER protect_account_lifecycle BEFORE UPDATE ON app_user FOR EACH ROW EXECUTE FUNCTION protect_product_state()',
+      'DROP TRIGGER protect_account_lifecycle ON app_user; CREATE TRIGGER protect_account_lifecycle BEFORE UPDATE ON app_user FOR EACH ROW EXECUTE FUNCTION protect_account_lifecycle()',
+    ],
+    [
+      'DROP TRIGGER protect_product_rows ON user_role; CREATE TRIGGER protect_product_rows BEFORE INSERT OR DELETE ON user_role FOR EACH ROW EXECUTE FUNCTION protect_product_rows()',
+      'DROP TRIGGER protect_product_rows ON user_role; CREATE TRIGGER protect_product_rows BEFORE INSERT OR UPDATE OR DELETE ON user_role FOR EACH ROW EXECUTE FUNCTION protect_product_rows()',
+    ],
+    [
+      'DROP TRIGGER protect_system_activation ON user_role; CREATE TRIGGER protect_system_activation BEFORE INSERT OR UPDATE OF user_id ON user_role FOR EACH ROW EXECUTE FUNCTION protect_system_activation()',
+      'DROP TRIGGER protect_system_activation ON user_role; CREATE TRIGGER protect_system_activation BEFORE INSERT OR UPDATE OF user_id,role_key ON user_role FOR EACH ROW EXECUTE FUNCTION protect_system_activation()',
+    ],
+    [
+      'DROP TRIGGER protect_product_state ON authz_state; CREATE TRIGGER protect_product_state BEFORE UPDATE ON authz_state FOR EACH ROW WHEN (false) EXECUTE FUNCTION protect_product_state()',
+      'DROP TRIGGER protect_product_state ON authz_state; CREATE TRIGGER protect_product_state BEFORE UPDATE ON authz_state FOR EACH ROW EXECUTE FUNCTION protect_product_state()',
+    ],
+    // A later trigger could rewrite a row the protection already accepted.
+    [
+      'CREATE TRIGGER zz_rewrite BEFORE INSERT ON user_role FOR EACH ROW EXECUTE FUNCTION protect_product_state()',
+      'DROP TRIGGER zz_rewrite ON user_role',
+    ],
+  ] as const) {
+    await withClient(fixture.superuser, (c) => c.query(alter));
+    try {
+      await assert.rejects(verifyProductPrivileges(pools), /protection drift/, alter);
+    } finally {
+      await withClient(fixture.superuser, (c) => c.query(restore));
+    }
+    await verifyProductPrivileges(pools);
+  }
+});
+test('identity may only activate pending accounts and authority may only suspend', async () => {
+  const id = randomUUID();
+  await pools.identity.query(
+    `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'lifecycle@example.test','pending')`,
+    [id],
+  );
+  await pools.identity.query(`UPDATE app_user SET state='active' WHERE id=$1`, [id]);
+  await pools.authority.query(`UPDATE app_user SET state='suspended' WHERE id=$1`, [id]);
+  await withClient(connections.identity, async (c) => {
+    assert.equal(
+      await sqlState(c.query(`UPDATE app_user SET state='active' WHERE id=$1`, [id])),
+      '42501',
+    );
+    assert.equal(
+      await sqlState(c.query(`UPDATE app_user SET state='pending' WHERE id=$1`, [id])),
+      '42501',
+    );
+    assert.equal(
+      await sqlState(
+        c.query(`UPDATE app_user SET email_canonical='taken@example.test' WHERE id=$1`, [id]),
+      ),
+      '42501',
+    );
+  });
+  // Authority may only suspend: no reopening, and no activation of a pending account without proof.
+  const pending = randomUUID();
+  await pools.identity.query(
+    `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'pending-lifecycle@example.test','pending')`,
+    [pending],
+  );
+  await withClient(connections.authority, async (c) => {
+    for (const [target, state] of [
+      [id, 'active'],
+      [id, 'pending'],
+      [pending, 'active'],
+    ] as const)
+      assert.equal(
+        await sqlState(c.query(`UPDATE app_user SET state=$2 WHERE id=$1`, [target, state])),
+        '42501',
+        `${target === id ? 'suspended' : 'pending'}→${state}`,
+      );
+  });
+  await pools.authority.query(`UPDATE app_user SET state='suspended' WHERE id=$1`, [pending]);
 });
 test('legacy fixture refuses automatic merge and retains original rows', async () => {
   await withClient(fixture.superuser, (c) => c.query('CREATE DATABASE legacy_fixture'));
@@ -230,7 +412,7 @@ test('forward protection migration preserves preexisting product fixture rows', 
   }
   const upgraded = await new DataSource(productDataSourceOptions(connection)).initialize();
   try {
-    assert.equal((await upgraded.runMigrations()).length, 2);
+    assert.equal((await upgraded.runMigrations()).length, 7);
     assert.equal(
       (await upgraded.query<{ label: string }[]>('SELECT label FROM role_definition'))[0]!.label,
       'Before upgrade',
@@ -425,7 +607,7 @@ test('startup rejects a missing required authority session capability', async ()
     c.query('REVOKE EXECUTE ON FUNCTION public.resolve_session(bytea) FROM product_authority'),
   );
   try {
-    await assert.rejects(verifyProductPrivileges(pools), /functions unavailable/);
+    await assert.rejects(verifyProductPrivileges(pools), /privilege drift/);
   } finally {
     await withClient(fixture.superuser, (c) =>
       c.query('GRANT EXECUTE ON FUNCTION public.resolve_session(bytea) TO product_authority'),

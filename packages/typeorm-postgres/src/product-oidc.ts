@@ -5,6 +5,7 @@ import {
   ProductAuthenticationError,
   ProductIdentityService,
   newSessionSecret,
+  rateLimitClient,
   secretDigest,
   sessionDigest,
   type ProductSession,
@@ -89,6 +90,10 @@ interface Binding {
   state: string;
   enabled: boolean;
 }
+interface Invitation extends Binding {
+  subject: string;
+  token_hash: Buffer;
+}
 
 export class ProductOidcService {
   readonly #providers: ReadonlyMap<string, ProductOidcProvider>;
@@ -127,12 +132,17 @@ export class ProductOidcService {
   async begin(
     issuer: string,
     browserSecret: string,
-    options: { purpose?: 'login' | 'link' | 'reauth' | 'activation'; sessionSecret?: string },
+    options: {
+      purpose?: 'login' | 'link' | 'reauth' | 'activation';
+      sessionSecret?: string;
+      /** Offline one-time invitation proof; required for activation. */
+      activationToken?: string;
+    },
     clientKey: string,
   ): Promise<URL> {
     const provider = this.provider(issuer);
     const browserHash = sessionDigest(browserSecret);
-    await this.identity.rateLimit(clientKey, clientKey, 'oidc');
+    await this.identity.rateLimit(clientKey, rateLimitClient(clientKey), 'oidc');
     const purpose = options.purpose ?? 'login';
     if (!['login', 'link', 'reauth', 'activation'].includes(purpose))
       throw new ProductAuthenticationError();
@@ -146,9 +156,13 @@ export class ProductOidcService {
       let linkingHash: Buffer | null = null;
       let enrollmentHash: Buffer | null = null;
       if (purpose === 'activation') {
-        const enrollment = await this.enrollment(tx, issuer);
-        userId = enrollment.user_id;
-        enrollmentHash = this.enrollmentHash(enrollment, issuer);
+        if (!options.activationToken) throw new ProductAuthenticationError();
+        const [invitation] = await this.invitation(tx, issuer, {
+          token: options.activationToken,
+        });
+        userId = invitation!.user_id;
+        // Bound to this exact token: a reissue voids an attempt begun with the old proof.
+        enrollmentHash = this.enrollmentHash(invitation!, issuer);
       }
       if (purpose === 'link' || purpose === 'reauth') {
         if (!options.sessionSecret) throw new ProductAuthenticationError();
@@ -314,19 +328,25 @@ export class ProductOidcService {
           return undefined;
         }
         if (attempt.purpose === 'activation') {
-          const enrollment = await this.enrollment(tx, issuer);
+          // The token used at begin must still be live at commit; the IdP proof must be the exact
+          // pre-bound subject.
+          const invitation = attempt.enrollment_hash
+            ? (await this.invitation(tx, issuer, { userId: attempt.linking_user_id })).find((r) =>
+                timingSafeEqual(attempt.enrollment_hash!, this.enrollmentHash(r, issuer)),
+              )
+            : undefined;
           if (
-            !attempt.enrollment_hash ||
-            enrollment.subject !== verified.sub ||
-            enrollment.user_id !== attempt.linking_user_id ||
-            !timingSafeEqual(attempt.enrollment_hash, this.enrollmentHash(enrollment, issuer))
+            !invitation ||
+            invitation.subject !== verified.sub ||
+            invitation.user_id !== attempt.linking_user_id
           )
             throw new ProductAuthenticationError();
           await tx.manager.query(
             `UPDATE app_user SET state='active',auth_epoch=auth_epoch+1 WHERE id=$1`,
-            [enrollment.user_id],
+            [invitation.user_id],
           );
-          await this.identity.audit(tx, enrollment.user_id, 'identity.oidc-activation');
+          await this.identity.invalidate(tx, invitation.user_id);
+          await this.identity.audit(tx, invitation.user_id, 'identity.oidc-activation');
         }
         const bindings = await tx.manager.query<Binding[]>(
           `SELECT e.user_id,e.binding_version,e.enabled,u.state,u.auth_epoch FROM external_identity e JOIN app_user u ON u.id=e.user_id WHERE e.issuer=$1 AND e.subject=$2`,
@@ -375,22 +395,38 @@ export class ProductOidcService {
       },
     );
   }
-  async enrollment(tx: ProductTransaction, issuer: string): Promise<Binding & { subject: string }> {
-    const rows = await tx.manager.query<(Binding & { subject: string })[]>(
-      `SELECT e.user_id,e.subject,e.binding_version,e.enabled,u.state,u.auth_epoch FROM security_bootstrap_state b JOIN app_user u ON u.id=b.target_user_id JOIN external_identity e ON e.user_id=u.id WHERE b.initialized_at>statement_timestamp()-interval '15 minutes' AND u.state='pending' AND e.issuer=$1 AND e.enabled`,
-      [issuer],
+  /** Live OIDC invitations of one pending account with exactly one enabled binding at this issuer. */
+  async invitation(
+    tx: ProductTransaction,
+    issuer: string,
+    by: { token: string } | { userId: string | null },
+  ): Promise<Invitation[]> {
+    const rows = await tx.manager.query<Invitation[]>(
+      `SELECT e.user_id,e.subject,e.binding_version,e.enabled,u.state,u.auth_epoch,t.token_hash
+       FROM one_time_token t JOIN app_user u ON u.id=t.user_id JOIN external_identity e ON e.user_id=u.id
+       WHERE ${'token' in by ? 't.token_hash=$2' : 't.user_id=$2'} AND t.purpose='oidc-activation'
+         AND t.consumed_at IS NULL AND t.expires_at>statement_timestamp()
+         AND u.state='pending' AND e.issuer=$1 AND e.enabled
+       FOR UPDATE OF u,t`,
+      [issuer, 'token' in by ? sessionDigest(by.token) : by.userId],
     );
-    if (rows.length !== 1 || !rows[0]) throw new ProductAuthenticationError();
-    return rows[0];
+    // Several live invitations of one user are fine; several bindings or users are not.
+    if (
+      !rows[0] ||
+      rows.some((r) => r.user_id !== rows[0]!.user_id || r.subject !== rows[0]!.subject)
+    )
+      throw new ProductAuthenticationError();
+    return rows;
   }
-  enrollmentHash(binding: Binding & { subject: string }, issuer: string): Buffer {
+  enrollmentHash(invitation: Invitation, issuer: string): Buffer {
     return secretDigest(
       JSON.stringify([
-        binding.user_id,
+        invitation.user_id,
         issuer,
-        binding.subject,
-        binding.binding_version,
-        binding.auth_epoch,
+        invitation.subject,
+        invitation.binding_version,
+        invitation.auth_epoch,
+        invitation.token_hash.toString('hex'),
       ]),
     );
   }

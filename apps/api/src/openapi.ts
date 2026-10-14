@@ -131,9 +131,9 @@ export const productOpenApi = {
       ['issuer'],
     ),
     '/auth/oidc/activate': post(
-      'Begin exact prebound pending Root activation',
+      'Begin activation of a pending account with its offline one-time invitation; the IdP proof must be the exact pre-bound subject',
       { authorizationUrl: 'https://idp.example.test/authorize' },
-      ['issuer'],
+      ['issuer', 'token'],
     ),
     '/auth/oidc/reauthenticate': post(
       'Fresh OIDC proof and session rotation',

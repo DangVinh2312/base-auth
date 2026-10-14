@@ -24,7 +24,18 @@
 - Không log secret, token, cookie, authorization header hay PII.
 - User admin không có capability reset/link/impersonate global identity.
 
+## Cấu trúc và composition
+
+- Khi thực hiện task refactor foundation, tổ chức theo capability (`auth`, `documents`, `administration`, `health`) và vùng composition/config/infrastructure theo plan. Đây là cấu trúc đích; không tự di chuyển toàn bộ file trong task sửa nhỏ.
+- Controller chỉ xử lý HTTP input/output và gọi operation đã định nghĩa; không đặt SQL, parsing scalar, policy algebra hoặc orchestration DB trong controller/filter. Không tạo service chỉ chuyển tiếp nếu không có trách nhiệm riêng.
+- Chọn adapter và bind DI ở composition root. Module runtime giữ pool/config nhạy cảm private; feature chỉ inject facade/token có operations cần thiết. Không cast facade về runtime để lấy capability bị ẩn.
+- Di chuyển file phải giữ route paths/status, cookie, CSRF, trusted proxy, projection, route classification và bootstrap ordering. Cập nhật imports/exports/tests/OpenAPI cùng task, không bỏ validation/error handling khi tách controller.
+- Error filter dùng mapping lỗi có chủ đích; lỗi không biết trả lỗi server an toàn, không biến thành 200/allow hoặc lộ DB detail. Giới hạn body/query/page size và validate trước khi gọi operation.
+- Config mới phải fail boot nếu thiếu/sai và ảnh hưởng bảo mật; không default credential, permissive CORS/proxy hoặc fallback provider để app khởi động được. Không bật tính năng qua env khi semantics chưa được chốt.
+- Recovery/mail/audit delivery không được coi là durable khi chỉ chạy promise nền; capability unavailable phải phản ánh đúng contract. Không thêm endpoint admin/debug để vượt provider hoặc xem secrets.
+
 ## Chạy
 
 - `pnpm run start:dev` (build rồi chạy `apps/api/dist/main.js`, đọc `.env.api` nếu có).
 - Smoke test: `pnpm run test:unit -- test/workspace.smoke-spec.ts`.
+- HTTP E2E: `pnpm run test:e2e -- apps/api/test/product.e2e-spec.ts` (cần Docker). Khi đổi routes/DI/auth, kiểm cả trường hợp unauthenticated, unauthorized, invalid input và response projection liên quan; không chỉ happy path.

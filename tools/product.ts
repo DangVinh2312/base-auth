@@ -8,6 +8,9 @@ import {
   ProductTransactionRunner,
   ProductManifestReconciler,
   bootstrapProductRoot,
+  revokeProductRoot,
+  reissueRootActivation,
+  ReleaseRejectedError,
   canonicalLoginEmail,
   ProductIdentityService,
   createProductPasswordHasher,
@@ -102,12 +105,15 @@ try {
     if (method !== 'local' && method !== 'oidc') throw new Error('--method local|oidc is required');
     const identity = await source('identity');
     const runner = new ProductTransactionRunner({ identity });
-    const email = method === 'local' ? canonicalLoginEmail(flags['--email'] || '') : null;
-    if (method === 'oidc' && (!flags['--issuer'] || !flags['--subject']))
+    // Invite without enrollment flags reissues an invitation for an existing pending account.
+    const reissue =
+      command === 'invite' && !flags['--email'] && !flags['--issuer'] && !flags['--subject'];
+    const email =
+      method === 'local' && !reissue ? canonicalLoginEmail(flags['--email'] || '') : null;
+    if (method === 'oidc' && !reissue && (!flags['--issuer'] || !flags['--subject']))
       throw new Error('OIDC enrollment requires exact --issuer and --subject');
     const artifact = command === 'invite' ? flags['--activation-file'] : undefined;
-    if (command === 'invite' && (method !== 'local' || !artifact))
-      throw new Error('Local invite requires --activation-file');
+    if (command === 'invite' && !artifact) throw new Error('Invite requires --activation-file');
     const file = artifact ? await open(artifact, 'wx', 0o600) : undefined;
     let committed = false;
     try {
@@ -116,6 +122,12 @@ try {
           ? new ProductIdentityService(runner, await createProductPasswordHasher(new Set()))
           : undefined;
       const proof = await runner.run('revoke', async (tx) => {
+        // issueActivation rechecks that the account is pending and fits the method.
+        if (reissue) {
+          const token = await service!.issueActivation(tx, userId, method);
+          await service!.audit(tx, userId, 'identity.invite');
+          return token;
+        }
         await tx.manager.query(
           `INSERT INTO app_user(id,email_canonical,state) VALUES($1,$2,'pending')`,
           [userId, email],
@@ -135,11 +147,15 @@ try {
             JSON.stringify({ method }),
           ],
         );
-        return service?.issueActivation(tx, userId);
+        return service?.issueActivation(tx, userId, method);
       });
       committed = true;
       if (proof) await file!.writeFile(proof + '\n');
-      console.log('Pending account enrolled; no password or session created.');
+      console.log(
+        reissue
+          ? 'Invitation reissued for the pending account; no password or session created.'
+          : 'Pending account enrolled; no password or session created.',
+      );
     } finally {
       await file?.close();
       if (file && !committed) await unlink(artifact!).catch(() => undefined);
@@ -152,10 +168,9 @@ try {
     const method = flags['--method'];
     if (method !== 'local' && method !== 'oidc') throw new Error('--method local|oidc required');
     const path = flags['--activation-file'];
-    if (method === 'local' && !path)
-      throw new Error('Local bootstrap requires --activation-file outside the repository/logs');
+    if (!path) throw new Error('Bootstrap requires --activation-file outside the repository/logs');
     // Reserve the delivery artifact before mutating persistent state; never overwrite an old secret.
-    const file = method === 'local' ? await open(path!, 'wx', 0o600) : undefined;
+    const file = await open(path, 'wx', 0o600);
     let committed = false;
     try {
       const bootstrap = await source('bootstrap');
@@ -170,20 +185,72 @@ try {
         ],
       });
       committed = result.initialized;
-      if (result.activationSecret) await file!.writeFile(result.activationSecret + '\n');
+      if (result.activationSecret) await file.writeFile(result.activationSecret + '\n');
       console.log(
         result.initialized
           ? 'Root enrollment committed; activation still required.'
           : 'Operation already committed; marker and assignments unchanged.',
       );
     } finally {
-      await file?.close();
-      if (file && !committed) await unlink(path!).catch(() => undefined);
+      await file.close();
+      if (!committed) await unlink(path).catch(() => undefined);
     }
-  } else throw new Error('Expected provision|migrate|sync|enroll|invite|bootstrap');
-} catch {
+  } else if (command === 'revoke-root') {
+    const userId = flags['--user'];
+    const operationId = flags['--operation'];
+    if (!isCanonicalUuid(userId) || !isCanonicalUuid(operationId))
+      throw new Error('Explicit canonical --user and --operation required');
+    if (!flags['--approval'] || !flags['--reason'])
+      throw new Error('Root revocation requires --approval and --reason');
+    const bootstrap = await source('bootstrap');
+    const result = await revokeProductRoot(new ProductTransactionRunner({ bootstrap }), {
+      operationId,
+      userId: userId as IdentityId,
+      approval: flags['--approval'],
+      reason: flags['--reason'],
+    });
+    console.log(
+      result.revoked
+        ? 'Root assignment revoked; marker unchanged.'
+        : 'No Root assignment for this user; nothing changed.',
+    );
+  } else if (command === 'reissue-root') {
+    const userId = flags['--user'];
+    const method = flags['--method'];
+    const path = flags['--activation-file'];
+    if (!isCanonicalUuid(userId)) throw new Error('Explicit canonical --user required');
+    if (method !== 'local' && method !== 'oidc') throw new Error('--method local|oidc required');
+    if (!path) throw new Error('Reissue requires --activation-file outside the repository/logs');
+    const file = await open(path, 'wx', 0o600);
+    let committed = false;
+    try {
+      const bootstrap = await source('bootstrap');
+      const result = await reissueRootActivation(new ProductTransactionRunner({ bootstrap }), {
+        userId: userId as IdentityId,
+        method,
+        ...(method === 'oidc' ? { issuer: flags['--issuer'], subject: flags['--subject'] } : {}),
+      });
+      committed = true;
+      await file.writeFile(result.activationSecret + '\n');
+      console.log('Root activation proof reissued; earlier proofs are void.');
+    } finally {
+      await file.close();
+      if (!committed) await unlink(path).catch(() => undefined);
+    }
+  } else
+    throw new Error(
+      'Expected provision|migrate|sync|enroll|invite|bootstrap|revoke-root|reissue-root',
+    );
+} catch (error) {
+  // Class, release reason enum and SQLSTATE only: messages and driver details may carry secrets or PII.
+  const detail = error as { code?: unknown; driverError?: { code?: unknown } } | null;
+  const parts = [
+    error instanceof Error ? error.constructor.name : typeof error,
+    error instanceof ReleaseRejectedError ? error.reason : undefined,
+    detail?.driverError?.code ?? detail?.code,
+  ].filter((p): p is string => typeof p === 'string');
   console.error(
-    'Product operation failed; no secrets are printed. Check inputs, privileges and migration/data mapping requirements.',
+    `Product operation failed (${parts.join(' ')}); no secrets are printed. Check inputs, privileges and migration/data mapping requirements.`,
   );
   process.exitCode = 1;
 } finally {

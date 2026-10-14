@@ -124,7 +124,11 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
     };
   }
   async onApplicationBootstrap(): Promise<void> {
-    await verifyProductPrivileges(this.pools);
+    // Exact grants, including those of the application document migration.
+    await verifyProductPrivileges(this.pools, {
+      data: ['table:document:SELECT', 'column:document.title:UPDATE'],
+      authority: ['table:document:SELECT'],
+    });
     await new ProductManifestReconciler(this.runner, {
       actor: '00000000-0000-4000-8000-000000000001' as IdentityId,
       capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
@@ -151,10 +155,6 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
     });
     // A declared resource without its application migration must prevent the listener from opening.
     await this.pools.data.query('SELECT id,title,owner_id,state,object_id FROM document LIMIT 0');
-    const [writes] = await this.pools.data.query<{ valid: boolean }[]>(
-      "SELECT has_column_privilege(current_user,'public.document','title','UPDATE') valid",
-    );
-    if (!writes?.valid) throw new Error('Application write capability missing');
     this.readiness.markReady();
   }
   async onApplicationShutdown(): Promise<void> {

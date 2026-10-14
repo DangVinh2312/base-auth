@@ -38,16 +38,23 @@ export interface SystemGrantRemoval {
 export interface ProductReleaseSource extends ReleaseSource {
   readonly systemGrants: readonly SystemGrant[];
   readonly removeSystemGrants: readonly SystemGrantRemoval[];
+  /** Exact earlier default grants to delete; default grants stay code-owned until removed here. */
+  readonly removeDefaultGrants?: readonly DefaultGrant[];
 }
 export interface ProductReleaseManifest extends VerifiedReleaseManifest {
   readonly systemGrants: readonly SystemGrant[];
   readonly removeSystemGrants: readonly SystemGrantRemoval[];
+  readonly removeDefaultGrants: readonly DefaultGrant[];
 }
 const productVerified = new WeakSet<object>();
 const ownerKey = /^[a-z][a-z0-9._-]{0,127}$/;
 const hashPattern = /^[0-9a-f]{64}$/;
 export function prepareProductRelease(source: ProductReleaseSource): ProductReleaseManifest {
-  if (source.systemGrants.length > 1000 || source.removeSystemGrants.length > 1000)
+  if (
+    source.systemGrants.length > 1000 ||
+    source.removeSystemGrants.length > 1000 ||
+    (source.removeDefaultGrants?.length ?? 0) > 1000
+  )
     reject('invalid_release', 'system grants limit');
   const base = prepareRelease(source);
   // Reuse the existing exact permission/template/parameter validator for each system grant.
@@ -59,6 +66,8 @@ export function prepareProductRelease(source: ProductReleaseSource): ProductRele
       !ownerKey.test(g.owner) ||
       !ownerKey.test(g.key) ||
       owners.has(id) ||
+      // Only system.* assignments are offline-only; other roles are runtime-assignable.
+      !g.role.startsWith('system.') ||
       (g.previousHash !== undefined && !hashPattern.test(g.previousHash))
     )
       reject('invalid_release', 'system grant owner/key/change');
@@ -84,9 +93,22 @@ export function prepareProductRelease(source: ProductReleaseSource): ProductRele
     removals.add(id);
     return Object.freeze({ ...r });
   });
+  // Same exact permission/template/parameter validation as the grants being removed.
+  const removeDefaultGrants = prepareRelease({
+    ...source,
+    defaultGrants: source.removeDefaultGrants ?? [],
+  }).defaultGrants;
+  const removedIds = new Set(removeDefaultGrants.map(grantId));
+  if (
+    removedIds.size !== removeDefaultGrants.length ||
+    base.defaultGrants.some((g) => removedIds.has(grantId(g)))
+  )
+    reject('invalid_release', 'default grant removal');
   const hash = sha256(
     canonicalJson({
       base: base.hash,
+      // Omitted when empty so releases published before removals existed keep their hash.
+      ...(removeDefaultGrants.length ? { removeDefaultGrants: [...removedIds].sort() } : {}),
       systemGrants: [...systemGrants].sort((a, b) =>
         `${a.owner}/${a.key}` < `${b.owner}/${b.key}`
           ? -1
@@ -108,6 +130,7 @@ export function prepareProductRelease(source: ProductReleaseSource): ProductRele
     hash,
     systemGrants: Object.freeze(systemGrants),
     removeSystemGrants: Object.freeze(removeSystemGrants),
+    removeDefaultGrants: Object.freeze(removeDefaultGrants),
   });
   freezeRelease(release);
   productVerified.add(release);
@@ -170,6 +193,13 @@ export class ProductManifestReconciler {
           'code-owned drift requires explicit offline repair before another release',
         );
       await apply(m, release);
+      for (const grant of release.removeDefaultGrants) {
+        const removed = await m.query<unknown[]>(
+          "WITH removed AS (DELETE FROM policy_rule WHERE rule_id=$1 AND managed_by='code' AND system_owner IS NULL RETURNING 1) SELECT * FROM removed",
+          [grantId(grant)],
+        );
+        if (!removed.length) reject('missing_reference', 'removed default grant is missing');
+      }
       await reconcileSystemGrants(m, release);
       const materialized = await protectedStateHash(m);
       await m.query(
@@ -605,7 +635,8 @@ async function apply(m: EntityManager, release: VerifiedReleaseManifest): Promis
     }
   }
 
-  // Defaults only for permissions created now: an administrator's later removal is not undone.
+  // Defaults only for permissions created now. They stay code-owned (DB-protected) and leave only
+  // through an explicit removeDefaultGrants entry of a later release.
   for (const grant of release.defaultGrants) {
     if (!created.has(grant.permission)) continue;
     await m.query(
@@ -829,30 +860,35 @@ export async function bootstrapProductRoot(
         ],
       );
     }
-    let activationSecret: string | undefined;
     if (input.method === 'local') {
       if (!target!.email_canonical)
         reject('missing_reference', 'local target needs verified delivery address enrollment');
-      // Credential material is generated here and returned only after commit to the offline delivery tool.
-      const { randomBytes } = await import('node:crypto');
-      activationSecret = randomBytes(32).toString('base64url');
-      await m.query(
-        `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at) VALUES($1,$2,'activation',statement_timestamp()+interval '15 minutes')`,
-        [createHash('sha256').update(activationSecret).digest(), input.userId],
-      );
     } else if (input.method === 'oidc') {
       if (!input.issuer || !input.subject)
         reject('invalid_release', 'OIDC enrollment requires exact issuer and subject');
-      const [binding] = await m.query<unknown[]>(
-        'SELECT 1 FROM external_identity WHERE issuer=$1 AND subject=$2 AND user_id=$3 AND enabled',
+      const [binding] = await m.query<{ only: boolean }[]>(
+        'SELECT (SELECT count(*) FROM external_identity WHERE user_id=$3 AND enabled)=1 AS only FROM external_identity WHERE issuer=$1 AND subject=$2 AND user_id=$3 AND enabled',
         [input.issuer, input.subject, input.userId],
       );
-      if (!binding) reject('missing_reference', 'pending OIDC binding does not match target');
+      if (!binding?.only) reject('missing_reference', 'pending OIDC binding does not match target');
     } else reject('invalid_release', 'unsupported Root activation method');
+    // Proof material is generated here and returned only after commit to the offline delivery tool.
+    // OIDC activation additionally needs a fresh IdP proof of the exact pre-bound subject.
+    const { randomBytes } = await import('node:crypto');
+    const activationSecret = randomBytes(32).toString('base64url');
+    // Assignment first: the DB refuses a system assignment whose target already holds a live token.
     await m.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
       input.userId,
       utf8('system.root'),
     ]);
+    await m.query(
+      `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,statement_timestamp()+interval '15 minutes')`,
+      [
+        createHash('sha256').update(activationSecret).digest(),
+        input.userId,
+        input.method === 'local' ? 'activation' : 'oidc-activation',
+      ],
+    );
     await m.query(
       'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
       [input.operationId, input.userId],
@@ -866,6 +902,121 @@ export async function bootstrapProductRoot(
         canonicalJson({ operationId: input.operationId, method: input.method }),
       ],
     );
-    return { initialized: true, ...(activationSecret ? { activationSecret } : {}) };
+    return { initialized: true, activationSecret };
+  });
+}
+
+export interface RootReissueInput {
+  readonly userId: IdentityId;
+  readonly method: 'local' | 'oidc';
+  /** OIDC only: the operator re-confirms the exact pre-bound identity. */
+  readonly issuer?: string;
+  readonly subject?: string;
+}
+/**
+ * Offline capability only: a fresh one-time proof for the still pending bootstrap Root (expired or
+ * lost artifact). Earlier proofs are consumed in the same fenced transaction, with audit.
+ */
+export async function reissueRootActivation(
+  runner: ProductTransactionRunner,
+  input: RootReissueInput,
+): Promise<{ activationSecret: string }> {
+  if (!isCanonicalUuid(input.userId) || (input.method !== 'local' && input.method !== 'oidc'))
+    reject('invalid_release', 'invalid Root reissue input');
+  return runner.run('bootstrap', async (tx) => {
+    const m = tx.manager;
+    const [target] = await m.query<
+      { state: string; delivery: boolean; root: boolean; credential: boolean; bindings: number }[]
+    >(
+      `SELECT u.state,u.email_canonical IS NOT NULL delivery,
+        EXISTS(SELECT FROM user_role r WHERE r.user_id=u.id AND r.role_key=$2) root,
+        EXISTS(SELECT FROM local_credential c WHERE c.user_id=u.id) credential,
+        (SELECT count(*) FROM external_identity e WHERE e.user_id=u.id AND e.enabled)::int bindings
+       FROM security_bootstrap_state b JOIN app_user u ON u.id=b.target_user_id
+       WHERE b.singleton AND b.initialized_at IS NOT NULL AND u.id=$1 FOR UPDATE OF b`,
+      [input.userId, utf8('system.root')],
+    );
+    if (!target || target.state !== 'pending' || !target.root || target.credential)
+      reject('collision', 'only the pending bootstrap Root can receive a new proof');
+    if (input.method === 'local' ? !target!.delivery : target!.bindings !== 1)
+      reject('missing_reference', 'Root target does not fit the activation method');
+    if (input.method === 'oidc') {
+      const [binding] = await m.query<unknown[]>(
+        'SELECT 1 FROM external_identity WHERE issuer=$1 AND subject=$2 AND user_id=$3 AND enabled',
+        [input.issuer ?? '', input.subject ?? '', input.userId],
+      );
+      if (!binding) reject('missing_reference', 'pending OIDC binding does not match target');
+    }
+    await m.query(
+      `UPDATE one_time_token SET consumed_at=statement_timestamp() WHERE user_id=$1 AND purpose IN ('activation','oidc-activation') AND consumed_at IS NULL`,
+      [input.userId],
+    );
+    const { randomBytes } = await import('node:crypto');
+    const activationSecret = randomBytes(32).toString('base64url');
+    await m.query(
+      `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,statement_timestamp()+interval '15 minutes')`,
+      [
+        createHash('sha256').update(activationSecret).digest(),
+        input.userId,
+        input.method === 'local' ? 'activation' : 'oidc-activation',
+      ],
+    );
+    await m.query(
+      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,statement_timestamp(),$4)`,
+      [
+        input.userId,
+        utf8('root.reissue'),
+        String(BigInt(tx.revision) + 1n),
+        canonicalJson({ method: input.method }),
+      ],
+    );
+    return { activationSecret };
+  });
+}
+
+export interface RootRevocationInput {
+  readonly operationId: string;
+  readonly userId: IdentityId;
+  /** Reference of the independent approval record; never a secret. */
+  readonly approval: string;
+  readonly reason: string;
+}
+/**
+ * Offline capability only: removes one Root assignment under the exclusive fence with audit.
+ * Adding a Root holder after bootstrap is not supported here; it needs the approval authority gate.
+ */
+export async function revokeProductRoot(
+  runner: ProductTransactionRunner,
+  input: RootRevocationInput,
+): Promise<{ revoked: boolean }> {
+  const printable = (value: unknown, max: number) =>
+    typeof value === 'string' &&
+    value.trim().length > 0 &&
+    value.length <= max &&
+    !/\p{Cc}/u.test(value);
+  if (
+    !isCanonicalUuid(input.operationId) ||
+    !isCanonicalUuid(input.userId) ||
+    !printable(input.approval, 200) ||
+    !printable(input.reason, 1000)
+  )
+    reject('invalid_release', 'invalid Root revocation input');
+  return runner.run('bootstrap', async (tx) => {
+    const removed = await tx.manager.query<unknown[]>(
+      'WITH removed AS (DELETE FROM user_role WHERE user_id=$1 AND role_key=$2 RETURNING 1) SELECT * FROM removed',
+      [input.userId, utf8('system.root')],
+    );
+    if (!removed.length) return { revoked: false };
+    await tx.manager.query(
+      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,reason,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,statement_timestamp(),$4,$5)`,
+      [
+        input.userId,
+        utf8('root.revoke'),
+        String(BigInt(tx.revision) + 1n),
+        input.reason,
+        canonicalJson({ operationId: input.operationId, approval: input.approval }),
+      ],
+    );
+    return { revoked: true };
   });
 }

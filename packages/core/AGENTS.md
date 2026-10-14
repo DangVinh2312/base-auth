@@ -4,7 +4,7 @@ Lõi quyết định thuần: types, typed keys, AST, validate/plan/evaluate. Đ
 
 ## Ranh giới
 
-- Không dependency nào trong `package.json`. Không import `@nestjs/*`, `typeorm`, `pg`, `express`, `node:*` hay package workspace khác — ESLint (`eslint.config.js`) và `test/workspace.smoke-spec.ts` chặn điều này.
+- Không thêm runtime dependency vào `package.json`. Trong `src/` không import thư viện ngoài, `@nestjs/*`, `typeorm`, `pg`, `express`, `node:*` hay package workspace khác. `eslint.config.js` và `test/workspace.smoke-spec.ts` có kiểm tra ranh giới; không suy ra chúng đã chặn mọi dependency có thể thêm.
 - Không decorator, `types: []`; không I/O, không clock/crypto nền tảng. Adapter truyền thời gian và băm `canonical` (SHA-256).
 - Không tên domain (submission, deal, patient…) trong `src/`. Domain chỉ là declarations/fixtures.
 - Public API duy nhất qua `src/index.ts`; consumer không import file con.
@@ -31,10 +31,19 @@ Lõi quyết định thuần: types, typed keys, AST, validate/plan/evaluate. Đ
 - `not`/`exception` chỉ lõi tạo. Emergency exception không cấp quyền cho tới Task 12; emergency deny vẫn có hiệu lực.
 - `plan`/`planUser` chỉ nhận output của `validate` (WeakSet), không nhận object tự dựng.
 
+## Khi refactor sang codec ports
+
+- Theo plan foundation ở root `AGENTS.md`; factory/ports là mục tiêu refactor, không giả định đã có trong source. Không tự đổi public API ngoài task được yêu cầu.
+- Core định nghĩa interface bằng primitive/readonly data; thư viện Day.js/Moment/decimal/UUID nằm ngoài core. Test adapter qua public API từ package adapter hoặc integration harness, không tạo dependency ngược từ core source.
+- Không dùng clock, locale/timezone toàn cục hoặc mutable default codec. Một runtime phải dùng bộ codec nhất quán cho validate/plan/evaluate; dữ liệu validated không được chuyển sang runtime có semantics khác mà bỏ validation.
+- Parse strict: từ chối invalid input thay vì tự sửa ngày, trim, làm tròn hoặc đoán timezone. Giữ integer/decimal chính xác và timestamp precision theo contract; lỗi codec không sinh allow.
+- Unknown AST node/operator/kind phải fail closed, không lọt vào nhánh default được coi là thành công. Giới hạn depth/size trước traversal tốn tài nguyên; không mở arbitrary callback từ declarations.
+
 ## Test
 
 - `packages/core/test/*.spec.ts`, fixtures chung ở `packages/core/test/fixtures.ts`. Chạy: `pnpm run test:unit -- packages/core/test` (hoặc một file).
 - Property test dùng PRNG có seed viết trong test, không có `fast-check`.
 - Thay đổi algebra cần mutation check: bỏ conjunct tương ứng phải làm test fail.
+- Codec change cần ca invalid calendar, leap year, timezone, precision, overflow và các luật normalize/compare; chạy cùng vectors cho mọi implementation. Predicate scalar phải có differential tests với PostgreSQL ở harness ngoài core.
 
 Quyết định chi tiết: `docs/decisions/0002-core-plan-and-sql-compiler.md`.

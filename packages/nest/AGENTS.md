@@ -22,7 +22,12 @@ Adapter NestJS: decorators, guard, route manifest, request context, readiness, b
 - Tenant, principal và roles lấy từ session/authority đã kiểm chứng, không từ header/body/param chưa kiểm chứng.
 - Foreign, absent và not-visible record trả cùng status/body.
 - Readiness chỉ chuyển ready sau khi boot sync xong; sync lỗi giữ not-ready, không fallback allow.
+- Decorator/guard là kiểm tra entrypoint, không bằng chứng đủ cho object-level authorization. Mọi đường gọi service, kể cả gọi trực tiếp ngoài HTTP, vẫn cần enforcement ở gateway/command.
+- DI token gắn với interface hẹp; chỉ export provider cần cho consumer. Không dùng global module hoặc service locator để đưa raw runtime/connection tới controller; TypeScript `Pick` không thay ranh giới provider thực tế.
+- Đổi module/controller phải giữ kiểm kê routes kế thừa, thứ tự authenticate/authorize, metadata thật và startup failure. Không tự hỗ trợ transport mới bằng cách bỏ qua guard khi context không phải HTTP.
+- Request context không lưu trong singleton mutable field; không để principal/session của request trước rò sang request sau. Listener/timer do adapter tạo phải có lifecycle cleanup.
 
 ## Test
 
-- `packages/nest/test/*.spec.ts` (unit, `@nestjs/core` là devDependency để tạo application context) và `test/workspace.smoke-spec.ts` (boot app thật). E2E (`apps/api/test/*.e2e-spec.ts`) thêm ở Task 9–11.
+- `packages/nest/test/*.spec.ts` (unit, `@nestjs/core` là devDependency để tạo application context), `test/workspace.smoke-spec.ts` (boot app thật) và `apps/api/test/product.e2e-spec.ts` (HTTP E2E).
+- Thay DI/module exports/route metadata phải kiểm boot bằng output `tsc` thật, routes thiếu/mơ hồ bị từ chối và lỗi sync giữ not-ready; mock guard pass không đủ.

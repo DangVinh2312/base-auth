@@ -8,7 +8,12 @@ const suites: Record<string, { patterns: string[]; flags: string[] }> = {
     flags: [],
   },
   e2e: { patterns: ['apps/api/test/**/*.e2e-spec.ts'], flags: ['--test-timeout=300000'] },
-  integration: { patterns: ['test/**/*.integration-spec.ts'], flags: ['--test-timeout=300000'] },
+  // Each integration file starts its own PostgreSQL container; unbounded parallel files starve
+  // the product runner's fixed 2s transaction deadline on small Docker hosts.
+  integration: {
+    patterns: ['test/**/*.integration-spec.ts'],
+    flags: ['--test-timeout=300000', '--test-concurrency=3'],
+  },
 };
 
 const [name = '', ...args] = process.argv.slice(2);

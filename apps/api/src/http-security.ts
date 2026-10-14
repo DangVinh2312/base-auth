@@ -10,15 +10,21 @@ export interface HttpResponse {
   append(name: string, value: string): void;
   redirect(status: number, url: string): void;
 }
-export function cookies(request: HttpRequest): Record<string, string> {
-  const raw = request.headers.cookie || '';
-  if (raw.length > 8192) throw new BadRequestException();
+/**
+ * Only this API's cookies are parsed. Cookies of other apps on the same site (malformed or
+ * repeated) are ignored so they cannot deny service; a repeated own cookie is ambiguous (e.g.
+ * tossed from a sibling host) and fails closed. Node already bounds the header size.
+ */
+export function cookies(
+  request: HttpRequest,
+  config: Pick<AppConfig, 'origin'>,
+): Record<string, string> {
+  const own = (['session', 'csrf', 'browser'] as const).map((k) => cookieName(config, k));
   const result: Record<string, string> = {};
-  for (const item of raw.split(';')) {
-    if (!item.trim()) continue;
+  for (const item of (request.headers.cookie || '').split(';')) {
     const index = item.indexOf('=');
-    if (index < 1) throw new BadRequestException();
     const key = item.slice(0, index).trim();
+    if (index < 1 || !own.includes(key)) continue;
     if (Object.hasOwn(result, key)) throw new BadRequestException();
     result[key] = item.slice(index + 1).trim();
   }
@@ -37,15 +43,15 @@ export function setCookie(
 ): void {
   res.append(
     'Set-Cookie',
-    `${cookieName(config, key)}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax${key !== 'csrf' ? '; HttpOnly' : ''}${config.origin.protocol === 'https:' ? '; Secure' : ''}`,
+    `${cookieName(config, key)}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly${config.origin.protocol === 'https:' ? '; Secure' : ''}`,
   );
 }
 export function sessionSecret(req: HttpRequest, config: Pick<AppConfig, 'origin'>): string {
-  return cookies(req)[cookieName(config, 'session')] || '';
+  return cookies(req, config)[cookieName(config, 'session')] || '';
 }
 export function enforceCsrf(req: HttpRequest, config: Pick<AppConfig, 'origin'>): void {
   const token = req.headers['x-csrf-token'];
-  const stored = cookies(req)[cookieName(config, 'csrf')];
+  const stored = cookies(req, config)[cookieName(config, 'csrf')];
   if (
     req.headers.origin !== config.origin.origin ||
     !token ||

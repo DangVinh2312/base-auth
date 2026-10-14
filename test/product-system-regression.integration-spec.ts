@@ -9,6 +9,10 @@ import {
   ProductTransactionRunner,
   ProductManifestReconciler,
   prepareProductRelease,
+  bootstrapProductRoot,
+  reissueRootActivation,
+  ProductIdentityService,
+  createProductPasswordHasher,
   type ProductDatabasePurpose,
 } from '@base-authorization/typeorm-postgres';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
@@ -51,7 +55,11 @@ after(async () => {
   await fixture?.stop();
 });
 async function withProduct(
-  run: (reconciler: ProductManifestReconciler, migration: DataSource) => Promise<void>,
+  run: (
+    reconciler: ProductManifestReconciler,
+    migration: DataSource,
+    settings: Awaited<ReturnType<typeof provisionProductDatabase>>,
+  ) => Promise<void>,
 ): Promise<void> {
   const database = `system_regression_${++fixtureNumber}`;
   await withClient(fixture.superuser, (c) => c.query(`CREATE DATABASE ${database}`));
@@ -64,7 +72,7 @@ async function withProduct(
       capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
     });
     await reconciler.reconcile(prepareProductRelease(base));
-    await run(reconciler, migration);
+    await run(reconciler, migration, settings);
   } finally {
     await migration.destroy();
     await sync.destroy();
@@ -144,5 +152,221 @@ test('deny effect cannot masquerade as an unchanged explicit system allow grant'
       )[0]!.sequence,
       '1',
     );
+  });
+});
+
+test('OIDC Root bootstrap issues a one-time OIDC proof only for one exact pre-bound subject', async () => {
+  await withProduct(async (_reconciler, migration, settings) => {
+    const bootstrap = await new DataSource(
+      productDataSourceOptions(settings.bootstrap),
+    ).initialize();
+    try {
+      const runner = new ProductTransactionRunner({ bootstrap });
+      const target = randomUUID() as IdentityId;
+      await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'pending')`, [target]);
+      await migration.query(
+        `INSERT INTO external_identity(issuer,subject,user_id) VALUES('https://idp.example.test','root-subject',$1),('https://other.example.test','second',$1)`,
+        [target],
+      );
+      const input = {
+        operationId: randomUUID(),
+        userId: target,
+        method: 'oidc' as const,
+        issuer: 'https://idp.example.test',
+        subject: 'root-subject',
+        boundaries: [
+          { permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } },
+        ],
+      };
+      // A second enabled binding would let another subject finish the activation.
+      await assert.rejects(
+        bootstrapProductRoot(runner, prepareProductRelease(base), input),
+        /OIDC binding/,
+      );
+      await migration.query(`DELETE FROM external_identity WHERE subject='second'`);
+      const result = await bootstrapProductRoot(runner, prepareProductRelease(base), input);
+      assert.match(result.activationSecret ?? '', /^[A-Za-z0-9_-]{43}$/);
+      assert.deepEqual(
+        await migration.query('SELECT purpose FROM one_time_token WHERE user_id=$1', [target]),
+        [{ purpose: 'oidc-activation' }],
+      );
+      // Reissue re-confirms the exact binding and the method.
+      const userId = target;
+      for (const wrong of [
+        { method: 'oidc' as const },
+        { method: 'oidc' as const, issuer: 'https://idp.example.test' },
+        { method: 'oidc' as const, issuer: 'https://idp.example.test', subject: 'other' },
+        { method: 'oidc' as const, issuer: 'https://other.example.test', subject: 'root-subject' },
+        { method: 'local' as const },
+      ])
+        await assert.rejects(
+          reissueRootActivation(runner, { userId, ...wrong }),
+          /OIDC binding|method/,
+        );
+      const reissued = await reissueRootActivation(runner, {
+        userId,
+        method: 'oidc',
+        issuer: 'https://idp.example.test',
+        subject: 'root-subject',
+      });
+      assert.notEqual(reissued.activationSecret, result.activationSecret);
+    } finally {
+      await bootstrap.destroy();
+    }
+  });
+});
+
+test('bootstrap credential cannot commit a Root assignment without the marker naming it', async () => {
+  await withProduct(async (_reconciler, migration, settings) => {
+    const bootstrap = await new DataSource(
+      productDataSourceOptions(settings.bootstrap),
+    ).initialize();
+    try {
+      const runner = new ProductTransactionRunner({ bootstrap });
+      const target = randomUUID();
+      await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'active')`, [target]);
+      await assert.rejects(
+        runner.run('bootstrap', (tx) =>
+          tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+            target,
+            Buffer.from('system.root'),
+          ]),
+        ),
+        (e: { code?: string; driverError?: { code?: string } }) =>
+          (e.driverError?.code ?? e.code) === '42501',
+      );
+      // Nor with a marker naming somebody else, nor by forcing the check early.
+      const other = randomUUID();
+      await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'pending')`, [other]);
+      await assert.rejects(
+        runner.run('bootstrap', async (tx) => {
+          await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+            target,
+            Buffer.from('system.root'),
+          ]);
+          await tx.manager.query(
+            'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
+            [randomUUID(), other],
+          );
+        }),
+        (e: { code?: string; driverError?: { code?: string } }) =>
+          (e.driverError?.code ?? e.code) === '42501',
+      );
+      await assert.rejects(
+        runner.run('bootstrap', async (tx) => {
+          await tx.manager.query('SET CONSTRAINTS ALL IMMEDIATE');
+          await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+            target,
+            Buffer.from('system.root'),
+          ]);
+        }),
+        (e: { code?: string; driverError?: { code?: string } }) =>
+          (e.driverError?.code ?? e.code) === '42501',
+      );
+      assert.deepEqual(await migration.query('SELECT user_id FROM user_role'), []);
+      assert.deepEqual(
+        await migration.query('SELECT initialized_at FROM security_bootstrap_state'),
+        [{ initialized_at: null }],
+      );
+    } finally {
+      await bootstrap.destroy();
+    }
+  });
+});
+
+test('only the bootstrap credential issues activation for a system account', async () => {
+  await withProduct(async (_reconciler, migration, settings) => {
+    const bootstrap = await new DataSource(
+      productDataSourceOptions(settings.bootstrap),
+    ).initialize();
+    const identityPool = await new DataSource(
+      productDataSourceOptions(settings.identity),
+    ).initialize();
+    try {
+      const runner = new ProductTransactionRunner({ bootstrap, identity: identityPool });
+      const identity = new ProductIdentityService(
+        runner,
+        await createProductPasswordHasher(new Set()),
+      );
+      const release = prepareProductRelease(base);
+      const bootstrapInput = (userId: string) => ({
+        operationId: randomUUID(),
+        userId: userId as IdentityId,
+        method: 'local' as const,
+        boundaries: [
+          { permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } },
+        ],
+      });
+      const denied = (e: { code?: string; driverError?: { code?: string } }) =>
+        (e.driverError?.code ?? e.code) === '42501';
+      // An identity invitation issued before bootstrap cannot later activate Root.
+      const invited = randomUUID();
+      await migration.query(
+        `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'invited@example.test','pending')`,
+        [invited],
+      );
+      await runner.run('revoke', (tx) => identity.issueActivation(tx, invited));
+      await assert.rejects(bootstrapProductRoot(runner, release, bootstrapInput(invited)), denied);
+      // After bootstrap, identity cannot mint another proof for the pending Root.
+      const root = randomUUID();
+      await migration.query(
+        `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'root@example.test','pending')`,
+        [root],
+      );
+      assert.ok((await bootstrapProductRoot(runner, release, bootstrapInput(root))).initialized);
+      await assert.rejects(
+        runner.run('revoke', (tx) => identity.issueActivation(tx, root)),
+        denied,
+      );
+      await assert.rejects(
+        identityPool.query(
+          `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at) VALUES(sha256('raw'::bytea),$1,'oidc-activation',statement_timestamp()+interval '1 minute')`,
+          [root],
+        ),
+        denied,
+      );
+      // Nor retarget the earlier ordinary invitation: identity may only mark tokens consumed.
+      await assert.rejects(
+        identityPool.query('UPDATE one_time_token SET user_id=$1 WHERE user_id=$2', [
+          root,
+          invited,
+        ]),
+        denied,
+      );
+      // The bootstrap credential reissues a lost or expired proof for the pending Root only.
+      await assert.rejects(
+        reissueRootActivation(runner, { userId: invited as IdentityId, method: 'local' }),
+        /pending bootstrap Root/,
+      );
+      const { activationSecret } = await reissueRootActivation(runner, {
+        userId: root as IdentityId,
+        method: 'local',
+      });
+      assert.deepEqual(
+        await migration.query(
+          'SELECT count(*)::int n FROM one_time_token WHERE user_id=$1 AND consumed_at IS NULL',
+          [root],
+        ),
+        [{ n: 1 }],
+      );
+      // The voided proof stays void: no login revives, deletes or rewrites a token.
+      for (const pool of [identityPool, bootstrap])
+        await assert.rejects(
+          pool.query('UPDATE one_time_token SET consumed_at=NULL WHERE user_id=$1', [root]),
+          denied,
+        );
+      await assert.rejects(
+        identityPool.query('DELETE FROM one_time_token WHERE user_id=$1', [root]),
+        denied,
+      );
+      await identity.activate(activationSecret, 'a long unique reissued root password', 'reissue');
+      await assert.rejects(
+        reissueRootActivation(runner, { userId: root as IdentityId, method: 'local' }),
+        /pending bootstrap Root/,
+      );
+    } finally {
+      await identityPool.destroy();
+      await bootstrap.destroy();
+    }
   });
 });

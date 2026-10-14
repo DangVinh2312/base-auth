@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { isIPv4, isIPv6 } from 'node:net';
 import * as argon2 from 'argon2';
 import type { ProductTransaction, ProductTransactionRunner } from './product-transaction.js';
 
@@ -11,6 +12,43 @@ export class ProductAuthenticationUnavailable extends Error {
   constructor() {
     super('Authentication unavailable');
   }
+}
+const RATE_LIMIT_ROWS = 10_000;
+/**
+ * Limiter client key. One IPv6 /64 is one client (a host usually owns the whole prefix); IPv6
+ * forms that carry an IPv4 client (mapped ::ffff:0:0/96, compatible ::/96, NAT64 64:ff9b::/96)
+ * are that IPv4 address. A port (`a.b.c.d:p`, `[v6]:p`) is dropped. Other values stay as given.
+ */
+export function rateLimitClient(address: string): string {
+  const bare =
+    /^\[([^\]]+)\](?::\d+)?$/.exec(address)?.[1] ??
+    /^(\d+\.\d+\.\d+\.\d+):\d+$/.exec(address)?.[1] ??
+    address;
+  const ip = bare.split('%')[0]!;
+  if (isIPv4(ip)) return ip;
+  if (!isIPv6(ip)) return address;
+  const words = (part: string): number[] =>
+    part
+      ? part.split(':').flatMap((g) => {
+          if (!g.includes('.')) return [parseInt(g, 16)];
+          const [a = 0, b = 0, c = 0, d = 0] = g.split('.').map(Number);
+          return [a * 256 + b, c * 256 + d];
+        })
+      : [];
+  const [head = '', tail] = ip.split('::');
+  const left = words(head);
+  const right = tail === undefined ? [] : words(tail);
+  const w = [...left, ...Array<number>(8 - left.length - right.length).fill(0), ...right];
+  const zero = (from: number, to: number) => w.slice(from, to).every((x) => x === 0);
+  if (
+    (zero(0, 5) && (w[5] === 0xffff || (w[5] === 0 && w[6] !== 0))) ||
+    (w[0] === 0x64 && w[1] === 0xff9b && zero(2, 6))
+  )
+    return `${w[6]! >> 8}.${w[6]! & 255}.${w[7]! >> 8}.${w[7]! & 255}`;
+  return `${w
+    .slice(0, 4)
+    .map((x) => x.toString(16))
+    .join(':')}::/64`;
 }
 export interface ProductPasswordHasher {
   hash(password: string): Promise<string>;
@@ -156,28 +194,43 @@ export class ProductIdentityService {
   async rateLimit(clientKey: string, identifier: string, purpose: string): Promise<void> {
     if (typeof clientKey !== 'string' || clientKey.length < 1 || clientKey.length > 256)
       throw new ProductAuthenticationError();
+    const client = rateLimitClient(clientKey);
+    const network = client.endsWith('::/64')
+      ? `${client.split(':').slice(0, 3).join(':')}::/48`
+      : undefined;
     const allowed = await this.transactions.run('identity', async (tx) => {
       // One bounded database limiter shared by replicas; expired rows never accumulate.
       await tx.manager.query('SELECT pg_advisory_xact_lock(1379171467)');
       await tx.manager.query(
         `DELETE FROM rate_limit WHERE window_start <= statement_timestamp()-interval '15 minutes'`,
       );
-      const counts = await tx.manager.query<
-        {
-          n: number;
-        }[]
-      >(`SELECT count(*)::int AS n FROM rate_limit`);
-      if ((counts[0]?.n ?? 10000) >= 10000) return false;
-      let accept = true;
-      for (const key of [`${purpose}:ip:${clientKey}`, `${purpose}:login:${identifier}`]) {
+      // A full table evicts instead of denying every client: the fewest attempts go first, so
+      // clearing a bucket at n attempts needs ~10k buckets at >=n attempts. A /64 is one client
+      // and a /48 shares 200 attempts across all purposes (~20 such client/identifier buckets per
+      // /48), so one routed IPv6 prefix cannot supply them.
+      // ponytail: ~500 /48s or ~1000 IPv4 hosts can still clear old buckets; add ingress quotas if that matters.
+      await tx.manager.query(
+        `DELETE FROM rate_limit WHERE bucket_key IN (SELECT bucket_key FROM rate_limit ORDER BY attempts,window_start,bucket_key
+          LIMIT GREATEST((SELECT count(*) FROM rate_limit)-$1,0))`,
+        [RATE_LIMIT_ROWS - 3],
+      );
+      // Network, then client: a limited source stops early and cannot add identifier rows.
+      const buckets: [string, number][] = [
+        ...(network ? ([[`net:${network}`, 200]] as [string, number][]) : []),
+        [`${purpose}:ip:${client}`, 20],
+        ...(identifier === client
+          ? []
+          : ([[`${purpose}:login:${identifier}`, 20]] as [string, number][])),
+      ];
+      for (const [key, limit] of buckets) {
         const rows = await tx.manager.query<{ attempts: number }[]>(
           `INSERT INTO rate_limit(bucket_key,window_start,attempts) VALUES($1,statement_timestamp(),1)
           ON CONFLICT(bucket_key) DO UPDATE SET attempts=LEAST(rate_limit.attempts+1,1001) RETURNING attempts`,
           [secretDigest(key)],
         );
-        if ((rows[0]?.attempts ?? 1001) > 20) accept = false;
+        if ((rows[0]?.attempts ?? 1001) > limit) return false;
       }
-      return accept;
+      return true;
     });
     if (!allowed) throw new ProductAuthenticationError();
   }
@@ -306,17 +359,34 @@ export class ProductIdentityService {
     });
   }
 
-  async issueActivation(tx: ProductTransaction, userId: string): Promise<string> {
-    if (tx.mode !== 'bootstrap' && tx.mode !== 'revoke') throw new ProductAuthenticationError();
+  /**
+   * One-time 15 minute invitation for a pending account. Local needs a delivery address; OIDC
+   * needs exactly one enabled pre-bound identity. Purposes differ, so an OIDC invitation can never
+   * create a local password.
+   */
+  async issueActivation(
+    tx: ProductTransaction,
+    userId: string,
+    method: 'local' | 'oidc' = 'local',
+  ): Promise<string> {
+    if (tx.mode !== 'revoke') throw new ProductAuthenticationError();
     const users = await tx.manager.query<{ id: string }[]>(
-      `SELECT id FROM app_user u WHERE id=$1 AND state='pending' AND email_canonical IS NOT NULL AND NOT EXISTS(SELECT 1 FROM local_credential WHERE user_id=u.id)`,
+      method === 'local'
+        ? `SELECT id FROM app_user u WHERE id=$1 AND state='pending' AND email_canonical IS NOT NULL AND NOT EXISTS(SELECT 1 FROM local_credential WHERE user_id=u.id)`
+        : `SELECT id FROM app_user u WHERE id=$1 AND state='pending' AND NOT EXISTS(SELECT 1 FROM local_credential WHERE user_id=u.id)
+            AND (SELECT count(*) FROM external_identity e WHERE e.user_id=u.id AND e.enabled)=1`,
       [userId],
     );
     if (!users[0]) throw new ProductAuthenticationError();
+    // A reissued invitation supersedes earlier ones (e.g. a lost proof).
+    await tx.manager.query(
+      `UPDATE one_time_token SET consumed_at=statement_timestamp() WHERE user_id=$1 AND purpose IN ('activation','oidc-activation') AND consumed_at IS NULL`,
+      [userId],
+    );
     const token = newSessionSecret();
     await tx.manager.query(
-      `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at,credential_version) VALUES($1,$2,'activation',statement_timestamp()+interval '15 minutes',NULL)`,
-      [sessionDigest(token), userId],
+      `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at,credential_version) VALUES($1,$2,$3,statement_timestamp()+interval '15 minutes',NULL)`,
+      [sessionDigest(token), userId, method === 'local' ? 'activation' : 'oidc-activation'],
     );
     return token;
   }
