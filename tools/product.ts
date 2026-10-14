@@ -84,7 +84,15 @@ try {
       !(await control.query<unknown[]>('SELECT 1 FROM pg_database WHERE datname=$1', [name])).length
     )
       await control.query(`CREATE DATABASE "${name}"`);
-    const purposes = ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'] as const;
+    const purposes = [
+      'data',
+      'identity',
+      'authority',
+      'sync',
+      'migration',
+      'bootstrap',
+      'outbox',
+    ] as const;
     const passwords = Object.fromEntries(
       purposes.map((p) => [p, requireEnv(`PRODUCT_${p.toUpperCase()}_PASSWORD`)]),
     ) as Record<ProductDatabasePurpose, string>;

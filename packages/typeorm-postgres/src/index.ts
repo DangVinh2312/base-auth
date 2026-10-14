@@ -16,6 +16,12 @@ export {
 } from './product-gateway.js';
 export { ProductAccessDenied, type ProductResourceWrite } from './product-authority.js';
 export { type ProductAuditEvent, type ProductIdentityAuditKind } from './product-audit.js';
+export {
+  type ProductAuditEnvelope,
+  type ProductAuditSink,
+  type ProductOutboxClaim,
+  type ProductOutboxOptions,
+} from './product-outbox.js';
 export { type ProductStorageBindings } from './product-sql.js';
 export {
   type ProductReleaseSource,

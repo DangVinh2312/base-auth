@@ -25,9 +25,11 @@ import {
   tokenConsumptionBody,
 } from './migrations/product/008-system-activation.js';
 import { ProductSessionExpiryIndex1792108800009 } from './migrations/product/009-session-expiry-index.js';
+import { ProductAuditOutboxDelivery1792108800010 } from './migrations/product/010-audit-outbox-delivery.js';
+import { ProductAuditOutboxPendingIndex1792108800011 } from './migrations/product/011-audit-outbox-pending-index.js';
 
 export type ProductDatabasePurpose =
-  'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap';
+  'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox';
 export const productMigrations = [
   ProductInitial1792108800000,
   ProductProtection1792108800001,
@@ -38,6 +40,8 @@ export const productMigrations = [
   ProductRootMarker1792108800007,
   ProductSystemActivation1792108800008,
   ProductSessionExpiryIndex1792108800009,
+  ProductAuditOutboxDelivery1792108800010,
+  ProductAuditOutboxPendingIndex1792108800011,
 ];
 export function productDataSourceOptions(
   connection: PostgresConnectionSettings,
@@ -69,6 +73,7 @@ export async function provisionProductDatabase(
       'sync',
       'migration',
       'bootstrap',
+      'outbox',
     ] as const) {
       const password = passwords[purpose];
       if (!password || password.includes('\0')) throw new TypeError('Missing product credential');
@@ -131,7 +136,7 @@ export async function provisionProductDatabase(
       "DO $$BEGIN EXECUTE format('REVOKE TEMP ON DATABASE %I FROM PUBLIC',current_database()); END$$",
     );
     await source.query(
-      'GRANT USAGE ON SCHEMA public TO product_data,product_identity,product_authority,product_sync,product_bootstrap',
+      'GRANT USAGE ON SCHEMA public TO product_data,product_identity,product_authority,product_sync,product_bootstrap,product_outbox',
     );
     await source.query(
       'GRANT USAGE,CREATE ON SCHEMA public TO product_migration,product_fence_owner,product_session_owner',
@@ -287,6 +292,17 @@ const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = 
     'column:one_time_token.consumed_at:UPDATE',
     'table:user_role:DELETE',
     audit,
+  ],
+  // Audit delivery worker: reads events, writes delivery state only; no fence, no other table.
+  outbox: [
+    'table:audit_outbox:SELECT',
+    ...columns('UPDATE', 'audit_outbox', [
+      'delivered_at',
+      'delivery_attempts',
+      'lease_token',
+      'lease_until',
+      'dead_at',
+    ]),
   ],
 };
 

@@ -24,7 +24,7 @@ import { core } from '../packages/core/test/fixtures.ts';
 let fixture: TestPostgres;
 let fixtureNumber = 0;
 const passwords = Object.fromEntries(
-  ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'].map((p) => [
+  ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map((p) => [
     p,
     randomBytes(24).toString('hex'),
   ]),

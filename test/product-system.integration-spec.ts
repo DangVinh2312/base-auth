@@ -69,7 +69,7 @@ const reconciler = () =>
 before(async () => {
   pg = await startPostgres();
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'].map((p) => [
+    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map((p) => [
       p,
       randomBytes(24).toString('hex'),
     ]),

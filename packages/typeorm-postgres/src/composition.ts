@@ -11,6 +11,7 @@ export { ProductDataGateway } from './product-gateway.js';
 export { ProductAuthorization, readProductAuthority } from './product-authority.js';
 export { verifyProductPrivileges } from './product-database.js';
 export { PRODUCT_OFFLINE_ACTOR } from './product-audit.js';
+export { ProductAuditOutbox } from './product-outbox.js';
 export {
   productObligations,
   type ProductObligationHandler,

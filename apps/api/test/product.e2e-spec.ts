@@ -53,7 +53,7 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
     await pg.stop();
   });
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'].map((p) => [
+    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map((p) => [
       p,
       randomBytes(24).toString('hex'),
     ]),

@@ -134,11 +134,14 @@ let authorization: ProductAuthorization;
 before(async () => {
   postgres = await startPostgres();
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration'].map((purpose) => [
+    ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration', 'outbox'].map((purpose) => [
       purpose,
       randomBytes(20).toString('hex'),
     ]),
-  ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration', string>;
+  ) as Record<
+    'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration' | 'outbox',
+    string
+  >;
   const connections = await provisionProductDatabase(postgres.superuser, passwords);
   pools = {} as typeof pools;
   for (const purpose of ['data', 'identity', 'authority', 'sync'] as const)

@@ -17,7 +17,7 @@
 - Handler nhận port token của capability (`AUTH_HTTP_PORT`, `DOCUMENTS_HTTP_PORT` đã bind `document.read/update`, `ADMINISTRATION_HTTP_PORT`, `METRICS_SNAPSHOT`, `ReadinessGate`) chỉ gồm operations và HTTP config; không DataSource/manager/DB credentials, runner hay offline command. `ProductRuntime` là provider private của `RuntimeModule`; `apps/api/test/structure.spec.ts` kiểm DI thật và inventory route/OpenAPI.
 - Local/OIDC/session/recovery/link adapters ở package PostgreSQL; route thiếu classification làm boot fail. Guard kiểm session sớm, service vẫn recheck trong fenced transaction.
 - API có document list/detail/update title và suspend user thấp cấp; OpenAPI examples/status ở `/openapi.json`, metrics labels hữu hạn ở `/health/metrics`.
-- Recovery delivery default unavailable; generic administration/file/export/jobs chưa mở. `src/legacy/audit-outbox.service.ts` là adapter lịch sử (chỉ test legacy dùng); product effects append audit trong transaction, sink chưa triển khai.
+- Recovery delivery default unavailable; generic administration/file/export/jobs chưa mở. `src/legacy/audit-outbox.service.ts` là adapter lịch sử (chỉ test legacy dùng); product effects append audit trong transaction; adapter delivery `ProductAuditOutbox` (login `outbox`, ADR0011) có ở package nhưng chưa wire vì chưa có sink thật — không tạo sink giả, không inject vào controller.
 
 ## Quy tắc khi sửa
 

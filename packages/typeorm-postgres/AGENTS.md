@@ -62,7 +62,7 @@ Mọi truy cập authority/data đi qua `withSnapshot`/`TenantTransactionRunner`
 - **Privilege/drift:** thay bảng/function/trigger/role phải cập nhật startup probe và negative tests bằng credential thật. Kiểm owner/ACL, SECURITY DEFINER với search_path an toàn, schema CREATE/TEMP và enabled mode của mọi protection trigger liên quan; không hardcode tổng số trigger để thay kiểm đúng từng bảo vệ.
 - **Query cost:** loader chỉ lấy facts/cột cần thiết, có giới hạn và thứ tự ổn định khi pagination. Đo N+1/full-catalog reads/lock wait trước tối ưu; không cache authority qua request khi chưa có protocol invalidation đã kiểm chứng.
 - **Scalar parity:** parameter type, collation và timestamp precision phải khớp codec/core; không sửa semantics bằng cast cột để query chạy được. Clock adapter của app không thay `statement_timestamp()` trong quyết định hiệu lực quyền.
-- **Audit/delivery:** ghi event theo contract trong transaction; gửi ra network sau commit qua cơ chế delivery phù hợp yêu cầu durability. Không giữ fence khi gọi sink, không báo delivered khi chỉ enqueue/start promise.
+- **Audit/delivery:** ghi event theo contract trong transaction; gửi ra network sau commit qua cơ chế delivery phù hợp yêu cầu durability. Không giữ fence khi gọi sink, không báo delivered khi chỉ enqueue/start promise. `product-outbox.ts` (ADR0011): claim lease + `SKIP LOCKED`, send ngoài transaction, ack theo `lease_token`, retry/park hữu hạn, login `outbox` chỉ SELECT outbox + UPDATE cột delivery. Câu lệnh `UPDATE … RETURNING` bọc trong `WITH … SELECT` (TypeORM trả `[rows, count]` cho UPDATE trần).
 
 ## Test
 

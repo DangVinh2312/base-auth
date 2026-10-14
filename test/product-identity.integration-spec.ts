@@ -93,11 +93,14 @@ function responseFor(url: URL, changes: Record<string, unknown> = {}, badSignatu
 before(async () => {
   postgres = await startPostgres();
   const secrets = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration'].map((p) => [
+    ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration', 'outbox'].map((p) => [
       p,
       randomBytes(20).toString('hex'),
     ]),
-  ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration', string>;
+  ) as Record<
+    'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration' | 'outbox',
+    string
+  >;
   connections = await provisionProductDatabase(postgres.superuser, secrets);
   pools = {} as typeof pools;
   for (const purpose of ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const)
@@ -374,6 +377,21 @@ test('one IPv6 /48 shares 200 attempts across its /64 clients and all purposes',
       .catch(() => undefined);
   assert.equal(accepted, 200);
   await identity.rateLimit('2001:db8:49::1', 'other-net@example.test', 'net-a');
+});
+
+test('reset tokens never reach the audit outbox in plaintext or digest form', async () => {
+  const password = 'reset audit strong password';
+  const [email] = await activeLocalUsers('resetaudit', 1, password);
+  const reset = await identity.requestPasswordReset(email!, '198.51.100.60');
+  assert.ok(reset);
+  await identity.resetPassword(reset.token, 'reset audit newer password', '198.51.100.60');
+  const digest = sessionDigest(reset.token).toString('hex');
+  const leaked = await fixtureAdmin.query<{ n: number }[]>(
+    `SELECT count(*)::int n FROM audit_outbox WHERE position($1 IN concat_ws(' ',reason,safe_metadata::text))>0
+       OR position($2 IN concat_ws(' ',reason,safe_metadata::text))>0`,
+    [reset.token, digest],
+  );
+  assert.equal(leaked[0]!.n, 0);
 });
 
 test('database rate limiter is shared across service replicas and generic absent login fails', async () => {

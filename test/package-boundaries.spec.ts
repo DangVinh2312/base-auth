@@ -59,6 +59,7 @@ describe('typeorm-postgres public entrypoints', () => {
       'prepareProductRelease',
       'ProductBindingRegistry',
       'ProductDataGateway',
+      'ProductAuditOutbox',
     ];
     for (const name of forbidden) assert.ok(!root.includes(name), `root must not export ${name}`);
   });
@@ -77,6 +78,7 @@ describe('typeorm-postgres public entrypoints', () => {
         'verifyProductPrivileges',
         'productObligations',
         'PRODUCT_OFFLINE_ACTOR',
+        'ProductAuditOutbox',
         'purgeExpiredSessions',
       ],
       absent: [
@@ -98,7 +100,12 @@ describe('typeorm-postgres public entrypoints', () => {
         'appendProductAudit',
         'PRODUCT_OFFLINE_ACTOR',
       ],
-      absent: ['ProductTransactionRunner', 'productObligations', 'TenantProvisioner'],
+      absent: [
+        'ProductTransactionRunner',
+        'productObligations',
+        'TenantProvisioner',
+        'ProductAuditOutbox',
+      ],
     },
     legacy: {
       present: [

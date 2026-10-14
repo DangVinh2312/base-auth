@@ -22,18 +22,21 @@ import { startPostgres, withClient, sqlState, type TestPostgres } from './setup-
 let fixture: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
 let fixturePasswords: Record<
-  'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap',
+  'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox',
   string
 >;
 let connections: Awaited<ReturnType<typeof provisionProductDatabase>>;
 before(async () => {
   fixture = await startPostgres();
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'].map((p) => [
+    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map((p) => [
       p,
       randomBytes(20).toString('hex'),
     ]),
-  ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap', string>;
+  ) as Record<
+    'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox',
+    string
+  >;
   fixturePasswords = passwords;
   connections = await provisionProductDatabase(fixture.superuser, passwords);
   pools = {} as typeof pools;
@@ -678,13 +681,31 @@ test('forward protection migration preserves preexisting product fixture rows', 
       "INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1,'Before upgrade')",
       [Buffer.from('retained')],
     );
+    await initial.query(
+      "INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES('10000000-0000-4000-8000-000000000089','10000000-0000-4000-8000-000000000088','\\x6c6567616379',1,statement_timestamp(),'{}')",
+    );
   } finally {
     await initial.destroy();
   }
   const upgraded = await new DataSource(productDataSourceOptions(connection)).initialize();
   try {
-    // Every forward product migration after the initial one (002..009).
-    assert.equal((await upgraded.runMigrations()).length, 8);
+    // Every forward product migration after the initial one (002..011).
+    assert.equal((await upgraded.runMigrations()).length, 10);
+    // Events written before delivery state existed become pending, never-attempted deliveries.
+    assert.deepEqual(
+      await upgraded.query(
+        'SELECT delivery_attempts,lease_token,lease_until,dead_at,delivered_at FROM audit_outbox',
+      ),
+      [
+        {
+          delivery_attempts: 0,
+          lease_token: null,
+          lease_until: null,
+          dead_at: null,
+          delivered_at: null,
+        },
+      ],
+    );
     assert.equal(
       (await upgraded.query<{ label: string }[]>('SELECT label FROM role_definition'))[0]!.label,
       'Before upgrade',

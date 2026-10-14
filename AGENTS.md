@@ -58,7 +58,7 @@
 
 ## Ports và adapters
 
-- Kế hoạch `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`: giai đoạn A (T0–T7, T11) đã triển khai trong working tree (`createAuthorizationCore`, `packages/value-adapters`, API theo capability, entrypoints, audit typed; bằng chứng ở checkbox/ledger và `docs/single-product-verification.md`); giai đoạn B (T8–T10) chưa thực hiện. Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
+- Kế hoạch `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`: giai đoạn A (T0–T7, T11) đã triển khai trong working tree (`createAuthorizationCore`, `packages/value-adapters`, API theo capability, entrypoints, audit typed; bằng chứng ở checkbox/ledger và `docs/single-product-verification.md`); giai đoạn B: T8 xong; T9 và T10 xong phần độc lập, phần phụ thuộc policy/provider bị chặn (ADR 0010–0011, ledger §6). Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
 - Core sở hữu contract thuần; adapter sở hữu thư viện/driver; composition root chọn implementation. Không import Day.js/Moment, NestJS, DB hoặc HTTP client vào core, không để kiểu riêng của thư viện rò vào port.
 - Chỉ thêm port khi có capability cần thay implementation; không biến mọi helper thành plugin. Không cài nhiều thư viện cùng chức năng chỉ để minh họa khả năng thay thế.
 - Adapter là trusted code cố định lúc boot, không được chọn từ request/admin payload. Thiếu adapter, input sai hoặc adapter lỗi phải reject/fail closed; không fallback parser lỏng hay silently allow.

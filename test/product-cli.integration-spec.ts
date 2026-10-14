@@ -15,7 +15,15 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
     await rm(dir, { recursive: true, force: true });
   });
   const c = pg.superuser;
-  const purposes = ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'] as const;
+  const purposes = [
+    'data',
+    'identity',
+    'authority',
+    'sync',
+    'migration',
+    'bootstrap',
+    'outbox',
+  ] as const;
   const env: Record<string, string> = {
     PATH: process.env.PATH || '',
     DATABASE_ADMIN_URL: `postgres://${c.username}:${c.password}@${c.host}:${c.port}/postgres`,
@@ -272,7 +280,7 @@ test('offline CLI refuses the offline actor id as a user for enroll, invite, boo
     DATABASE_ADMIN_URL: `postgres://${c.username}:${c.password}@${c.host}:${c.port}/postgres`,
     PRODUCT_DATABASE_NAME: 'cli_actor_fixture',
   };
-  for (const p of ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap']) {
+  for (const p of ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox']) {
     const password = randomBytes(24).toString('hex');
     env[`PRODUCT_${p.toUpperCase()}_PASSWORD`] = password;
     env[`PRODUCT_${p.toUpperCase()}_DATABASE_URL`] =
