@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  compareText,
-  keyEquals,
-  keyToString,
-  parseKey,
-  utf8ByteLength,
-} from '@base-authorization/core';
+import { compareText, keyEquals, keyToString, utf8ByteLength } from '@base-authorization/core';
+import { core } from './fixtures.ts';
+
+const { parseKey } = core;
 
 test('integer keys keep full precision as canonical decimal strings', () => {
   assert.deepEqual(parseKey('integer', '9007199254740993'), {

@@ -1,12 +1,10 @@
 import {
+  type AuthorizationCore,
+  type KeyKind,
   type UserId,
   type UserAuthoritySnapshot,
   type UserAuthorizedPlan,
   type ValidatedDeclarations,
-  planUser,
-  isCanonicalUuid,
-  parseKey,
-  normalizeValue,
   type Scalar,
 } from '@base-authorization/core';
 import { ProductTransactionRunner, type ProductTransaction } from './product-transaction.js';
@@ -19,17 +17,21 @@ import {
 } from './product-sql.js';
 import { ProductDataGateway, ProductInvalidRequest, type ListQuery } from './product-gateway.js';
 import { sessionDigest, ProductAuthenticationError } from './product-identity.js';
+import { appendProductAudit } from './product-audit.js';
+import {
+  fulfillProductObligations,
+  type ProductObligationRegistry,
+} from './product-obligations.js';
 
 export class ProductAccessDenied extends Error {
   constructor() {
     super('Access denied');
   }
 }
-const utf8 = (s: string) => Buffer.from(s, 'utf8');
 /** Request keys come from callers: a malformed key is invalid input, not a server fault. */
-function requestKey(kind: Parameters<typeof parseKey>[0], key: string) {
+function requestKey(core: AuthorizationCore, kind: KeyKind, key: string) {
   try {
-    return parseKey(kind, key);
+    return core.parseKey(kind, key);
   } catch {
     throw new ProductInvalidRequest('Malformed key');
   }
@@ -41,72 +43,72 @@ interface SessionProjection {
   reauthenticated_at: Date | null;
   expires_at: Date;
   state: 'active' | 'suspended' | 'pending';
+  /** DB clock of the same statement and the plan deadline (never past session expiry). */
+  now: string;
+  deadline: string;
 }
+type Lifecycle = 'active' | 'deprecated' | 'retired';
+/**
+ * Facts of one user for one permission, read in one statement after the fence. The planner only
+ * consults the catalog row, rules and boundary bindings of the requested permission, so rows of
+ * other permissions are not loaded; user and all roles are (roles feed record exceptions).
+ */
 export async function readProductAuthority(
   tx: ProductTransaction,
   userId: UserId,
+  permission: string,
   declarations: ValidatedDeclarations,
   registry: UserAuthoritySnapshot['registry'],
 ): Promise<UserAuthoritySnapshot> {
-  const m = tx.manager;
-  const [user] = await m.query<{ id: UserId; state: 'active' | 'suspended' | 'pending' }[]>(
-    'SELECT id,state FROM app_user WHERE id=$1',
-    [userId],
-  );
-  const roles = await m.query<{ role: string }[]>(
-    `SELECT convert_from(role_key,'UTF8') role FROM user_role WHERE user_id=$1 ORDER BY role_key`,
-    [userId],
-  );
-  const permissions = await m.query<
+  const [facts] = await tx.manager.query<
     {
-      key: string;
-      resource: string;
-      action: string;
-      policy_key: string;
-      policy_version: number;
-      lifecycle: 'active' | 'deprecated' | 'retired';
-      boundary: 'required' | 'optional' | null;
+      user: { id: UserId; state: 'active' | 'suspended' | 'pending' } | null;
+      roles: string[];
+      permissions: {
+        key: string;
+        resource: string;
+        action: string;
+        policy_key: string;
+        policy_version: number;
+        lifecycle: Lifecycle;
+        boundary: 'required' | 'optional' | null;
+      }[];
+      rules: {
+        id: string;
+        permission: string;
+        user_id: UserId | null;
+        role: string | null;
+        effect: 'allow' | 'deny';
+        template: string;
+        version: number;
+        parameters: Record<string, Scalar>;
+      }[];
+      boundaries: { permission: string; key: string; version: number; lifecycle: Lifecycle }[];
     }[]
   >(
-    `SELECT convert_from(permission_key,'UTF8') key,convert_from(type_key,'UTF8') resource,convert_from(action_key,'UTF8') action,convert_from(policy_key,'UTF8') policy_key,policy_version,lifecycle,boundary_requirement boundary FROM permission_catalog`,
+    `SELECT
+      (SELECT json_build_object('id',id,'state',state) FROM app_user WHERE id=$1) "user",
+      ARRAY(SELECT convert_from(role_key,'UTF8') FROM user_role WHERE user_id=$1 ORDER BY role_key) roles,
+      (SELECT COALESCE(json_agg(json_build_object('key',convert_from(permission_key,'UTF8'),'resource',convert_from(type_key,'UTF8'),'action',convert_from(action_key,'UTF8'),'policy_key',convert_from(policy_key,'UTF8'),'policy_version',policy_version,'lifecycle',lifecycle,'boundary',boundary_requirement)),'[]')
+        FROM permission_catalog WHERE permission_key=convert_to($2,'UTF8')) permissions,
+      (SELECT COALESCE(json_agg(json_build_object('id',rule_id,'permission',convert_from(permission_key,'UTF8'),'user_id',user_id,'role',convert_from(role_key,'UTF8'),'effect',effect,'template',convert_from(template_key,'UTF8'),'version',template_version,'parameters',parameters) ORDER BY rule_id),'[]')
+        FROM policy_rule WHERE permission_key=convert_to($2,'UTF8') AND (user_id=$1 OR role_key IN(SELECT role_key FROM user_role WHERE user_id=$1))) rules,
+      (SELECT COALESCE(json_agg(json_build_object('permission',convert_from(b.permission_key,'UTF8'),'key',convert_from(b.boundary_key,'UTF8'),'version',b.boundary_version,'lifecycle',d.lifecycle)),'[]')
+        FROM user_boundary b JOIN permission_boundary d USING(boundary_key,boundary_version) WHERE b.user_id=$1 AND b.permission_key=convert_to($2,'UTF8')) boundaries`,
+    [userId, permission],
   );
-  const rules = await m.query<
-    {
-      id: string;
-      permission: string;
-      user_id: UserId | null;
-      role: string | null;
-      effect: 'allow' | 'deny';
-      template: string;
-      version: number;
-      parameters: Record<string, Scalar>;
-    }[]
-  >(
-    `SELECT rule_id id,convert_from(permission_key,'UTF8') permission,user_id,convert_from(role_key,'UTF8') role,effect,convert_from(template_key,'UTF8') template,template_version version,parameters FROM policy_rule WHERE user_id=$1 OR role_key IN(SELECT role_key FROM user_role WHERE user_id=$1)`,
-    [userId],
-  );
-  const boundaries = await m.query<
-    {
-      permission: string;
-      key: string;
-      version: number;
-      lifecycle: 'active' | 'deprecated' | 'retired';
-    }[]
-  >(
-    `SELECT convert_from(b.permission_key,'UTF8') permission,convert_from(b.boundary_key,'UTF8') key,b.boundary_version version,d.lifecycle FROM user_boundary b JOIN permission_boundary d USING(boundary_key,boundary_version) WHERE b.user_id=$1`,
-    [userId],
-  );
+  if (!facts) throw new Error('Authority statement returned no row');
   return {
     revision: tx.revision,
     declarations,
     registry,
-    user,
-    roles: roles.map((r) => r.role),
-    permissions: permissions.map((p) => ({
+    user: facts.user ?? undefined,
+    roles: facts.roles,
+    permissions: facts.permissions.map((p) => ({
       ...p,
       policy: { key: p.policy_key, version: p.policy_version },
     })),
-    rules: rules.map((r) => ({
+    rules: facts.rules.map((r) => ({
       id: r.id,
       permission: r.permission,
       subject: r.user_id
@@ -116,7 +118,7 @@ export async function readProductAuthority(
       template: { key: r.template, version: r.version },
       parameters: r.parameters,
     })),
-    boundaries: boundaries.map((b) => ({
+    boundaries: facts.boundaries.map((b) => ({
       identity: userId,
       permission: b.permission,
       boundary: { key: b.key, version: b.version },
@@ -132,13 +134,24 @@ export interface ProductResourceWrite {
 /** Public service owns session, facts, plan and effects in one transaction; callers cannot supply a plan. */
 export class ProductAuthorization {
   private readonly gateway: ProductDataGateway;
+  private readonly registry: UserAuthoritySnapshot['registry'];
+  private readonly obligations: ProductObligationRegistry;
+  /** Obligation handlers are fixed at composition (frozen copy); core sees exactly their names. */
   constructor(
     private readonly transactions: ProductTransactionRunner,
     private readonly bindings: ProductBindingRegistry,
-    private readonly registry: UserAuthoritySnapshot['registry'],
+    capabilities: {
+      readonly validators: UserAuthoritySnapshot['registry']['validators'];
+      readonly obligations: ProductObligationRegistry;
+    },
     private readonly writable: readonly ProductResourceWrite[] = [],
   ) {
     this.gateway = new ProductDataGateway(bindings);
+    this.obligations = Object.freeze({ ...capabilities.obligations });
+    this.registry = {
+      validators: capabilities.validators,
+      obligationHandlers: Object.freeze(Object.keys(this.obligations)),
+    };
   }
   async checkSession(secret: string): Promise<void> {
     await this.transactions.run('read', async (tx) => {
@@ -147,10 +160,11 @@ export class ProductAuthorization {
   }
   private async session(tx: ProductTransaction, secret: string): Promise<SessionProjection> {
     const [session] = await tx.manager.query<SessionProjection[]>(
-      'SELECT * FROM public.resolve_session($1)',
+      `SELECT s.*,to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') now,to_char(LEAST(s.expires_at,statement_timestamp()+interval '2 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') deadline FROM public.resolve_session($1) s`,
       [sessionDigest(secret)],
     );
-    if (!session || !isCanonicalUuid(session.user_id)) throw new ProductAuthenticationError();
+    if (!session || !this.bindings.core.isCanonicalUuid(session.user_id))
+      throw new ProductAuthenticationError();
     return session;
   }
   private async access<T>(
@@ -163,55 +177,34 @@ export class ProductAuthorization {
     return this.transactions.run(mode, async (tx) => {
       // Authority purpose deliberately has no session/credential read capability: use the narrow projection function.
       const session = await this.session(tx, secret);
-      const [clock] = await tx.manager.query<{ now: string; deadline: string }[]>(
-        `SELECT to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') now,to_char(LEAST($1::timestamptz,statement_timestamp()+interval '2 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') deadline`,
-        [session.expires_at],
-      );
       const snapshot = await readProductAuthority(
         tx,
         session.user_id,
+        `${resource}.${action}`,
         this.bindings.declarations,
         this.registry,
       );
-      const decision = planUser(
+      const decision = this.bindings.core.planUser(
         {
           principal: { id: session.user_id, assurance: session.assurance === 'mfa' ? 2 : 1 },
           resource,
           action,
-          now: clock!.now,
-          validUntil: clock!.deadline,
+          now: session.now,
+          validUntil: session.deadline,
           context: {
             freshAuthentication:
               session.reauthenticated_at !== null &&
-              session.reauthenticated_at.getTime() <= Date.parse(clock!.now) &&
-              Date.parse(clock!.now) - session.reauthenticated_at.getTime() < 300000,
+              session.reauthenticated_at.getTime() <= Date.parse(session.now) &&
+              Date.parse(session.now) - session.reauthenticated_at.getTime() < 300000,
           },
         },
         snapshot,
       );
       if (decision.effect !== 'allow') throw new ProductAccessDenied();
       const result = await work(decision.plan, tx);
-      for (const obligation of decision.obligations) {
-        if (obligation.handler !== 'audit@1') throw new ProductAccessDenied();
-        await this.audit(tx, decision.plan, `access.${action}`);
-      }
+      await fulfillProductObligations(tx, decision.plan, this.obligations);
       return result;
     });
-  }
-  private async audit(
-    tx: ProductTransaction,
-    plan: UserAuthorizedPlan,
-    kind: string,
-  ): Promise<void> {
-    await tx.manager.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,permission_key,policy_revision,occurred_at,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,$4,statement_timestamp(),'{}')`,
-      [
-        plan.userId,
-        utf8(kind),
-        utf8(plan.permission),
-        tx.mode === 'admin' ? String(BigInt(tx.revision) + 1n) : tx.revision,
-      ],
-    );
   }
   list(secret: string, resource: string, action: string, query: ListQuery = {}) {
     return this.access(secret, resource, action, 'read', (plan, tx) =>
@@ -222,7 +215,11 @@ export class ProductAuthorization {
     return this.access(secret, resource, action, 'read', (plan, tx) =>
       this.gateway.detail(
         plan,
-        requestKey(this.bindings.declarations.resources[resource]!.keyKind, key),
+        requestKey(
+          this.bindings.core,
+          this.bindings.declarations.resources[resource]!.keyKind,
+          key,
+        ),
         tx,
       ),
     );
@@ -248,7 +245,7 @@ export class ProductAuthorization {
       const bound = compilePlan(plan, this.bindings);
       const params = [...bound.parameters];
       const assignments = fields.map((f) => {
-        const value = normalizeValue(
+        const value = this.bindings.core.normalizeValue(
           this.bindings.declarations.resources[resource]!.fields[f]!.kind,
           changes[f],
         );
@@ -256,20 +253,28 @@ export class ProductAuthorization {
         params.push(value);
         return `${quoteIdentifier(binding.columns[f]!)}=CAST($${params.length} AS ${fieldPgTypes[this.bindings.declarations.resources[resource]!.fields[f]!.kind]})`;
       });
-      params.push(requestKey(this.bindings.declarations.resources[resource]!.keyKind, key).value);
-      const rows = await tx.manager.query<unknown[]>(
-        `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[this.bindings.declarations.resources[resource]!.keyKind]}) RETURNING 1) SELECT * FROM updated`,
+      const keyKind = this.bindings.declarations.resources[resource]!.keyKind;
+      const typedKey = requestKey(this.bindings.core, keyKind, key);
+      params.push(typedKey.value);
+      const rows = await tx.manager.query<{ object_id: string }[]>(
+        `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[keyKind]}) RETURNING r.${quoteIdentifier(binding.objectIdColumn)} AS object_id) SELECT * FROM updated`,
         params,
       );
-      if (rows.length) await this.audit(tx, plan, 'data.update');
+      if (rows.length)
+        await appendProductAudit(tx, {
+          kind: 'data.update',
+          actor: plan.userId,
+          permission: plan.permission,
+          target: { resource, keyKind, key: typedKey.value, objectId: rows[0]!.object_id },
+        });
       return rows.length === 1;
     });
   }
   async suspendUser(secret: string, target: string): Promise<boolean> {
-    if (!isCanonicalUuid(target)) throw new ProductAccessDenied();
+    if (!this.bindings.core.isCanonicalUuid(target)) throw new ProductAccessDenied();
     return this.access(secret, 'account', 'suspend', 'admin', async (plan, tx) => {
       if (plan.userId === target) throw new ProductAccessDenied();
-      const row = await this.gateway.detail(plan, parseKey('uuid', target), tx);
+      const row = await this.gateway.detail(plan, this.bindings.core.parseKey('uuid', target), tx);
       if (!row) return false;
       const rank = await tx.manager.query<{ id: string; rank: string }[]>(
         `SELECT id,authority_level::text rank FROM account_rank WHERE id=ANY($1::uuid[])`,
@@ -283,7 +288,12 @@ export class ProductAuthorization {
         `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
         [target],
       );
-      await this.audit(tx, plan, 'account.suspend');
+      await appendProductAudit(tx, {
+        kind: 'account.suspend',
+        actor: plan.userId,
+        permission: plan.permission,
+        target: { userId: target },
+      });
       return true;
     });
   }

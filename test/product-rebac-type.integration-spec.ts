@@ -2,27 +2,32 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { DataSource } from 'typeorm';
-import { planUser } from '@base-authorization/core';
 import {
   ProductBindingRegistry,
   ProductDataGateway,
   ProductTransactionRunner,
+} from '@base-authorization/typeorm-postgres/composition';
+import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres';
-import { alice, input, rule, snapshot, validated } from '../packages/core/test/fixtures.ts';
+} from '@base-authorization/typeorm-postgres/operations';
+import { alice, input, rule, snapshot, validated, core } from '../packages/core/test/fixtures.ts';
 import { startPostgres, withClient } from './setup-postgres.ts';
+
+const { planUser } = core;
 
 test('identity edges cannot grant through a business row pointing at another registered resource type', async () => {
   const postgres = await startPostgres();
   const pools = {} as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
   try {
     const passwords = Object.fromEntries(
-      ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration'].map((purpose) => [
-        purpose,
-        randomBytes(20).toString('hex'),
-      ]),
-    ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration', string>;
+      ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration', 'outbox'].map(
+        (purpose) => [purpose, randomBytes(20).toString('hex')],
+      ),
+    ) as Record<
+      'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration' | 'outbox',
+      string
+    >;
     const connections = await provisionProductDatabase(postgres.superuser, passwords);
     for (const purpose of ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const)
       pools[purpose] = await new DataSource(
@@ -69,7 +74,7 @@ test('identity edges cannot grant through a business row pointing at another reg
       await client.query('GRANT SELECT ON submission TO product_data');
     });
     const declarations = validated();
-    const bindings = new ProductBindingRegistry(declarations, {
+    const bindings = new ProductBindingRegistry(core, declarations, {
       resources: [
         {
           resource: 'submission',

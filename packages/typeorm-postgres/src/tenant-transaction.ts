@@ -1,6 +1,6 @@
 import {
+  type AuthorizationCore,
   type AuthoritySnapshot,
-  isCanonicalUuid,
   type TenantId,
   type TrustedPrincipal,
   type ValidatedDeclarations,
@@ -12,7 +12,11 @@ import {
   QueryRunnerProviderAlreadyReleasedError,
 } from 'typeorm';
 import { readAuthorityFacts } from './authority-store.js';
-import type { ConnectionPurpose, TenantDataSourceRegistry } from './datasource-registry.js';
+import {
+  type ConnectionPurpose,
+  parseRoutableTenant,
+  type TenantDataSourceRegistry,
+} from './datasource-registry.js';
 
 /**
  * Classified before the transaction starts; a transaction never upgrades shared → exclusive.
@@ -105,7 +109,7 @@ export class TenantTransactionRunner {
     mode: TransactionMode,
     work: (tx: TenantTransaction) => Promise<T>,
   ): Promise<T> {
-    if (!isCanonicalUuid(tenant)) throw new TypeError('Tenant must be a canonical UUID');
+    parseRoutableTenant(tenant);
     const purpose = purposeOf[mode];
     if (!purpose) throw new TypeError('Unknown transaction mode');
     for (let attempt = 0; ; attempt++) {
@@ -194,15 +198,21 @@ export interface AuthorityRegistry {
  * boundary bindings included), the plan and the data access, all at one revision.
  */
 export class PostgresAuthority {
+  readonly #core: AuthorizationCore;
   readonly #runner: TenantTransactionRunner;
   readonly #declarations: ValidatedDeclarations;
   readonly #registry: AuthorityRegistry;
 
+  /** `declarations` must come from `core`, which also checks the identities it reads. */
   constructor(
+    core: AuthorizationCore,
     runner: TenantTransactionRunner,
     declarations: ValidatedDeclarations,
     registry: AuthorityRegistry,
   ) {
+    if (!core.isValidated(declarations))
+      throw new TypeError('Declarations must come from validate() of this authorization core');
+    this.#core = core;
     this.#runner = runner;
     this.#declarations = declarations;
     this.#registry = registry;
@@ -215,7 +225,7 @@ export class PostgresAuthority {
     run: (snapshot: AuthoritySnapshot, tx: TenantTransaction) => Promise<T>,
   ): Promise<T> {
     return this.#runner.run(tenant, mode, async (tx) => {
-      const facts = await readAuthorityFacts(tx, principal.id);
+      const facts = await readAuthorityFacts(tx, principal.id, this.#core);
       return run({ ...facts, declarations: this.#declarations, registry: this.#registry }, tx);
     });
   }

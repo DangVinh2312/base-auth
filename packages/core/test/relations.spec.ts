@@ -5,15 +5,13 @@ import {
   type CompleteFacts,
   type EdgeFact,
   type Expr,
-  evaluate,
   type FactObject,
-  plan,
   type RelationDeclaration,
-  validate,
 } from '@base-authorization/core';
 import {
   alice,
   bob,
+  core,
   declarations,
   facts,
   input,
@@ -24,6 +22,8 @@ import {
   tenantB,
   validated,
 } from './fixtures.ts';
+
+const { evaluate, plan, validate } = core;
 
 const s1 = submission('54000000-0000-4000-8000-000000000001', '1');
 const siteA: FactObject = {

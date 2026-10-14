@@ -91,7 +91,7 @@ export const productOpenApi = {
     '/auth/session': {
       get: operation(
         'Current verified session projection',
-        { userId: '00000000-0000-4000-8000-000000000001', method: 'local', assurance: 'password' },
+        { userId: '5f0c2a9e-1b7d-4c3a-9e84-3d6b2f1a7c10', method: 'local', assurance: 'password' },
         [],
         true,
       ),

@@ -1,5 +1,5 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { parseTenantId, type TenantId } from '@base-authorization/core';
+import type { TenantId } from '@base-authorization/core';
 import { DataSource, type EntityManager } from 'typeorm';
 import {
   identityDataSourceOptions,
@@ -9,6 +9,7 @@ import {
 import {
   type ConnectionPurpose,
   connectionPurposes,
+  parseRoutableTenant,
   tenantDatabaseName,
   tenantFenceOwnerName,
   tenantRoleName,
@@ -151,7 +152,7 @@ export class TenantProvisioner {
   }
 
   async provision(input: ProvisionTenantInput): Promise<TenantId> {
-    const tenant = parseTenantId(input.tenantId);
+    const tenant = parseRoutableTenant(input.tenantId);
     const label = input.displayLabel.trim();
     if (label.length === 0 || label.length > 120)
       throw new TypeError('Display label must be 1-120 characters');
@@ -233,7 +234,7 @@ export class TenantProvisioner {
       sql.query<{ id: string }[]>('SELECT id::text AS id FROM tenant_directory ORDER BY id'),
     );
     for (const row of tenants) {
-      const tenant = parseTenantId(row.id);
+      const tenant = parseRoutableTenant(row.id);
       const database = tenantDatabaseName(tenant);
       await this.#assertDirectoryRoute(tenant, database, { allowMissing: false });
       results.push({

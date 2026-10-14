@@ -2,26 +2,26 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { DataSource } from 'typeorm';
-import {
-  evaluateUser,
-  parseKey,
-  planUser,
-  type UserCompleteFacts,
-  type UserId,
-} from '@base-authorization/core';
+import type { UserCompleteFacts, UserId } from '@base-authorization/core';
 import {
   ProductAuthorization,
   ProductBindingRegistry,
   ProductDataGateway,
   ProductManifestReconciler,
   ProductTransactionRunner,
+  type ProductTransaction,
   prepareProductRelease,
-  productDataSourceOptions,
-  provisionProductDatabase,
   readProductAuthority,
   sessionDigest,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/composition';
+import {
+  productDataSourceOptions,
+  provisionProductDatabase,
+} from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
+import { core } from './fixtures/resources.ts';
+
+const { evaluateUser, parseKey, planUser } = core;
 
 let postgres: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
@@ -43,120 +43,126 @@ const rows = [
 const policy = { key: 'pending', version: 1 };
 const boundary = { key: 'amountLimit', version: 1 };
 const registry = { validators: {}, obligationHandlers: [] };
-const release = prepareProductRelease({
-  sequence: '1',
-  predecessor: '0',
-  declarations: {
-    resources: [
-      {
-        key: 'item',
-        keyKind: 'integer',
-        fields: {
-          amount: { kind: 'decimal' },
-          status: { kind: 'string' },
-          title: { kind: 'string' },
+const release = prepareProductRelease(
+  {
+    sequence: '1',
+    predecessor: '0',
+    declarations: {
+      resources: [
+        {
+          key: 'item',
+          keyKind: 'integer',
+          fields: {
+            amount: { kind: 'decimal' },
+            status: { kind: 'string' },
+            title: { kind: 'string' },
+          },
+          actions: {
+            read: { policy, boundary: 'required' },
+            update: { policy, boundary: 'required' },
+          },
         },
-        actions: {
-          read: { policy, boundary: 'required' },
-          update: { policy, boundary: 'required' },
+      ],
+      policies: [
+        {
+          ...policy,
+          contextRequirements: [],
+          obligations: [],
+          requiredScope: {
+            op: 'eq',
+            field: 'status',
+            value: { from: 'literal', value: 'pending' },
+          },
         },
-      },
-    ],
-    policies: [
-      {
-        ...policy,
-        contextRequirements: [],
-        obligations: [],
-        requiredScope: {
-          op: 'eq',
-          field: 'status',
-          value: { from: 'literal', value: 'pending' },
+      ],
+      templates: [
+        {
+          key: 'allItems',
+          version: 1,
+          resource: 'item',
+          parameters: {},
+          expression: { op: 'constant', value: true },
         },
-      },
-    ],
-    templates: [
-      {
-        key: 'allItems',
-        version: 1,
-        resource: 'item',
-        parameters: {},
-        expression: { op: 'constant', value: true },
-      },
-      {
-        key: 'deniedTitle',
-        version: 1,
-        resource: 'item',
-        parameters: {},
-        expression: {
-          op: 'eq',
-          field: 'title',
-          value: { from: 'literal', value: 'denied' },
+        {
+          key: 'deniedTitle',
+          version: 1,
+          resource: 'item',
+          parameters: {},
+          expression: {
+            op: 'eq',
+            field: 'title',
+            value: { from: 'literal', value: 'denied' },
+          },
         },
-      },
-      {
-        key: 'assigned',
-        version: 1,
-        resource: 'item',
-        parameters: {},
-        expression: {
-          op: 'exists',
-          relation: 'item.assignee@1',
-          where: { op: 'eq', field: 'identityId', value: { from: 'principal', name: 'id' } },
+        {
+          key: 'assigned',
+          version: 1,
+          resource: 'item',
+          parameters: {},
+          expression: {
+            op: 'exists',
+            relation: 'item.assignee@1',
+            where: { op: 'eq', field: 'identityId', value: { from: 'principal', name: 'id' } },
+          },
         },
-      },
-    ],
-    relations: [
-      {
-        key: 'item.assignee',
-        version: 1,
-        sourceType: 'item',
-        target: { kind: 'identity' },
-        binding: { kind: 'edgeStore' },
-      },
-    ],
-    boundaries: [1, 2].map((version) => ({
-      key: boundary.key,
-      version,
-      entries: ['item.read', 'item.update'].map((permission) => ({
-        permission,
-        contextRequirements: [],
-        requiredScope: {
-          op: 'lte',
-          field: 'amount',
-          value: { from: 'literal', value: version === 1 ? '20' : '0' },
+      ],
+      relations: [
+        {
+          key: 'item.assignee',
+          version: 1,
+          sourceType: 'item',
+          target: { kind: 'identity' },
+          binding: { kind: 'edgeStore' },
         },
+      ],
+      boundaries: [1, 2].map((version) => ({
+        key: boundary.key,
+        version,
+        entries: ['item.read', 'item.update'].map((permission) => ({
+          permission,
+          contextRequirements: [],
+          requiredScope: {
+            op: 'lte',
+            field: 'amount',
+            value: { from: 'literal', value: version === 1 ? '20' : '0' },
+          },
+        })),
       })),
+      capabilities: { validators: [], obligationHandlers: [] },
+    },
+    roles: [
+      { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
+      { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
+    ],
+    defaultGrants: [],
+    seeds: [],
+    removeSeeds: [],
+    boundaryBindings: [],
+    removeBoundaryBindings: [],
+    systemGrants: ['read', 'update'].map((action) => ({
+      owner: 'fixture',
+      key: `root-${action}`,
+      role: 'system.root',
+      permission: `item.${action}`,
+      template: { key: 'allItems', version: 1 },
+      parameters: {},
     })),
-    capabilities: { validators: [], obligationHandlers: [] },
+    removeSystemGrants: [],
   },
-  roles: [
-    { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
-    { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
-  ],
-  defaultGrants: [],
-  seeds: [],
-  removeSeeds: [],
-  boundaryBindings: [],
-  removeBoundaryBindings: [],
-  systemGrants: ['read', 'update'].map((action) => ({
-    owner: 'fixture',
-    key: `root-${action}`,
-    role: 'system.root',
-    permission: `item.${action}`,
-    template: { key: 'allItems', version: 1 },
-    parameters: {},
-  })),
-  removeSystemGrants: [],
-});
+  core,
+);
 
 before(async () => {
   postgres = await startPostgres();
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration'].map((purpose) => [
+    ['data', 'identity', 'authority', 'sync', 'bootstrap', 'migration', 'outbox'].map((purpose) => [
       purpose,
       randomBytes(20).toString('hex'),
     ]),
-  ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration', string>;
+  ) as Record<
+    'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration' | 'outbox',
+    string
+  >;
   const connections = await provisionProductDatabase(postgres.superuser, passwords);
   pools = {} as typeof pools;
   for (const purpose of ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const)
@@ -178,6 +184,7 @@ before(async () => {
     [sessionDigest(secret), userId],
   );
   await new ProductManifestReconciler(runner, {
+    core,
     actor: userId,
     capabilities: release.declarations.capabilities,
   }).reconcile(release);
@@ -250,7 +257,7 @@ before(async () => {
         'never projected',
       ]);
   });
-  bindings = new ProductBindingRegistry(release.declarations, {
+  bindings = new ProductBindingRegistry(core, release.declarations, {
     resources: [
       {
         resource: 'item',
@@ -263,7 +270,7 @@ before(async () => {
     ],
     domains: {},
   });
-  authorization = new ProductAuthorization(runner, bindings, registry, [
+  authorization = new ProductAuthorization(runner, bindings, { validators: {}, obligations: {} }, [
     { resource: 'item', action: 'update', fields: ['title'] },
   ]);
 });
@@ -307,7 +314,13 @@ test('product list/detail/count share policy, boundary, deny and exact integer k
 
 test('product PostgreSQL predicate matches pure evaluator including record exceptions and ReBAC', async () => {
   await runner.run('read', async (tx) => {
-    const snapshot = await readProductAuthority(tx, userId, release.declarations, registry);
+    const snapshot = await readProductAuthority(
+      tx,
+      userId,
+      'item.read',
+      release.declarations,
+      registry,
+    );
     const now = new Date().toISOString();
     const base = {
       principal: { id: userId, assurance: 1 },
@@ -382,6 +395,229 @@ test('product PostgreSQL predicate matches pure evaluator including record excep
       );
       assert.equal(await gateway.count(decision.plan, {}, tx), String(expected.length));
     }
+  });
+});
+
+/** Oracle: every catalog/rule/boundary row of the user, as read before T8 filtered by permission. */
+async function readAllAuthority(tx: ProductTransaction) {
+  const any = await readProductAuthority(tx, userId, 'item.read', release.declarations, registry);
+  const permissions = await tx.manager.query<
+    {
+      key: string;
+      resource: string;
+      action: string;
+      policy_key: string;
+      policy_version: number;
+      lifecycle: 'active' | 'deprecated' | 'retired';
+      boundary: 'required' | 'optional' | null;
+    }[]
+  >(
+    `SELECT convert_from(permission_key,'UTF8') key,convert_from(type_key,'UTF8') resource,convert_from(action_key,'UTF8') action,convert_from(policy_key,'UTF8') policy_key,policy_version,lifecycle,boundary_requirement boundary FROM permission_catalog`,
+  );
+  const rules = await tx.manager.query<
+    {
+      id: string;
+      permission: string;
+      user_id: UserId | null;
+      role: string | null;
+      effect: 'allow' | 'deny';
+      template: string;
+      version: number;
+      parameters: Record<string, string>;
+    }[]
+  >(
+    `SELECT rule_id id,convert_from(permission_key,'UTF8') permission,user_id,convert_from(role_key,'UTF8') role,effect,convert_from(template_key,'UTF8') template,template_version version,parameters FROM policy_rule WHERE user_id=$1 OR role_key IN(SELECT role_key FROM user_role WHERE user_id=$1) ORDER BY rule_id`,
+    [userId],
+  );
+  const boundaries = await tx.manager.query<
+    { permission: string; key: string; version: number; lifecycle: 'active' | 'deprecated' }[]
+  >(
+    `SELECT convert_from(b.permission_key,'UTF8') permission,convert_from(b.boundary_key,'UTF8') key,b.boundary_version version,d.lifecycle FROM user_boundary b JOIN permission_boundary d USING(boundary_key,boundary_version) WHERE b.user_id=$1`,
+    [userId],
+  );
+  return {
+    ...any,
+    permissions: permissions.map((p) => ({
+      ...p,
+      policy: { key: p.policy_key, version: p.policy_version },
+    })),
+    rules: rules.map((r) => ({
+      id: r.id,
+      permission: r.permission,
+      subject: r.user_id
+        ? { kind: 'identity' as const, identity: r.user_id }
+        : { kind: 'role' as const, role: r.role ?? '' },
+      effect: r.effect,
+      template: { key: r.template, version: r.version },
+      parameters: r.parameters,
+    })),
+    boundaries: boundaries.map((b) => ({
+      identity: userId,
+      permission: b.permission,
+      boundary: { key: b.key, version: b.version },
+      lifecycle: b.lifecycle,
+    })),
+  };
+}
+
+test('authority read is limited to the requested permission and decides exactly like a full read', async () => {
+  const malformed = randomUUID();
+  const decide = async () =>
+    runner.run('read', async (tx) => {
+      const full = await readAllAuthority(tx);
+      const out: Record<string, unknown> = {};
+      for (const action of ['read', 'update']) {
+        const permission = `item.${action}`;
+        const scoped = await readProductAuthority(
+          tx,
+          userId,
+          permission,
+          release.declarations,
+          registry,
+        );
+        assert.deepEqual(
+          scoped.permissions.map((p) => p.key),
+          [permission],
+        );
+        assert.ok(scoped.rules.every((r) => r.permission === permission));
+        assert.ok(scoped.boundaries.every((b) => b.permission === permission));
+        assert.deepEqual(scoped.roles, full.roles);
+        assert.deepEqual(scoped.user, full.user);
+        const input = {
+          principal: { id: userId, assurance: 1 },
+          resource: 'item',
+          action,
+          context: {},
+          now: '2026-10-14T00:00:00.000000Z',
+          validUntil: '2026-10-14T00:00:01.000000Z',
+        };
+        const decision = planUser(input, scoped);
+        assert.deepEqual(decision, planUser(input, full));
+        out[action] = decision.effect === 'allow' ? 'allow' : decision.internalReason;
+      }
+      return out;
+    });
+  // Direct identity deny on read, role allow on both, required boundaries bound.
+  assert.deepEqual(await decide(), { read: 'allow', update: 'allow' });
+  // A malformed rule of update denies update only; read never sees it.
+  await runner.run('admin', (tx) =>
+    tx.manager.query(
+      `INSERT INTO policy_rule(rule_id,permission_key,user_id,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{"unexpected":"1"}','runtime')`,
+      [malformed, utf8('item.update'), userId, utf8('allItems')],
+    ),
+  );
+  assert.deepEqual(await decide(), { read: 'allow', update: 'rule_parameters_mismatch' });
+  // A required boundary without binding denies that permission only.
+  await runner.run('admin', async (tx) => {
+    await tx.manager.query('DELETE FROM policy_rule WHERE rule_id=$1', [malformed]);
+    await tx.manager.query('DELETE FROM user_boundary WHERE user_id=$1 AND permission_key=$2', [
+      userId,
+      utf8('item.update'),
+    ]);
+  });
+  assert.deepEqual(await decide(), { read: 'allow', update: 'boundary_binding_missing' });
+  await runner.run('admin', (tx) =>
+    tx.manager.query(
+      'INSERT INTO user_boundary(user_id,permission_key,boundary_key,boundary_version) VALUES($1,$2,$3,1)',
+      [userId, utf8('item.update'), utf8(boundary.key)],
+    ),
+  );
+  assert.deepEqual(await decide(), { read: 'allow', update: 'allow' });
+  // A deny through an assigned role applies to its permission only.
+  const roleDeny = randomUUID();
+  await runner.run('admin', async (tx) => {
+    // Code-owned roles cannot carry runtime rules (trigger); a runtime role can.
+    await tx.manager.query(
+      "INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1,'Runtime deny fixture')",
+      [utf8('runtime.denier')],
+    );
+    await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+      userId,
+      utf8('runtime.denier'),
+    ]);
+    await tx.manager.query(
+      "INSERT INTO policy_rule(rule_id,permission_key,role_key,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'deny',$4,1,'{}','runtime')",
+      [roleDeny, utf8('item.update'), utf8('runtime.denier'), utf8('allItems')],
+    );
+  });
+  assert.deepEqual(await decide(), { read: 'allow', update: 'allow' });
+  assert.equal(await authorization.count(secret, 'item', 'read'), '2');
+  // Deny lowers into the predicate: the plan is allowed but matches no row.
+  assert.equal(
+    await authorization.update(secret, 'item', 'update', rows[0]!.key, { title: 'role denied' }),
+    false,
+  );
+  await runner.run('admin', async (tx) => {
+    await tx.manager.query('DELETE FROM policy_rule WHERE rule_id=$1', [roleDeny]);
+    await tx.manager.query('DELETE FROM user_role WHERE user_id=$1 AND role_key=$2', [
+      userId,
+      utf8('runtime.denier'),
+    ]);
+    await tx.manager.query('DELETE FROM role_definition WHERE role_key=$1', [
+      utf8('runtime.denier'),
+    ]);
+  });
+});
+
+test('an empty page past the end reports the total of the same statement despite concurrent inserts', async () => {
+  const visible = await authorization.count(secret, 'item', 'read');
+  const added = { key: '9007199254740999', objectId: randomUUID() };
+  await runner.run('read', async (tx) => {
+    const snapshot = await readProductAuthority(
+      tx,
+      userId,
+      'item.read',
+      release.declarations,
+      registry,
+    );
+    const [clock] = await tx.manager.query<{ now: string; until: string }[]>(
+      `SELECT to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') now,to_char((statement_timestamp()+interval '1 second') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') until`,
+    );
+    const decision = planUser(
+      {
+        principal: { id: userId, assurance: 1 },
+        resource: 'item',
+        action: 'read',
+        context: {},
+        now: clock!.now,
+        validUntil: clock!.until,
+      },
+      snapshot,
+    );
+    assert.equal(decision.effect, 'allow');
+    if (decision.effect !== 'allow') return;
+    let statements = 0;
+    // After the page statement, another session commits one more visible row.
+    const manager = new Proxy(tx.manager, {
+      get(target, property, receiver) {
+        if (property !== 'query') return Reflect.get(target, property, receiver) as unknown;
+        return async (sql: string, parameters?: unknown[]) => {
+          const result: unknown = await target.query(sql, parameters);
+          if (++statements === 1)
+            await withClient(postgres.superuser, async (client) => {
+              await client.query(
+                "INSERT INTO object_ref(object_id,type_key,key_kind,key_bytes) VALUES($1,'\\x6974656d','integer',$2)",
+                [added.objectId, utf8(added.key)],
+              );
+              await client.query(
+                "INSERT INTO product_item VALUES($1,$2,'1.00','pending','late','never projected')",
+                [added.key, added.objectId],
+              );
+            });
+          return result;
+        };
+      },
+    });
+    const page = await new ProductDataGateway(bindings).list(
+      decision.plan,
+      { offset: Number(visible) },
+      { ...tx, manager },
+    );
+    assert.deepEqual(page, { items: [], total: visible });
+  });
+  await withClient(postgres.superuser, async (client) => {
+    await client.query('DELETE FROM product_item WHERE id=$1', [added.key]);
+    await client.query('DELETE FROM object_ref WHERE object_id=$1', [added.objectId]);
   });
 });
 

@@ -115,3 +115,30 @@ test('global guard validates sessions for both protected classifications and lea
     ),
   );
 });
+
+test('route inventory fails before any application bootstrap hook, however deep its module', async () => {
+  // Nest runs onApplicationBootstrap deepest module first; a bootstrap with effects (manifest
+  // sync, readiness) in a module nested below the controllers must still never start.
+  const calls: string[] = [];
+  class DeepService {
+    onApplicationBootstrap() {
+      calls.push('deep bootstrap');
+    }
+  }
+  class DeepModule {}
+  Module({ providers: [DeepService], exports: [DeepService] })(DeepModule);
+  class FeatureModule {}
+  Module({ imports: [DeepModule], controllers: [route().controller] })(FeatureModule);
+  class RootModule {}
+  Module({
+    imports: [
+      authorization.ProductAuthorizationModule.register({ declarations, requestAuth }),
+      FeatureModule,
+    ],
+  })(RootModule);
+  await assert.rejects(
+    NestFactory.createApplicationContext(RootModule, { logger: false, abortOnError: false }),
+    /classification/,
+  );
+  assert.deepEqual(calls, []);
+});

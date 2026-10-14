@@ -2,8 +2,6 @@ import {
   type UserAuthorizedPlan,
   type FieldKind,
   type Key,
-  normalizeValue,
-  parseKey,
   type PlanExpr,
 } from '@base-authorization/core';
 import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
@@ -30,7 +28,7 @@ export interface ListQuery {
 export type Row = Readonly<Record<string, unknown>> & { readonly key: string };
 export interface Page {
   readonly items: readonly Row[];
-  /** Matching rows for the same statement snapshot (window count); bigint as string. */
+  /** Matching rows in the same statement snapshot as `items` (window count); bigint as string. */
   readonly total: string;
 }
 
@@ -70,23 +68,26 @@ export class ProductDataGateway {
         ? `${key} ${direction}`
         : `${this.#projectedColumn(binding, query.orderBy)} ${direction}, ${key} ${direction}`;
     const parameters = [...bound.parameters, limit, offset];
+    const lim = `CAST($${parameters.length - 1} AS int8)`;
+    const off = `CAST($${parameters.length} AS int8)`;
+    // One statement, so total and page share a snapshot under READ COMMITTED. A page past the end
+    // keeps only the last matching row as a marker carrying the total; it is not returned.
     const rows = await tx.manager.query<Record<string, unknown>[]>(
-      `SELECT ${this.#projection(binding)}, count(*) OVER () AS "$total" FROM ${quoteIdentifier(binding.table)} r` +
-        ` WHERE ${bound.sql}${where} ORDER BY ${order}` +
-        ` LIMIT CAST($${parameters.length - 1} AS int4) OFFSET CAST($${parameters.length} AS int4)`,
+      `SELECT * FROM (SELECT ${this.#projection(binding)}, count(*) OVER () AS "$total", row_number() OVER (ORDER BY ${order}) AS "$n"` +
+        ` FROM ${quoteIdentifier(binding.table)} r WHERE ${bound.sql}${where}) p` +
+        ` WHERE ("$n" > ${off} AND "$n" <= ${off} + ${lim}) OR ("$n" = "$total" AND "$total" <= ${off})` +
+        ` ORDER BY "$n"`,
       parameters,
     );
-    const total =
-      rows.length > 0
-        ? String(rows[0]!.$total)
-        : offset === 0
-          ? '0'
-          : await this.count(plan, query, tx);
-    const items = rows.map((row) => {
-      const { $total, ...fields } = row;
-      void $total;
-      return fields as Row;
-    });
+    const total = rows.length > 0 ? String(rows[0]!.$total) : '0';
+    const items = rows
+      .filter((row) => BigInt(String(row.$n)) > BigInt(offset))
+      .map((row) => {
+        const { $total, $n, ...fields } = row;
+        void $total;
+        void $n;
+        return fields as Row;
+      });
     return { items, total };
   }
 
@@ -109,7 +110,7 @@ export class ProductDataGateway {
     const declared = this.#registry.declarations.resources[plan.resource]!;
     if (key.kind !== declared.keyKind)
       throw new ProductInvalidRequest(`${plan.resource} keys are ${declared.keyKind}`);
-    const value = parseKey(key.kind, key.value).value;
+    const value = this.#registry.core.parseKey(key.kind, key.value).value;
     const parameters = [...bound.parameters, value];
     const rows = await tx.manager.query<Row[]>(
       `SELECT ${this.#projection(binding)} FROM ${quoteIdentifier(binding.table)} r WHERE ${bound.sql}` +
@@ -196,7 +197,7 @@ export class ProductDataGateway {
         node.op === 'eq' ||
         ((node.op === 'lt' || node.op === 'lte') && orderedKinds.includes(field.kind))
       ) {
-        const value = normalizeValue(field.kind, node.value);
+        const value = this.#registry.core.normalizeValue(field.kind, node.value);
         if (value === undefined)
           throw new ProductInvalidRequest(
             `Filter value for ${String(node.field)} must be a ${field.kind}`,

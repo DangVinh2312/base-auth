@@ -1,17 +1,12 @@
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, describe, test } from 'node:test';
-import {
-  type AuthorizedPlan,
-  canonicalTimestamp,
-  evaluate,
-  type RuleFact,
-} from '@base-authorization/core';
+import type { AuthorizedPlan, RuleFact } from '@base-authorization/core';
 import {
   BindingRegistry,
   compilePlan,
   type TenantConnectionLease,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import {
   alice,
   bob,
@@ -25,7 +20,10 @@ import {
   submissionFacts,
   tenantA,
   tenantB,
+  core,
 } from './fixtures/resources.ts';
+
+const { canonicalTimestamp, evaluate } = core;
 
 const read = 'submission.read';
 const me = { kind: 'identity', identity: alice } as const;
@@ -38,7 +36,7 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
   before(async () => {
     env = await startGatewayEnvironment();
     lease = await env.registry.acquire(tenantA, 'data');
-    bindings = new BindingRegistry(fixtureDeclarations(), storageBindings);
+    bindings = new BindingRegistry(core, fixtureDeclarations(), storageBindings);
   });
   after(async () => {
     await lease?.release();

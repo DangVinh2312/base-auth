@@ -1,138 +1,46 @@
+// Safe service contracts: errors, pure helpers and types. Constructors and low-level adapters are
+// in ./composition, offline capability in ./operations, historical tenant APIs in ./legacy.
+export { type PostgresConnectionSettings } from './data-source-options.js';
+export { TransactionConflictError } from './tenant-transaction.js';
+export { ReleaseRejectedError } from './manifest-reconciler.js';
 export {
-  identityDataSourceOptions,
-  tenantDataSourceOptions,
-  type PostgresConnectionSettings,
-} from './data-source-options.js';
-export {
-  type ConnectionPurpose,
-  directoryRouteResolver,
-  type TenantConnectionLease,
-  TenantDataSourceRegistry,
-  type TenantDataSourceRegistryOptions,
-  tenantDatabaseName,
-  tenantFenceOwnerName,
-  tenantRoleName,
-  type TenantRoute,
-  TenantRoutingError,
-  TenantUnavailableError,
-} from './datasource-registry.js';
-export { runMigrations } from './migrations.js';
-export {
-  type MigrationResult,
-  type ProvisionTenantInput,
-  TenantProvisioner,
-} from './tenant-provisioner.js';
-export {
-  type AuthorityFacts,
-  type BoundaryBindingChange,
-  readAuthorityFacts,
-  writeBoundaryBinding,
-} from './authority-store.js';
-export { DataGateway, type ListQuery, type Page, type Row } from './data-gateway.js';
-export {
-  BindingRegistry,
-  type BoundPredicate,
-  compileNamed,
-  compilePlan,
-  type DomainRelationBinding,
-  type ResourceBinding,
-  type StorageBindings,
-} from './sql-compiler.js';
-export { fulfillObligations, type ObligationHandler } from './obligations.js';
-export {
-  type AuthorityRegistry,
-  AuthorityUnavailableError,
-  PostgresAuthority,
-  RUNTIME_CAPABILITY,
-  TenantTransactionRunner,
-  type TenantTransaction,
-  TransactionConflictError,
-  type TransactionMode,
-  type TransactionOptions,
-} from './tenant-transaction.js';
-export {
-  type BoundaryBindingRemoval,
-  type BoundaryBindingSeed,
-  type CodeRole,
-  type DefaultGrant,
-  ManifestReconciler,
-  prepareRelease,
-  type ReconcilerOptions,
-  type RejectReason,
-  ReleaseRejectedError,
-  type ReleaseSource,
-  type RelationSeed,
-  type SeedRemoval,
-  type SyncResult,
-  type VerifiedReleaseManifest,
-} from './manifest-reconciler.js';
-export {
-  productDataSourceOptions,
-  productMigrations,
-  provisionProductDatabase,
-  verifyProductPrivileges,
-  type ProductDatabasePurpose,
-} from './product-database.js';
-export {
-  ProductTransactionRunner,
-  type ProductTransaction,
+  type ProductConnectionPurpose,
   type ProductTransactionMode,
   type ProductTransactionOptions,
-  type ProductConnectionPurpose,
 } from './product-transaction.js';
+export { type ProductDatabasePurpose } from './product-database.js';
 export {
-  ProductBindingRegistry,
-  type ProductResourceBinding,
-  type ProductStorageBindings,
-  compilePlan as compileProductPlan,
-  compileNamed as compileProductNamed,
-} from './product-sql.js';
-export {
-  ProductDataGateway,
-  ProductInvalidRequest,
   type Page as ProductPage,
   type Row as ProductRow,
+  ProductInvalidRequest,
 } from './product-gateway.js';
+export { ProductAccessDenied, type ProductResourceWrite } from './product-authority.js';
+export { type ProductAuditEvent, type ProductIdentityAuditKind } from './product-audit.js';
 export {
-  ProductAuthorization,
-  ProductAccessDenied,
-  readProductAuthority,
-  type ProductResourceWrite,
-} from './product-authority.js';
+  type ProductAuditEnvelope,
+  type ProductAuditSink,
+  type ProductOutboxClaim,
+  type ProductOutboxOptions,
+} from './product-outbox.js';
+export { type ProductStorageBindings } from './product-sql.js';
 export {
-  ProductManifestReconciler,
-  prepareProductRelease,
-  systemGrantHash,
   type ProductReleaseSource,
   type ProductReleaseManifest,
   type SystemGrant,
   type SystemGrantRemoval,
 } from './product-manifest.js';
 export {
-  ProductIdentityService,
+  type ProductIdentityService,
   rateLimitClient,
   ProductAuthenticationError,
   ProductAuthenticationUnavailable,
-  createProductPasswordHasher,
   canonicalLoginEmail,
-  newSessionSecret,
-  secretDigest,
-  sessionDigest,
   type ProductSession,
   type ProductSessionIdentity,
   type ProductPasswordHasher,
 } from './product-identity.js';
 export {
-  ProductOidcService,
-  createProductOidcProvider,
+  type ProductOidcService,
   type ProductOidcProvider,
   type ProductOidcProviderConfig,
 } from './product-oidc.js';
-export {
-  bootstrapProductRoot,
-  revokeProductRoot,
-  reissueRootActivation,
-  type RootBootstrapInput,
-  type RootReissueInput,
-  type RootRevocationInput,
-} from './product-manifest.js';

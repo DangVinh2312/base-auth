@@ -79,12 +79,21 @@ export class ProductTransactionRunner {
       /* Diagnostics must not change commit semantics. */
     }
   }
+  /**
+   * `serialize` joins a transaction-scoped advisory queue before the fence: waiters hold no fence
+   * share, so queued work cannot keep an exclusive revoke off the fence. Waiters still hold a pool
+   * connection (bounded by lock_timeout); a queue larger than the pool delays revoke at checkout.
+   * Lock order is always advisory, then fence. `lock_wait` covers both.
+   */
   async run<T>(
     mode: ProductTransactionMode,
     work: (tx: ProductTransaction) => Promise<T>,
+    options: { readonly serialize?: number } = {},
   ): Promise<T> {
     const purpose = purposes[mode];
     if (!purpose) throw new TypeError('Unknown product transaction mode');
+    if (options.serialize !== undefined && !Number.isSafeInteger(options.serialize))
+      throw new TypeError('Invalid advisory lock key');
     const pool = this.#pools[purpose];
     if (!pool) throw new AuthorityUnavailableError('capability_unavailable');
     const requestStart = Date.now();
@@ -101,6 +110,8 @@ export class ProductTransactionRunner {
           [`${this.#deadline}ms`, `${this.#lock}ms`],
         );
         const wait = Date.now();
+        if (options.serialize !== undefined)
+          await runner.query('SELECT pg_advisory_xact_lock($1)', [options.serialize]);
         const rows = await runner.manager.query<{ revision: string; required: number }[]>(
           shared.has(mode)
             ? 'SELECT public.authz_acquire_shared_fence($1)::text AS revision,0 AS required'

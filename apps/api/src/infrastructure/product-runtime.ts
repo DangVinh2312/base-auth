@@ -1,8 +1,11 @@
-import type { ProductHttpServices } from './http-services.js';
-import { ProductMetrics } from './metrics.js';
+import { ProductMetrics } from '../health/product-metrics.js';
 import { type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ReadinessGate } from '@base-authorization/nest';
+import {
+  type ProductReleaseManifest,
+  type ProductSessionIdentity,
+} from '@base-authorization/typeorm-postgres';
 import {
   ProductTransactionRunner,
   ProductManifestReconciler,
@@ -13,19 +16,26 @@ import {
   createProductOidcProvider,
   createProductPasswordHasher,
   verifyProductPrivileges,
-  type ProductSessionIdentity,
-} from '@base-authorization/typeorm-postgres';
-import type { IdentityId } from '@base-authorization/core';
-import { productRelease, productBindings } from './product-manifest.js';
-import type { AppConfig } from './config.js';
+  productObligations,
+  PRODUCT_OFFLINE_ACTOR,
+} from '@base-authorization/typeorm-postgres/composition';
+import type { AuthorizationCore } from '@base-authorization/core';
+import {
+  createProductAuthorizationCore,
+  createProductRelease,
+  productBindings,
+} from '../authorization/product-manifest.js';
+import type { AppConfig } from '../config/app.config.js';
 export type RecoveryDelivery = (userId: string, secret: string) => Promise<void>;
 export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShutdown {
   readonly readiness = new ReadinessGate();
   readonly authorization: ProductAuthorization;
   readonly identity: ProductIdentityService;
   readonly oidc: ProductOidcService;
+  readonly release: ProductReleaseManifest;
   private constructor(
     readonly config: AppConfig,
+    private readonly core: AuthorizationCore,
     private readonly pools: Record<'data' | 'identity' | 'authority' | 'sync', DataSource>,
     private readonly runner: ProductTransactionRunner,
     identity: ProductIdentityService,
@@ -35,12 +45,13 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
   ) {
     this.identity = identity;
     this.oidc = oidc;
+    this.release = createProductRelease(core);
     this.authorization = new ProductAuthorization(
       runner,
-      new ProductBindingRegistry(productRelease.declarations, productBindings),
+      new ProductBindingRegistry(core, this.release.declarations, productBindings),
       {
         validators: { 'fresh@1': (_params, input) => input.context.freshAuthentication === true },
-        obligationHandlers: ['audit@1'],
+        obligations: productObligations,
       },
       [{ resource: 'document', action: 'update', fields: ['title'] }],
     );
@@ -49,6 +60,8 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
     config: AppConfig,
     recoveryDelivery?: RecoveryDelivery,
   ): Promise<ProductRuntime> {
+    // Codecs are chosen before any pool opens: a missing/invalid codec fails before the listener.
+    const core = createProductAuthorizationCore();
     const pools = {} as Record<'data' | 'identity' | 'authority' | 'sync', DataSource>;
     try {
       for (const purpose of ['data', 'identity', 'authority', 'sync'] as const)
@@ -82,6 +95,7 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
         providers.set(settings.issuer, await createProductOidcProvider(settings));
       return new ProductRuntime(
         config,
+        core,
         pools,
         runner,
         identity,
@@ -94,35 +108,6 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
       throw error;
     }
   }
-  httpServices(): ProductHttpServices {
-    return {
-      config: { origin: this.config.origin, localEnabled: this.config.localEnabled },
-      authorization: {
-        list: this.authorization.list.bind(this.authorization),
-        detail: this.authorization.detail.bind(this.authorization),
-        update: this.authorization.update.bind(this.authorization),
-        suspendUser: this.authorization.suspendUser.bind(this.authorization),
-        checkSession: this.authorization.checkSession.bind(this.authorization),
-      },
-      identity: {
-        login: this.identity.login.bind(this.identity),
-        activate: this.identity.activate.bind(this.identity),
-        reauthenticate: this.identity.reauthenticate.bind(this.identity),
-        logout: this.identity.logout.bind(this.identity),
-        requestPasswordReset: this.identity.requestPasswordReset.bind(this.identity),
-        resetPassword: this.identity.resetPassword.bind(this.identity),
-        changePassword: this.identity.changePassword.bind(this.identity),
-      },
-      oidc: {
-        begin: this.oidc.begin.bind(this.oidc),
-        callback: this.oidc.callback.bind(this.oidc),
-        unlink: this.oidc.unlink.bind(this.oidc),
-      },
-      metrics: { snapshot: this.metrics.snapshot.bind(this.metrics) },
-      recoveryDelivery: this.recoveryDelivery,
-      currentSession: this.currentSession.bind(this),
-    };
-  }
   async onApplicationBootstrap(): Promise<void> {
     // Exact grants, including those of the application document migration.
     await verifyProductPrivileges(this.pools, {
@@ -130,9 +115,13 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
       authority: ['table:document:SELECT'],
     });
     await new ProductManifestReconciler(this.runner, {
-      actor: '00000000-0000-4000-8000-000000000001' as IdentityId,
-      capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
-    }).reconcile(productRelease);
+      core: this.core,
+      actor: PRODUCT_OFFLINE_ACTOR,
+      capabilities: {
+        validators: ['fresh@1'],
+        obligationHandlers: Object.keys(productObligations),
+      },
+    }).reconcile(this.release);
     await this.runner.run('sync', async (tx) => {
       const declared = this.config.oidcProviders.map((p) => p.issuer);
       const existing = await tx.manager.query<
@@ -157,8 +146,12 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
     await this.pools.data.query('SELECT id,title,owner_id,state,object_id FROM document LIMIT 0');
     this.readiness.markReady();
   }
+  #closed: Promise<unknown> | undefined;
+  /** Idempotent (TypeORM destroy() throws when repeated): main.ts and Nest's shutdown hook may both call it. */
   async onApplicationShutdown(): Promise<void> {
-    await Promise.all(Object.values(this.pools).map((p) => p.destroy()));
+    // A rejection is memoized too: retrying destroy() on half-closed pools would only throw again.
+    this.#closed ??= Promise.all(Object.values(this.pools).map((p) => p.destroy()));
+    await this.#closed;
   }
   async currentSession(secret: string): Promise<ProductSessionIdentity> {
     return this.runner.run('identity', (tx) => this.identity.authenticate(tx, secret));

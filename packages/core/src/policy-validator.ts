@@ -15,14 +15,8 @@ import {
   type DeclarationTables,
   isFieldKind,
   MAX_PATH_DEPTH,
+  type Normalize,
 } from './expression.js';
-
-const validatedSet = new WeakSet<object>();
-
-/** True only for objects produced by `validate` (copies or hand-built objects are refused). */
-export function isValidated(value: unknown): value is ValidatedDeclarations {
-  return typeof value === 'object' && value !== null && validatedSet.has(value);
-}
 
 const identifier = /^[a-z][A-Za-z0-9_]*$/;
 const dottedKey = /^[a-z][A-Za-z0-9_]*(\.[a-z][A-Za-z0-9_]*)*$/;
@@ -81,8 +75,12 @@ function byRef<T extends { key: string; version: number }>(
 /**
  * Validates system declarations for boot/CI readiness. Anything unknown or ambiguous is an error;
  * the result is frozen and carries an order-independent canonical serialization for hashing.
+ * Literals are checked with the owning core's codecs; that core records the provenance.
  */
-export function validate(declarations: SystemDeclarations): ValidationResult {
+export function validateDeclarations(
+  declarations: SystemDeclarations,
+  normalize: Normalize,
+): ValidationResult {
   const errors: string[] = [];
   const input: unknown = declarations;
   if (!isRecord(input)) return { ok: false, errors: ['declarations must be an object'] };
@@ -283,6 +281,7 @@ export function validate(declarations: SystemDeclarations): ValidationResult {
           tables,
           maxDepth: limits.maxPathDepth,
           maxNodes: limits.maxExpressionNodes,
+          normalize,
         },
         errors,
         `${resource.key}.${action} requiredScope`,
@@ -325,6 +324,7 @@ export function validate(declarations: SystemDeclarations): ValidationResult {
         tables,
         maxDepth: limits.maxPathDepth,
         maxNodes: limits.maxExpressionNodes,
+        normalize,
       },
       errors,
       at,
@@ -384,6 +384,7 @@ export function validate(declarations: SystemDeclarations): ValidationResult {
           tables,
           maxDepth: limits.maxPathDepth,
           maxNodes: limits.maxExpressionNodes,
+          normalize,
         },
         errors,
         `${eat} requiredScope`,
@@ -441,6 +442,5 @@ export function validate(declarations: SystemDeclarations): ValidationResult {
     limits: copy.limits,
     canonical,
   });
-  validatedSet.add(result);
   return { ok: true, declarations: result };
 }

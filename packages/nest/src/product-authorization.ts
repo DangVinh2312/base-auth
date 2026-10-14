@@ -6,7 +6,7 @@ import {
   Inject,
   Injectable,
   Module,
-  type OnApplicationBootstrap,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { METHOD_METADATA } from '@nestjs/common/constants.js';
 import {
@@ -60,8 +60,13 @@ function classification(
   return entries[0]!;
 }
 
+/**
+ * Runs in onModuleInit: every module's onModuleInit finishes before any onApplicationBootstrap,
+ * which Nest runs deepest module first. A route failure must stop boot before bootstrap hooks with
+ * effects (manifest sync, readiness) start, wherever their module sits.
+ */
 @Injectable()
-class ProductRouteInventory implements OnApplicationBootstrap {
+class ProductRouteInventory implements OnModuleInit {
   constructor(
     private readonly discovery: DiscoveryService,
     private readonly scanner: MetadataScanner,
@@ -69,7 +74,7 @@ class ProductRouteInventory implements OnApplicationBootstrap {
     @Inject(DECLARATIONS) private readonly declarations: ProductRouteDeclarations,
   ) {}
 
-  onApplicationBootstrap(): void {
+  onModuleInit(): void {
     for (const controller of this.discovery.getControllers()) {
       if (!controller.instance) throw new Error('Product controller cannot be inspected');
       const prototype = Object.getPrototypeOf(controller.instance) as Record<string, unknown>;

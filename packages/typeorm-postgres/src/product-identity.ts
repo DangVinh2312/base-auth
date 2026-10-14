@@ -1,7 +1,12 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { isIPv4, isIPv6 } from 'node:net';
 import * as argon2 from 'argon2';
 import type { ProductTransaction, ProductTransactionRunner } from './product-transaction.js';
+import {
+  appendProductAudit,
+  PRODUCT_OFFLINE_ACTOR,
+  type ProductIdentityAuditKind,
+} from './product-audit.js';
 
 export class ProductAuthenticationError extends Error {
   constructor() {
@@ -14,6 +19,7 @@ export class ProductAuthenticationUnavailable extends Error {
   }
 }
 const RATE_LIMIT_ROWS = 10_000;
+const RATE_LIMIT_LOCK = 1379171467;
 /**
  * Limiter client key. One IPv6 /64 is one client (a host usually owns the whole prefix); IPv6
  * forms that carry an IPv4 client (mapped ::ffff:0:0/96, compatible ::/96, NAT64 64:ff9b::/96)
@@ -178,17 +184,49 @@ interface SessionRow {
   reauthenticated_at: Date | null;
 }
 
+/**
+ * Offline maintenance: deletes at most `batchSize` sessions whose absolute expiry passed more than
+ * `retentionDays` ago, in one short identity transaction with its audit event. Rows locked by live
+ * identity transactions (logout, reset) are skipped, never waited for. Expired sessions grant
+ * nothing, so the purge has no authority effect; retention is the deployment's decision.
+ */
+export async function purgeExpiredSessions(
+  transactions: ProductTransactionRunner,
+  retentionDays: number,
+  batchSize: number,
+): Promise<number> {
+  if (!Number.isSafeInteger(retentionDays) || retentionDays < 0 || retentionDays > 3650)
+    throw new RangeError('retentionDays must be an integer 0-3650');
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 1000)
+    throw new RangeError('batchSize must be an integer 1-1000');
+  return transactions.run('identity', async (tx) => {
+    const [purged] = await tx.manager.query<{ n: number }[]>(
+      `WITH purged AS (DELETE FROM application_session WHERE token_hash IN (
+        SELECT token_hash FROM application_session WHERE expires_at<=statement_timestamp()-make_interval(days=>$1)
+        ORDER BY expires_at LIMIT $2 FOR UPDATE SKIP LOCKED) RETURNING 1)
+      SELECT count(*)::int n FROM purged`,
+      [retentionDays, batchSize],
+    );
+    const deleted = purged?.n ?? 0;
+    if (deleted > 0)
+      await appendProductAudit(tx, {
+        kind: 'identity.session-purge',
+        actor: PRODUCT_OFFLINE_ACTOR,
+        deleted: String(deleted),
+        retentionDays: String(retentionDays),
+      });
+    return deleted;
+  });
+}
+
 export class ProductIdentityService {
   constructor(
     readonly transactions: ProductTransactionRunner,
     readonly passwords: ProductPasswordHasher,
   ) {}
 
-  async audit(tx: ProductTransaction, userId: string, kind: string): Promise<void> {
-    await tx.manager.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES($1,$2,$3,$4,statement_timestamp(),'{}')`,
-      [randomUUID(), userId, kind, tx.revision],
-    );
+  audit(tx: ProductTransaction, userId: string, kind: ProductIdentityAuditKind): Promise<void> {
+    return appendProductAudit(tx, { kind, actor: userId });
   }
 
   async rateLimit(clientKey: string, identifier: string, purpose: string): Promise<void> {
@@ -198,40 +236,44 @@ export class ProductIdentityService {
     const network = client.endsWith('::/64')
       ? `${client.split(':').slice(0, 3).join(':')}::/48`
       : undefined;
-    const allowed = await this.transactions.run('identity', async (tx) => {
-      // One bounded database limiter shared by replicas; expired rows never accumulate.
-      await tx.manager.query('SELECT pg_advisory_xact_lock(1379171467)');
-      await tx.manager.query(
-        `DELETE FROM rate_limit WHERE window_start <= statement_timestamp()-interval '15 minutes'`,
-      );
-      // A full table evicts instead of denying every client: the fewest attempts go first, so
-      // clearing a bucket at n attempts needs ~10k buckets at >=n attempts. A /64 is one client
-      // and a /48 shares 200 attempts across all purposes (~20 such client/identifier buckets per
-      // /48), so one routed IPv6 prefix cannot supply them.
-      // ponytail: ~500 /48s or ~1000 IPv4 hosts can still clear old buckets; add ingress quotas if that matters.
-      await tx.manager.query(
-        `DELETE FROM rate_limit WHERE bucket_key IN (SELECT bucket_key FROM rate_limit ORDER BY attempts,window_start,bucket_key
-          LIMIT GREATEST((SELECT count(*) FROM rate_limit)-$1,0))`,
-        [RATE_LIMIT_ROWS - 3],
-      );
-      // Network, then client: a limited source stops early and cannot add identifier rows.
-      const buckets: [string, number][] = [
-        ...(network ? ([[`net:${network}`, 200]] as [string, number][]) : []),
-        [`${purpose}:ip:${client}`, 20],
-        ...(identifier === client
-          ? []
-          : ([[`${purpose}:login:${identifier}`, 20]] as [string, number][])),
-      ];
-      for (const [key, limit] of buckets) {
-        const rows = await tx.manager.query<{ attempts: number }[]>(
-          `INSERT INTO rate_limit(bucket_key,window_start,attempts) VALUES($1,statement_timestamp(),1)
-          ON CONFLICT(bucket_key) DO UPDATE SET attempts=LEAST(rate_limit.attempts+1,1001) RETURNING attempts`,
-          [secretDigest(key)],
+    // One bounded database limiter shared by replicas, serialized by one advisory key taken before
+    // the fence (queued logins must not hold the fence against revokes); expired rows never accumulate.
+    const allowed = await this.transactions.run(
+      'identity',
+      async (tx) => {
+        await tx.manager.query(
+          `DELETE FROM rate_limit WHERE window_start <= statement_timestamp()-interval '15 minutes'`,
         );
-        if ((rows[0]?.attempts ?? 1001) > limit) return false;
-      }
-      return true;
-    });
+        // A full table evicts instead of denying every client: the fewest attempts go first, so
+        // clearing a bucket at n attempts needs ~10k buckets at >=n attempts. A /64 is one client
+        // and a /48 shares 200 attempts across all purposes (~20 such client/identifier buckets per
+        // /48), so one routed IPv6 prefix cannot supply them.
+        // ponytail: ~500 /48s or ~1000 IPv4 hosts can still clear old buckets; add ingress quotas if that matters.
+        await tx.manager.query(
+          `DELETE FROM rate_limit WHERE bucket_key IN (SELECT bucket_key FROM rate_limit ORDER BY attempts,window_start,bucket_key
+          LIMIT GREATEST((SELECT count(*) FROM rate_limit)-$1,0))`,
+          [RATE_LIMIT_ROWS - 3],
+        );
+        // Network, then client: a limited source stops early and cannot add identifier rows.
+        const buckets: [string, number][] = [
+          ...(network ? ([[`net:${network}`, 200]] as [string, number][]) : []),
+          [`${purpose}:ip:${client}`, 20],
+          ...(identifier === client
+            ? []
+            : ([[`${purpose}:login:${identifier}`, 20]] as [string, number][])),
+        ];
+        for (const [key, limit] of buckets) {
+          const rows = await tx.manager.query<{ attempts: number }[]>(
+            `INSERT INTO rate_limit(bucket_key,window_start,attempts) VALUES($1,statement_timestamp(),1)
+          ON CONFLICT(bucket_key) DO UPDATE SET attempts=LEAST(rate_limit.attempts+1,1001) RETURNING attempts`,
+            [secretDigest(key)],
+          );
+          if ((rows[0]?.attempts ?? 1001) > limit) return false;
+        }
+        return true;
+      },
+      { serialize: RATE_LIMIT_LOCK },
+    );
     if (!allowed) throw new ProductAuthenticationError();
   }
 
@@ -369,7 +411,8 @@ export class ProductIdentityService {
     userId: string,
     method: 'local' | 'oidc' = 'local',
   ): Promise<string> {
-    if (tx.mode !== 'revoke') throw new ProductAuthenticationError();
+    if (tx.mode !== 'revoke' || userId === PRODUCT_OFFLINE_ACTOR)
+      throw new ProductAuthenticationError(); // the offline actor id never names a user
     const users = await tx.manager.query<{ id: string }[]>(
       method === 'local'
         ? `SELECT id FROM app_user u WHERE id=$1 AND state='pending' AND email_canonical IS NOT NULL AND NOT EXISTS(SELECT 1 FROM local_credential WHERE user_id=u.id)`

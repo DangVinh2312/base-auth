@@ -3,21 +3,26 @@ import { before, after, test } from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { type IdentityId } from '@base-authorization/core';
+import { type ProductDatabasePurpose } from '@base-authorization/typeorm-postgres';
 import {
-  provisionProductDatabase,
-  productDataSourceOptions,
   ProductTransactionRunner,
   ProductManifestReconciler,
   prepareProductRelease,
-  bootstrapProductRoot,
-  revokeProductRoot,
   systemGrantHash,
   createProductPasswordHasher,
   ProductIdentityService,
-  type ProductDatabasePurpose,
-} from '@base-authorization/typeorm-postgres';
+  PRODUCT_OFFLINE_ACTOR,
+} from '@base-authorization/typeorm-postgres/composition';
+import {
+  provisionProductDatabase,
+  productDataSourceOptions,
+  bootstrapProductRoot,
+  reissueRootActivation,
+  revokeProductRoot,
+} from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, type TestPostgres } from './setup-postgres.ts';
-import { productDeclarations } from '../apps/api/dist/product-manifest.js';
+import { productDeclarations } from '../apps/api/dist/authorization/product-manifest.js';
+import { core } from '../packages/core/test/fixtures.ts';
 let pg: TestPostgres;
 let runner: ProductTransactionRunner;
 let migration: DataSource;
@@ -45,22 +50,26 @@ const grant = {
   parameters: {},
 };
 const release2 = () =>
-  prepareProductRelease({
-    ...base,
-    sequence: '2',
-    predecessor: '1',
-    roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
-    systemGrants: [grant],
-  });
+  prepareProductRelease(
+    {
+      ...base,
+      sequence: '2',
+      predecessor: '1',
+      roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
+      systemGrants: [grant],
+    },
+    core,
+  );
 const reconciler = () =>
   new ProductManifestReconciler(runner, {
+    core,
     actor,
     capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
   });
 before(async () => {
   pg = await startPostgres();
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'].map((p) => [
+    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map((p) => [
       p,
       randomBytes(24).toString('hex'),
     ]),
@@ -84,7 +93,7 @@ after(async () => {
   await pg?.stop();
 });
 test('catalog first then late Root grants old permissions; repeated and concurrent boot do not change revision', async () => {
-  const first = prepareProductRelease(base);
+  const first = prepareProductRelease(base, core);
   assert.equal((await reconciler().reconcile(first)).changed, true);
   const second = release2();
   assert.equal((await reconciler().reconcile(second)).changed, true);
@@ -115,12 +124,15 @@ test('same release full drift fails; rollback avoids runtime seed takeover', asy
       [Buffer.from('runtime')],
     ),
   );
-  const collision = prepareProductRelease({
-    ...base,
-    sequence: '3',
-    predecessor: '2',
-    roles: [{ key: 'runtime', authorityLevel: 1000, label: 'Root' }],
-  });
+  const collision = prepareProductRelease(
+    {
+      ...base,
+      sequence: '3',
+      predecessor: '2',
+      roles: [{ key: 'runtime', authorityLevel: 1000, label: 'Root' }],
+    },
+    core,
+  );
   await assert.rejects(reconciler().reconcile(collision), /collision/);
   void id;
 });
@@ -168,9 +180,35 @@ test('persistent bootstrap races once, mandatory boundary, no boot reseed after 
     approval: 'CHG-fixture',
     reason: 'Fixture revocation',
   };
-  await assert.rejects(revokeProductRoot(runner, { ...revocation, reason: ' ' }), /invalid/);
-  assert.deepEqual(await revokeProductRoot(runner, revocation), { revoked: true });
-  assert.deepEqual(await revokeProductRoot(runner, revocation), { revoked: false });
+  await assert.rejects(revokeProductRoot(runner, { ...revocation, reason: ' ' }, core), /invalid/);
+  const revisionNow = async () =>
+    (await migration.query<{ r: string }[]>('SELECT revision::text r FROM authz_state'))[0]!.r;
+  const beforeRevoke = await revisionNow();
+  assert.deepEqual(await revokeProductRoot(runner, revocation, core), { revoked: true });
+  const afterRevoke = await revisionNow();
+  assert.equal(BigInt(afterRevoke), BigInt(beforeRevoke) + 1n);
+  // Offline Root events: the operator sentinel is the actor, the Root account is the target.
+  const rootEvents = await migration.query<
+    { kind: string; actor: string; revision: string; metadata: Record<string, string> }[]
+  >(
+    `SELECT convert_from(event_kind,'UTF8') kind,actor_id::text actor,policy_revision::text revision,safe_metadata metadata FROM audit_outbox WHERE event_kind IN ($1,$2) ORDER BY event_kind`,
+    [Buffer.from('root.bootstrap'), Buffer.from('root.revoke')],
+  );
+  assert.deepEqual(
+    rootEvents.map((e) => [e.kind, e.actor, e.metadata.targetUserId]),
+    [
+      ['root.bootstrap', PRODUCT_OFFLINE_ACTOR, target],
+      ['root.revoke', PRODUCT_OFFLINE_ACTOR, target],
+    ],
+  );
+  assert.notEqual(PRODUCT_OFFLINE_ACTOR, target);
+  for (const e of rootEvents)
+    assert.equal(BigInt(e.metadata.resultingRevision!), BigInt(e.revision) + 1n);
+  assert.deepEqual(
+    [rootEvents[1]!.revision, rootEvents[1]!.metadata.resultingRevision],
+    [beforeRevoke, afterRevoke],
+  );
+  assert.deepEqual(await revokeProductRoot(runner, revocation, core), { revoked: false });
   await reconciler().reconcile(release2());
   assert.equal(
     (
@@ -252,11 +290,17 @@ test('system grant explicit content change/removal requires prior exact hash', a
     systemGrants: [changedGrant],
     removeSystemGrants: [],
   };
-  await assert.rejects(reconciler().reconcile(prepareProductRelease(thirdSource)), /previousHash/);
-  const third = prepareProductRelease({
-    ...thirdSource,
-    systemGrants: [{ ...changedGrant, previousHash: systemGrantHash(grant) }],
-  });
+  await assert.rejects(
+    reconciler().reconcile(prepareProductRelease(thirdSource, core)),
+    /previousHash/,
+  );
+  const third = prepareProductRelease(
+    {
+      ...thirdSource,
+      systemGrants: [{ ...changedGrant, previousHash: systemGrantHash(grant) }],
+    },
+    core,
+  );
   await reconciler().reconcile(third);
   assert.equal(
     (
@@ -268,15 +312,18 @@ test('system grant explicit content change/removal requires prior exact hash', a
     0,
   );
 
-  const fourth = prepareProductRelease({
-    ...base,
-    sequence: '4',
-    predecessor: '3',
-    roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
-    removeSystemGrants: [
-      { owner: grant.owner, key: grant.key, expectedHash: systemGrantHash(changedGrant) },
-    ],
-  });
+  const fourth = prepareProductRelease(
+    {
+      ...base,
+      sequence: '4',
+      predecessor: '3',
+      roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
+      removeSystemGrants: [
+        { owner: grant.owner, key: grant.key, expectedHash: systemGrantHash(changedGrant) },
+      ],
+    },
+    core,
+  );
   await reconciler().reconcile(fourth);
   assert.equal(
     (await migration.query<{ n: number }[]>('SELECT count(*)::int n FROM policy_rule'))[0]?.n,
@@ -313,11 +360,13 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
   ];
   const fifth = { ...base, declarations, sequence: '5', predecessor: '4', roles };
   assert.equal(
-    prepareProductRelease({ ...fifth, removeDefaultGrants: [] }).hash,
-    prepareProductRelease(fifth).hash,
+    prepareProductRelease({ ...fifth, removeDefaultGrants: [] }, core).hash,
+    prepareProductRelease(fifth, core).hash,
     'an empty removal list keeps the published hash',
   );
-  await reconciler().reconcile(prepareProductRelease({ ...fifth, defaultGrants: [reviewGrant] }));
+  await reconciler().reconcile(
+    prepareProductRelease({ ...fifth, defaultGrants: [reviewGrant] }, core),
+  );
   const seeded = async () =>
     (
       await migration.query<{ n: number }[]>(
@@ -360,24 +409,45 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
     admin('DELETE FROM policy_rule WHERE permission_key=$1', [Buffer.from('document.review')]),
     denied,
   );
-  const sixth = prepareProductRelease({
-    ...fifth,
-    sequence: '6',
-    predecessor: '5',
-    removeDefaultGrants: [reviewGrant],
-  });
+  const sixth = prepareProductRelease(
+    {
+      ...fifth,
+      sequence: '6',
+      predecessor: '5',
+      removeDefaultGrants: [reviewGrant],
+    },
+    core,
+  );
   await reconciler().reconcile(sixth);
   assert.equal(await seeded(), 0);
   assert.equal((await reconciler().reconcile(sixth)).changed, false);
   await assert.rejects(
     reconciler().reconcile(
-      prepareProductRelease({
-        ...fifth,
-        sequence: '7',
-        predecessor: '6',
-        removeDefaultGrants: [reviewGrant],
-      }),
+      prepareProductRelease(
+        {
+          ...fifth,
+          sequence: '7',
+          predecessor: '6',
+          removeDefaultGrants: [reviewGrant],
+        },
+        core,
+      ),
     ),
     /missing/,
+  );
+});
+test('Root bootstrap and reissue refuse the offline actor id as target user', async () => {
+  await assert.rejects(
+    bootstrapProductRoot(runner, release2(), {
+      operationId: randomUUID(),
+      userId: PRODUCT_OFFLINE_ACTOR,
+      method: 'local',
+      boundaries: [],
+    }),
+    /offline actor/,
+  );
+  await assert.rejects(
+    reissueRootActivation(runner, { userId: PRODUCT_OFFLINE_ACTOR, method: 'local' }, core),
+    /offline actor/,
   );
 });

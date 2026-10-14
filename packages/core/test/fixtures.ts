@@ -2,20 +2,28 @@
 import {
   type AuthoritySnapshot,
   type CompleteFacts,
+  createAuthorizationCore,
   type Expr,
   type FactObject,
   type IdentityId,
   type Key,
-  parseTenantId,
   type RuleFact,
   type SystemDeclarations,
   type TrustedInput,
-  validate,
   type ValidatedDeclarations,
 } from '@base-authorization/core';
+import {
+  createDayjsTimestampCodec,
+  createStandardValueCodecs,
+} from '@base-authorization/value-adapters';
 
-export const tenantA = parseTenantId('00000000-0000-4000-8000-00000000000a');
-export const tenantB = parseTenantId('00000000-0000-4000-8000-00000000000b');
+/** Test composition root: the standard codecs, as apps/api and tools compose them. */
+export const core = createAuthorizationCore({
+  values: createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() }),
+});
+
+export const tenantA = core.parseTenantId('00000000-0000-4000-8000-00000000000a');
+export const tenantB = core.parseTenantId('00000000-0000-4000-8000-00000000000b');
 export const alice = 'a0000000-0000-4000-8000-000000000001' as IdentityId;
 export const bob = 'b0000000-0000-4000-8000-000000000002' as IdentityId;
 export const now = '2026-10-13T10:00:00.000000Z';
@@ -162,7 +170,7 @@ export function declarations(overrides: Partial<SystemDeclarations> = {}): Syste
 }
 
 export function validated(source: SystemDeclarations = declarations()): ValidatedDeclarations {
-  const result = validate(source);
+  const result = core.validate(source);
   if (!result.ok) throw new Error(`fixture declarations invalid: ${result.errors.join('; ')}`);
   return result.declarations;
 }

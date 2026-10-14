@@ -3,7 +3,7 @@ import { after, before, describe, test } from 'node:test';
 import {
   identityDataSourceOptions,
   tenantDataSourceOptions,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import type pg from 'pg';
 import { DataSource } from 'typeorm';
 import {

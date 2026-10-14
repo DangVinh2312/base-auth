@@ -4,7 +4,12 @@ import { statSync } from 'node:fs';
 
 const suites: Record<string, { patterns: string[]; flags: string[] }> = {
   unit: {
-    patterns: ['test/**/*.spec.ts', 'test/**/*.smoke-spec.ts', 'packages/*/test/**/*.spec.ts'],
+    patterns: [
+      'test/**/*.spec.ts',
+      'test/**/*.smoke-spec.ts',
+      'packages/*/test/**/*.spec.ts',
+      'apps/api/test/**/*.spec.ts',
+    ],
     flags: [],
   },
   e2e: { patterns: ['apps/api/test/**/*.e2e-spec.ts'], flags: ['--test-timeout=300000'] },

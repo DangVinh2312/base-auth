@@ -27,3 +27,46 @@ Chạy lại cùng suite authorization bằng `pnpm run test:integration -- test
 Test riêng tạo contention thật: một shared fence bị giữ trong lúc revoke dùng lock timeout 30 ms, tối đa một retry. PostgreSQL trả 55P03 ở cả hai lần thử; runner báo đúng 2 timeout + 1 retry và dừng bằng `TransactionConflictError`. Trường hợp cố tình này không tính vào timeout rate của workload trên.
 
 Fixture đo transaction/fence và privilege routing trên bảng tổng hợp, không đo chi phí toàn bộ login, OIDC, session projection, authorization AST, gateway, audit hoặc HTTP. Các lần chạy đều nhỏ, không có warmup/đồ thị saturation, phân bố production, nhiều replicas hay SLA. Các suite khác có thể chạy trên cùng máy nên số đo có nhiễu. Chưa có bằng chứng cần chia fence theo module/resource; giữ singleton fence và đo workload thực trước khi đề xuất ADR khác.
+
+## T8 — I/O trong fence trên đường service (2026-10-14)
+
+Lệnh: `pnpm run test:integration -- test/product-fence-io.integration-spec.ts`, chạy riêng (một container) 3 lần trước và 3 lần sau thay đổi, cùng workload. Đây là đường service `ProductAuthorization.list/detail/update` và `ProductIdentityService.logout` (revoke) mà controller HTTP gọi; **không đo HTTP/Nest/cookie**. Request HTTP có route `@ProductAuthorize` còn chạy trước một transaction `checkSession` riêng (shared fence + `resolve_session`, 6 statement) do guard kiểm session sớm; transaction đó không có trong số đo dưới đây.
+
+Môi trường: Node v24.20.0, darwin/x64, Intel Core i5-1038NG7 (4 nhân/8 luồng, 2.0 GHz), RAM host 16 GiB; Docker 29.8.2 VM 8 CPU/7.75 GiB; `postgres:18.4` (18.4 Debian), một replica, pool mặc định (max 10/login), transaction deadline 2 s, lock timeout 1 s, tối đa 2 retry. Fixture: 10 000 dòng `product_item` (3 285 khớp policy+boundary+deny), 40 permissions (`item.read`, `item.update`, 38 action khác, cùng resource), 80 rules áp dụng cho user (40 role allow code-owned + 40 identity deny runtime), 40 boundary bindings bắt buộc, obligation `audit@1` trên update. Mỗi loại thao tác: 20 warmup + 100 mẫu tuần tự; workload trộn: 8 worker, 400 thao tác (50% list 20 dòng, 20% detail, 20% update, 10% revoke).
+
+Thay đổi: `readProductAuthority` đọc user, roles, catalog/rules/boundaries **chỉ của permission đang hỏi** trong một statement (trước: 5 statement, catalog toàn bộ); clock DB gộp vào statement session; list trả trang và `total` trong một statement (bỏ count fallback khi trang rỗng). Fence, thứ tự lock, recheck session/authority trong transaction, deny/boundary và revoke giữ nguyên.
+
+| Statement/thao tác (gồm BEGIN..COMMIT) | Trước | Sau |
+| -------------------------------------- | ----: | --: |
+| list                                   |    13 |   8 |
+| detail                                 |    13 |   8 |
+| update (gồm 2 audit insert)            |    15 |  10 |
+| revoke (identity path, không đổi)      |    10 |  10 |
+
+Tuần tự, p50/p95 ms (3 lần chạy, trước → sau):
+
+| Thao tác | Latency p50                     | Latency p95                     | Lock hold p50         |
+| -------- | ------------------------------- | ------------------------------- | --------------------- |
+| list     | 25.5/27.3/27.2 → 21.3/22.2/20.9 | 33.8/44.1/40.9 → 28.2/29.9/31.8 | 22/24/24 → 18/18/18   |
+| detail   | 12.9/15.4/14.7 → 9.4/10.2/10.1  | 23.1/28.3/25.6 → 15.8/15.4/20.5 | 10/12/11 → 6/7/7      |
+| update   | 17.5/19.3/20.2 → 10.8/12.4/10.8 | 29.8/30.3/30.7 → 19.2/40.0/15.5 | 14/15/16 → 8/9/8      |
+| revoke   | 10.8/13.5/11.7 → 9.3/11.9/8.6   | 16.8/26.2/17.8 → 15.0/22.7/12.6 | 7/9/8 → 6/8/6 (nhiễu) |
+
+Workload trộn (trước → sau): elapsed 4232/4129/3952 → 2264/2765/2831 ms; latency p95 356/371/353 → 160/213/194 ms, p99 619/608/583 → 255/369/399 ms; lock wait p95 329/349/334 → 141/185/182 ms; lock hold p95 65/65/58 → 38/49/55 ms; 0 lỗi ở cả 6 lần ghi số. Lần chạy thăm dò đầu tiên (trước thay đổi, khi test còn assert 0 lỗi) có 2/400 revoke bị `25P04` (transaction_timeout 2 s) nguyên nhân chưa xác minh (giả định: revoke xếp hàng sau các shared fence); không tái hiện ở 3 lần baseline sau, nên chỉ ghi nhận là dấu hiệu contention, không phải tỷ lệ lỗi.
+
+EXPLAIN ANALYZE câu list (offset 80, 30 lần, cùng fixture, credential data): dạng cũ `count(*) OVER()` + `LIMIT/OFFSET` p50 13.46 ms (top-N heapsort); dạng mới `count(*) OVER()` + `row_number()` lọc trang p50 14.18 ms (quicksort toàn bộ 3 285 dòng khớp). Cả hai đều quét toàn bộ dòng khớp vì `total` chính xác; dạng mới đắt hơn ~0.7 ms/statement nhưng bỏ statement fallback và `total` luôn cùng snapshot với `items` (test `an empty page past the end…` tái hiện fallback cũ trả `total` của snapshot sau). Hợp đồng response không đổi; muốn tránh quét toàn bộ (keyset/ước lượng total) là đổi contract, cần ADR riêng. Sau code review (lo ngại full sort ở bảng lớn), đo thêm trên PostgreSQL 18.4 riêng với predicate tương tự (status/amount/title + `NOT EXISTS`), offset 80, median 7 lần (ms, cũ → mới): 100k dòng ORDER BY id 108 → 90, ORDER BY title,id 74 → 83; 1M dòng ORDER BY id 1201 → 1339, ORDER BY title,id 1141 → 1018. Chênh lệch ±12%, cả hai đều tăng tuyến tính vì `total` chính xác quét mọi dòng khớp; ở 1M dòng cả hai đã gần statement timeout 2 s — giới hạn thật nằm ở contract total, không ở cách lấy trang.
+
+Không suy ra năng lực production hay nhu cầu chia fence từ số đo này: một máy, fixture tổng hợp, không warmup kéo dài, không có SLO. Còn lại trong fence: revoke giữ `last_seen_at` touch + revoke + audit + revision (T9), update có 2 audit insert (effect + obligation, khác mục đích). START/SET ISOLATION/set_config là 3 round-trip trước khi lấy fence (không tính vào lock hold), chưa gộp.
+
+## T9 — advisory lock của limiter khi có revoke (2026-10-14)
+
+Lệnh: `pnpm run test:integration -- test/product-load.integration-spec.ts` (test `limiter advisory-lock wait…`), chạy riêng 2 lần với thứ tự lock cũ (advisory sau fence, bản HEAD) và 2 lần sau ADR 0010 (advisory trước fence); cùng máy/môi trường như mục T8. Workload: 8 worker gọi `rateLimit` 200 lần (client/định danh khác nhau, purpose `load`), đồng thời một vòng `revoke` liên tục (`UPDATE app_user SET auth_epoch…`, exclusive fence). Hai kịch bản: bảng `rate_limit` rỗng và gần đầy (9 990 dòng còn hạn, eviction mỗi lần). Thời gian chờ advisory đo bằng `logQuerySlow` của TypeORM (ms nguyên, < 1 ms tính 0).
+
+| Kịch bản (2 lần) | Elapsed ms  | Limiter p50 / p95 ms         | Advisory wait p50 / p95 ms | Revoke hoàn tất, p95 ms        | Lỗi                |
+| ---------------- | ----------- | ---------------------------- | -------------------------- | ------------------------------ | ------------------ |
+| rỗng, trước      | 1595 / 2437 | 54.6 / 107.4; 90.2 / 174.8   | 43 / 87; 67 / 147          | 3 (p95 1559); 3 (p95 2012)     | 0; 1× `25P04`      |
+| rỗng, sau        | 2464 / 2061 | 89.1 / 160.3; 78.5 / 113.3   | 74 / 121; 66 / 84          | 202 (p95 25.3); 202 (p95 14.4) | 0; 0               |
+| đầy, trước       | 2848 / 3199 | 102.9 / 182.5; 117.7 / 204.1 | 83 / 153; 98 / 168         | 2 (p95 2015); 2 (p95 2012)     | 1× `25P04` mỗi lần |
+| đầy, sau         | 3363 / 3049 | 120.5 / 224.2; 116.8 / 144.3 | 103 / 199; 99 / 125        | 201 (p95 30.4); 201 (p95 20.3) | 0; 0               |
+
+Trước ADR 0010, mọi lần đăng nhập đang chờ advisory lock giữ share của fence, nên revoke gần như không lấy được exclusive fence (`25P04` = transaction_timeout 2 s). Sau thay đổi, revoke chen được giữa các transaction limiter; latency limiter nằm trong cùng dải nhiễu, elapsed tăng vì ~200 revoke thực sự chạy xen kẽ. Vòng revoke liên tục là stress test, không phải tỷ lệ revoke thực tế. Bảng gần đầy làm advisory wait tăng ~1.5× (DELETE hết hạn + `count(*)` + eviction quét bảng dưới advisory lock). Các ngưỡng limiter không đổi; chọn ngưỡng/kiến trúc limiter mới cần tải đăng nhập và SLO thật.

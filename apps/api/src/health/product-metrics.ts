@@ -1,4 +1,7 @@
 import type { ProductTransactionOptions } from '@base-authorization/typeorm-postgres';
+/** Handler-facing token: only the snapshot, not the transaction observer. */
+export const METRICS_SNAPSHOT = Symbol('METRICS_SNAPSHOT');
+export type MetricsSnapshot = Pick<ProductMetrics, 'snapshot'>;
 const buckets = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000] as const;
 /** Fixed metric/mode labels from the transaction adapter, with bounded cumulative histograms. */
 export class ProductMetrics {

@@ -1,4 +1,4 @@
-import { canonicalTimestamp, compareValues, normalizeValue } from './expression.js';
+import type { AuthorizationCore } from './runtime.js';
 import type {
   AuthorizedPlan,
   CompleteFacts,
@@ -24,10 +24,14 @@ type Current =
  * Decides one record against a plan with complete facts. Used for record checks and differential
  * tests against SQL; it does not replace query enforcement. Malformed or missing facts deny.
  */
-export function evaluate(plan: AuthorizedPlan, facts: CompleteFacts): Decision {
+export function evaluate(
+  core: AuthorizationCore,
+  plan: AuthorizedPlan,
+  facts: CompleteFacts,
+): Decision {
   try {
     if (facts.tenant !== plan.tenant) return { effect: 'deny', internalReason: 'tenant_mismatch' };
-    return evaluatePlan(plan, {
+    return evaluatePlan(core, plan, {
       ...facts,
       edges: facts.edges.filter((edge) => edge.tenant === plan.tenant),
       exceptions: facts.exceptions.filter((exception) => exception.tenant === plan.tenant),
@@ -37,11 +41,16 @@ export function evaluate(plan: AuthorizedPlan, facts: CompleteFacts): Decision {
   }
 }
 
-export function evaluateUser(plan: UserAuthorizedPlan, facts: UserCompleteFacts): UserDecision {
-  return evaluatePlan(plan, facts);
+export function evaluateUser(
+  core: AuthorizationCore,
+  plan: UserAuthorizedPlan,
+  facts: UserCompleteFacts,
+): UserDecision {
+  return evaluatePlan(core, plan, facts);
 }
 
 function evaluatePlan<P extends AuthorizedPlan | UserAuthorizedPlan>(
+  core: AuthorizationCore,
   plan: P,
   facts: UserCompleteFacts,
 ):
@@ -52,15 +61,16 @@ function evaluatePlan<P extends AuthorizedPlan | UserAuthorizedPlan>(
       readonly obligations: P['obligations'];
     } {
   try {
-    const now = canonicalTimestamp(facts.now) ?? invalid('invalid_now');
-    if (now >= plan.validUntil) return { effect: 'deny', internalReason: 'plan_expired' };
+    const time = (value: string) => core.canonicalTimestamp(value) ?? invalid('invalid_time');
+    const compareTime = (a: string, b: string) => core.compareValues('timestamp', a, b);
+    const now = core.canonicalTimestamp(facts.now) ?? invalid('invalid_now');
+    if (compareTime(now, plan.validUntil) >= 0)
+      return { effect: 'deny', internalReason: 'plan_expired' };
     if (facts.record.type !== plan.resource)
       return { effect: 'deny', internalReason: 'resource_mismatch' };
     const active = (startsAt: string, expiresAt: string | null) => {
-      const start = canonicalTimestamp(startsAt) ?? invalid('invalid_time');
-      const end =
-        expiresAt === null ? null : (canonicalTimestamp(expiresAt) ?? invalid('invalid_time'));
-      return start <= now && (end === null || end > now);
+      const end = expiresAt === null ? null : time(expiresAt);
+      return compareTime(time(startsAt), now) <= 0 && (end === null || compareTime(end, now) > 0);
     };
 
     const test = (expr: PlanExpr, current: Current): boolean => {
@@ -80,8 +90,8 @@ function evaluatePlan<P extends AuthorizedPlan | UserAuthorizedPlan>(
         case 'lte': {
           const raw = field(current, expr.field);
           if (raw === null) return false; // null never matches a comparison
-          const value = normalizeValue(expr.kind, raw) ?? invalid(`invalid_${expr.kind}_fact`);
-          const order = compareValues(expr.kind, value, expr.value);
+          const value = core.normalizeValue(expr.kind, raw) ?? invalid(`invalid_${expr.kind}_fact`);
+          const order = core.compareValues(expr.kind, value, expr.value);
           return expr.op === 'eq' ? order === 0 : expr.op === 'lt' ? order < 0 : order <= 0;
         }
         case 'exists': {

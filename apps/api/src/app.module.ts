@@ -1,21 +1,25 @@
-import { PRODUCT_HTTP_SERVICES } from './http-services.js';
 import { Module, type DynamicModule } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
-import { ReadinessGate, ProductAuthorizationModule } from '@base-authorization/nest';
-import { HealthController } from './health.controller.js';
-import { ProductController } from './product.controller.js';
-import { ProductRuntime } from './product-runtime.js';
-import { productRelease } from './product-manifest.js';
-import { sessionSecret, type HttpRequest } from './http-security.js';
-import { ProductErrorFilter } from './product.filter.js';
+import { ProductAuthorizationModule } from '@base-authorization/nest';
+import { AdministrationModule } from './administration/administration.module.js';
+import { AuthModule } from './auth/auth.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
+import { HealthModule } from './health/health.module.js';
+import { sessionSecret, type HttpRequest } from './infrastructure/http-security.js';
+import { ProductErrorFilter } from './infrastructure/product-error.filter.js';
+import type { ProductRuntime } from './infrastructure/product-runtime.js';
+import { RuntimeModule } from './infrastructure/runtime.module.js';
+import { OpenApiController } from './openapi/openapi.controller.js';
 @Module({})
 export class AppModule {
+  /** Composition root; `runtime` may be a fixture (tests). No DB access here. */
   static register(runtime: ProductRuntime): DynamicModule {
+    const runtimeModule = RuntimeModule.register(runtime);
     return {
       module: AppModule,
       imports: [
         ProductAuthorizationModule.register({
-          declarations: productRelease.declarations,
+          declarations: runtime.release.declarations,
           requestAuth: {
             authenticate: (request) =>
               runtime.authorization.checkSession(
@@ -23,14 +27,14 @@ export class AppModule {
               ),
           },
         }),
+        // Each feature module sees only the facade tokens RuntimeModule exports.
+        ...[HealthModule, AuthModule, DocumentsModule, AdministrationModule].map((module) => ({
+          module,
+          imports: [runtimeModule],
+        })),
       ],
-      controllers: [HealthController, ProductController],
-      providers: [
-        { provide: ProductRuntime, useValue: runtime },
-        { provide: PRODUCT_HTTP_SERVICES, useValue: runtime.httpServices() },
-        { provide: ReadinessGate, useValue: runtime.readiness },
-        { provide: APP_FILTER, useClass: ProductErrorFilter },
-      ],
+      controllers: [OpenApiController],
+      providers: [{ provide: APP_FILTER, useClass: ProductErrorFilter }],
     };
   }
 }

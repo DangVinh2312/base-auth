@@ -1,5 +1,4 @@
 import type { FieldType, RelationDeclaration, ResourceDeclaration } from './declarations.js';
-import { canonicalInt64, compareText, isWellFormedText } from './key-codec.js';
 import type { Expr, FieldKind, PlanExpr, Scalar, ValueRef } from './types.js';
 
 /** Context type reached through a relation whose target is an identity. */
@@ -8,7 +7,7 @@ export const IDENTITY_FIELDS: Readonly<Record<string, FieldType>> = Object.freez
 });
 export const MAX_PATH_DEPTH = 8;
 
-const fieldKinds: readonly FieldKind[] = [
+export const fieldKinds: readonly FieldKind[] = [
   'integer',
   'decimal',
   'string',
@@ -17,73 +16,11 @@ const fieldKinds: readonly FieldKind[] = [
   'timestamp',
 ];
 const orderedKinds: readonly FieldKind[] = ['integer', 'decimal', 'string', 'timestamp'];
-const decimalPattern = /^(-?)(0|[1-9][0-9]*)(?:\.([0-9]+))?$/;
-const timestampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?Z$/;
-const anyUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-
 export const isFieldKind = (value: unknown): value is FieldKind =>
   fieldKinds.includes(value as FieldKind);
 
-/** UTC timestamp with exactly 6 fractional digits, so string order is time order. */
-export function canonicalTimestamp(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const match = timestampPattern.exec(value);
-  if (!match || Number.isNaN(Date.parse(`${match[1]}Z`))) return undefined;
-  return `${match[1]}.${(match[2] ?? '').padEnd(6, '0')}Z`;
-}
-
-/** Normalizes a value for a field kind; undefined when the value does not have that type. */
-export function normalizeValue(kind: FieldKind, value: unknown): Scalar | undefined {
-  switch (kind) {
-    case 'integer':
-      return canonicalInt64(value);
-    case 'decimal':
-      return typeof value === 'string' && decimalPattern.test(value) ? value : undefined;
-    case 'string':
-      return isWellFormedText(value) ? value : undefined;
-    case 'uuid':
-      return typeof value === 'string' && anyUuid.test(value) ? value.toLowerCase() : undefined;
-    case 'boolean':
-      return typeof value === 'boolean' ? value : undefined;
-    case 'timestamp':
-      return canonicalTimestamp(value);
-  }
-}
-
-function compareDecimal(a: string, b: string): number {
-  const parse = (text: string) => {
-    const [, sign = '', whole = '0', fraction = ''] = decimalPattern.exec(text) ?? [];
-    const digits = fraction.replace(/0+$/, '');
-    const negative = sign === '-' && (whole !== '0' || digits !== '');
-    return { negative, whole, digits };
-  };
-  const x = parse(a);
-  const y = parse(b);
-  if (x.negative !== y.negative) return x.negative ? -1 : 1;
-  const magnitude = () => {
-    if (x.whole.length !== y.whole.length) return x.whole.length - y.whole.length;
-    if (x.whole !== y.whole) return x.whole < y.whole ? -1 : 1;
-    const width = Math.max(x.digits.length, y.digits.length);
-    const xf = x.digits.padEnd(width, '0');
-    const yf = y.digits.padEnd(width, '0');
-    return xf === yf ? 0 : xf < yf ? -1 : 1;
-  };
-  return x.negative ? -magnitude() : magnitude();
-}
-
-/** Exact comparison of two normalized values of the same kind. */
-export function compareValues(kind: FieldKind, a: Scalar, b: Scalar): number {
-  if (kind === 'boolean' || kind === 'uuid') return a === b ? 0 : 1;
-  const left = String(a);
-  const right = String(b);
-  if (kind === 'integer') {
-    const diff = BigInt(left) - BigInt(right);
-    return diff === 0n ? 0 : diff < 0n ? -1 : 1;
-  }
-  if (kind === 'decimal') return compareDecimal(left, right);
-  if (kind === 'string') return compareText(left, right);
-  return left === right ? 0 : left < right ? -1 : 1; // canonical timestamps
-}
+/** Instance normalization (see runtime.ts); undefined when the value does not have that kind. */
+export type Normalize = (kind: FieldKind, value: unknown) => Scalar | undefined;
 
 export interface DeclarationTables {
   readonly resources: Readonly<Record<string, ResourceDeclaration>>;
@@ -109,6 +46,7 @@ export interface CheckContext {
   readonly tables: DeclarationTables;
   readonly maxDepth: number;
   readonly maxNodes: number;
+  readonly normalize: Normalize;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -154,7 +92,7 @@ export function checkExpr(expr: unknown, ctx: CheckContext, errors: string[], at
         if (node.op !== 'eq' && !orderedKinds.includes(field.kind)) {
           errors.push(`${path}: ${node.op} is not defined for ${field.kind}`);
         }
-        checkValueRef(node.value, field.kind, ctx.parameters, errors, path);
+        checkValueRef(node.value, field.kind, ctx, errors, path);
         return;
       }
       case 'isNull': {
@@ -195,14 +133,15 @@ export function checkExpr(expr: unknown, ctx: CheckContext, errors: string[], at
 function checkValueRef(
   ref: unknown,
   kind: FieldKind,
-  parameters: CheckContext['parameters'],
+  ctx: CheckContext,
   errors: string[],
   path: string,
 ): void {
+  const parameters = ctx.parameters;
   if (!isRecord(ref)) return void errors.push(`${path}: value must be a typed reference`);
   switch (ref.from) {
     case 'literal':
-      if (normalizeValue(kind, ref.value) === undefined)
+      if (ctx.normalize(kind, ref.value) === undefined)
         errors.push(`${path}: literal is not a valid ${kind}`);
       return;
     case 'principal':

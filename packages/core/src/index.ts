@@ -14,25 +14,11 @@ export type {
   ValidationResult,
 } from './declarations.js';
 export { refKey } from './declarations.js';
-export { evaluate, evaluateUser } from './evaluator.js';
-export {
-  canonicalTimestamp,
-  compareValues,
-  IDENTITY_FIELDS,
-  MAX_PATH_DEPTH,
-  normalizeValue,
-} from './expression.js';
-export {
-  canonicalInt64,
-  compareText,
-  keyEquals,
-  keyToString,
-  MAX_KEY_BYTES,
-  parseKey,
-  utf8ByteLength,
-} from './key-codec.js';
-export { plan, planUser } from './planner.js';
-export { canonicalJson, isValidated, validate } from './policy-validator.js';
+export { IDENTITY_FIELDS, MAX_PATH_DEPTH } from './expression.js';
+export { compareText, keyEquals, keyToString, MAX_KEY_BYTES, utf8ByteLength } from './key-codec.js';
+export type { Comparison, ScalarCodec, ValueCodecs } from './ports/value-codecs.js';
+export { canonicalJson } from './policy-validator.js';
+export { type AuthorizationCore, createAuthorizationCore } from './runtime.js';
 export {
   type AuthoritySnapshot,
   type AuthorizedPlan,
@@ -48,12 +34,10 @@ export {
   type FieldKind,
   type FieldValue,
   type IdentityId,
-  isCanonicalUuid,
   type Key,
   type KeyKind,
   type Lifecycle,
   type Obligation,
-  parseTenantId,
   type PermissionFact,
   type PlanExpr,
   type RelationRef,

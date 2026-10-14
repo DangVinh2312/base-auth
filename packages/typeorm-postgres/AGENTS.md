@@ -4,8 +4,19 @@ Adapter PostgreSQL/TypeORM: schema, migrations, tenant provisioning, connection 
 
 ## Ranh giới
 
-- Phụ thuộc `@base-authorization/core` qua `workspace:*` và public exports; không import NestJS hay code của `apps/api`.
+- Phụ thuộc `@base-authorization/core` qua `workspace:*` và public exports; không import NestJS, code của `apps/api` hay `value-adapters`. Nhận `AuthorizationCore` làm argument (`prepare*Release(source, core)`, binding registries, reconciler `options.core`, `PostgresAuthority`, root offline commands); release/declarations của core khác bị từ chối. Tenant id legacy kiểm bằng grammar identifier nội bộ (`parseRoutableTenant`) vì tên DB/role suy ra từ nó.
 - Không export DataSource/QueryRunner/credential thô cho handler. Lease và `manager` chỉ dành cho adapter.
+- Public entrypoints (`package.json#exports`, mỗi `src/<name>.ts` chỉ re-export, không logic). Đây là ranh giới cho developer, không phải process isolation; `test/package-boundaries.spec.ts` chốt danh sách export, ESLint chặn handler import entrypoint đặc quyền.
+
+| Entrypoint      | Nội dung                                                                                                                           | Ai được import                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `.`             | Error classes, helper thuần (`canonicalLoginEmail`, `rateLimitClient`), type contracts (service types chỉ `export type`)           | Mọi nơi, kể cả handler                                |
+| `./composition` | Constructors/low-level: `ProductTransactionRunner`, services, registries, gateway, `productObligations`, `verifyProductPrivileges` | `apps/api/src/infrastructure`, `tools/`, test adapter |
+| `./operations`  | Offline: provision/migrate/data source options, root bootstrap/revoke/reissue, `appendProductAudit`                                | `tools/`, test offline                                |
+| `./legacy`      | API tenant lịch sử (registry, provisioner, tenant runner/gateway/compiler, reconciler cũ)                                          | Test/CLI legacy, `apps/api/src/legacy`                |
+
+Thêm export mới: chọn entrypoint theo bảng và cập nhật literal trong `test/package-boundaries.spec.ts`; không thêm raw runner/pool/audit writer vào root.
+
 - Entities không được dùng để sinh schema: `synchronize: false`, migrations viết tay.
 
 ## Runtime một sản phẩm
@@ -14,7 +25,7 @@ Adapter PostgreSQL/TypeORM: schema, migrations, tenant provisioning, connection 
 - `product-transaction.ts`: fixed-purpose pools, singleton fence, READ COMMITTED, facts statements sau lock, timeout/retry/metrics hữu hạn. Pool capability không có thì fail closed, không fallback login.
 - `product-sql.ts`, `product-gateway.ts`, `product-authority.ts`: user plan, cùng policy/boundary/grant/deny predicate, projection, native keys và write action registration. API chỉ nhận service operations, không raw manager.
 - `product-manifest.ts`: immutable release, exact system grants, protected-state drift gate, persistent bootstrap. Boot không tạo user/assignment; runtime seed không takeover.
-- `product-identity.ts`, `product-oidc.ts`: hash/exchange ngoài fence, recheck versions/session/authority trong fence; không email link hoặc secret log.
+- `product-identity.ts`, `product-oidc.ts`: hash/exchange ngoài fence, recheck versions/session/authority trong fence; không email link hoặc secret log. Limiter lấy advisory key qua `run(…, { serialize })` trước fence (ADR0010); purge session hết hạn là lệnh offline theo batch.
 - New tables/rights thay đổi phải cập nhật credential matrix, migration/privilege tests và quyết định thiết kế liên quan (nền hiện tại ADR 0008; thay quyết định đã chấp nhận thì thêm ADR superseding). Product source không import Nest hoặc app domain.
 
 Các file/bảng tenant bên dưới là compatibility/historical, không wire vào API mới. Boundary đã có trong cả legacy và user path; không báo thiếu theo prose cũ.
@@ -29,11 +40,11 @@ Các file/bảng tenant bên dưới là compatibility/historical, không wire v
 | `tenant-provisioner.ts`          | Tạo DB/role theo tenant, ma trận quyền `tenantPrivileges`, resume idempotent                          |
 | `datasource-registry.ts`         | `TenantDataSourceRegistry`: single-flight, refcount, eviction, budget, anchor                         |
 | `authority-store.ts`             | Đọc authority facts từ tenant DB                                                                      |
-| `sql-compiler.ts`                | `BindingRegistry`, `compilePlan`/`compileNamed` → SQL có bind parameter                               |
+| `sql-compiler.ts`                | `BindingRegistry(core, …)`, `compilePlan`/`compileNamed` → SQL có bind parameter                      |
 | `data-gateway.ts`                | `DataGateway`: list/detail/count cùng predicate, projection allowlist                                 |
 | `tenant-transaction.ts`          | `TenantTransactionRunner` (fence, timeout, retry 40P01/40001/55P03), `PostgresAuthority.withSnapshot` |
 | `obligations.ts`                 | `fulfillObligations` trong transaction trước khi trả payload                                          |
-| `manifest-reconciler.ts`         | `prepareRelease` + `ManifestReconciler.reconcile` (sequence/hash, không downgrade, seeds)             |
+| `manifest-reconciler.ts`         | `prepareRelease(source, core)` + `ManifestReconciler.reconcile` (sequence/hash, không downgrade)      |
 
 Mọi truy cập authority/data đi qua `withSnapshot`/`TenantTransactionRunner`: fence là statement đầu, facts đọc ở statement sau, cùng transaction. Mode `read/write` (data role, shared fence qua hàm `authz_acquire_shared_fence`), `admin` (authority, `FOR UPDATE` + revision), `sync` (sync role). Permission boundary được load cùng authority trong fence; giữ cùng semantics ở product path.
 
@@ -51,7 +62,7 @@ Mọi truy cập authority/data đi qua `withSnapshot`/`TenantTransactionRunner`
 - **Privilege/drift:** thay bảng/function/trigger/role phải cập nhật startup probe và negative tests bằng credential thật. Kiểm owner/ACL, SECURITY DEFINER với search_path an toàn, schema CREATE/TEMP và enabled mode của mọi protection trigger liên quan; không hardcode tổng số trigger để thay kiểm đúng từng bảo vệ.
 - **Query cost:** loader chỉ lấy facts/cột cần thiết, có giới hạn và thứ tự ổn định khi pagination. Đo N+1/full-catalog reads/lock wait trước tối ưu; không cache authority qua request khi chưa có protocol invalidation đã kiểm chứng.
 - **Scalar parity:** parameter type, collation và timestamp precision phải khớp codec/core; không sửa semantics bằng cast cột để query chạy được. Clock adapter của app không thay `statement_timestamp()` trong quyết định hiệu lực quyền.
-- **Audit/delivery:** ghi event theo contract trong transaction; gửi ra network sau commit qua cơ chế delivery phù hợp yêu cầu durability. Không giữ fence khi gọi sink, không báo delivered khi chỉ enqueue/start promise.
+- **Audit/delivery:** ghi event theo contract trong transaction; gửi ra network sau commit qua cơ chế delivery phù hợp yêu cầu durability. Không giữ fence khi gọi sink, không báo delivered khi chỉ enqueue/start promise. `product-outbox.ts` (ADR0011): claim lease + `SKIP LOCKED`, send ngoài transaction, ack theo `lease_token`, retry/park hữu hạn, login `outbox` chỉ SELECT outbox + UPDATE cột delivery. Câu lệnh `UPDATE … RETURNING` bọc trong `WITH … SELECT` (TypeORM trả `[rows, count]` cho UPDATE trần).
 
 ## Test
 

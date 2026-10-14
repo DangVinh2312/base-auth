@@ -1,19 +1,14 @@
 import { createHash } from 'node:crypto';
 import {
-  canonicalInt64,
+  type AuthorizationCore,
   canonicalJson,
-  canonicalTimestamp,
   type IdentityId,
-  isCanonicalUuid,
   type Key,
-  normalizeValue,
-  parseKey,
   refKey,
   type RelationRef,
   type Scalar,
   type SystemDeclarations,
   type TenantId,
-  validate,
   type ValidatedDeclarations,
 } from '@base-authorization/core';
 import { type EntityManager, QueryFailedError } from 'typeorm';
@@ -118,7 +113,8 @@ export class ReleaseRejectedError extends Error {
   }
 }
 
-const verified = new WeakSet<object>();
+/** Release → the authorization core that validated it (provenance; never part of the hash). */
+const verified = new WeakMap<object, AuthorizationCore>();
 const sizeLimits = {
   roles: 200,
   defaultGrants: 1_000,
@@ -138,11 +134,15 @@ const utf8 = (value: string) => Buffer.from(value, 'utf8');
 /**
  * Validates and freezes a release from a trusted deployment artifact before any lock is taken (size
  * limits, references, typed parameters and keys) and computes its canonical hash. It does not verify
- * a signature (none exists yet, ADR 0004). `reconcile` accepts only these objects.
+ * a signature (none exists yet, ADR 0004). `reconcile` accepts only these objects, and only from the
+ * same `core`. The core is provenance, not content: it never enters the hash.
  */
-export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
-  const sequence = canonicalInt64(source.sequence);
-  const predecessor = canonicalInt64(source.predecessor);
+export function prepareRelease(
+  source: ReleaseSource,
+  core: AuthorizationCore,
+): VerifiedReleaseManifest {
+  const sequence = core.canonicalInt64(source.sequence);
+  const predecessor = core.canonicalInt64(source.predecessor);
   if (
     !sequence ||
     !predecessor ||
@@ -152,7 +152,7 @@ export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
   ) {
     reject('invalid_release', 'sequence must be a positive int64 above its predecessor');
   }
-  const validated = validate(source.declarations);
+  const validated = core.validate(source.declarations);
   if (!validated.ok) return reject('invalid_release', validated.errors.join('; '));
   const declarations = validated.declarations;
   for (const [name, limit] of Object.entries(sizeLimits)) {
@@ -199,7 +199,7 @@ export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
     const parameters: Record<string, Scalar> = {};
     for (const name of names) {
       const value = Object.hasOwn(grant.parameters, name)
-        ? normalizeValue(template!.parameters[name]!, grant.parameters[name])
+        ? core.normalizeValue(template!.parameters[name]!, grant.parameters[name])
         : undefined;
       if (value === undefined) return reject('invalid_release', `default grant parameter ${name}`);
       parameters[name] = value;
@@ -231,14 +231,19 @@ export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
     ) {
       return reject('invalid_release', `seed ${seed.key} relation does not match its endpoints`);
     }
-    const startsAt = canonicalTimestamp(seed.startsAt);
-    const expiresAt = seed.expiresAt === undefined ? undefined : canonicalTimestamp(seed.expiresAt);
-    if (!startsAt || (seed.expiresAt !== undefined && (!expiresAt || expiresAt <= startsAt))) {
+    const startsAt = core.canonicalTimestamp(seed.startsAt);
+    const expiresAt =
+      seed.expiresAt === undefined ? undefined : core.canonicalTimestamp(seed.expiresAt);
+    if (
+      !startsAt ||
+      (seed.expiresAt !== undefined &&
+        (!expiresAt || core.compareValues('timestamp', expiresAt, startsAt) <= 0))
+    ) {
       reject('invalid_release', `seed ${seed.key} validity window`);
     }
     const endpoint = (end: RelationSeed['source']) => ({
       type: end.type,
-      key: parseKey(declarations.resources[end.type]!.keyKind, end.key.value),
+      key: core.parseKey(declarations.resources[end.type]!.keyKind, end.key.value),
     });
     return {
       owner: seed.owner,
@@ -259,7 +264,7 @@ export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
   const bindingIds = new Set<string>();
   const boundaryBindings = source.boundaryBindings.map((seed) => {
     const id = `${seed.identity}/${seed.permission}`;
-    if (!ownerKey.test(seed.owner) || !isCanonicalUuid(seed.identity) || bindingIds.has(id))
+    if (!ownerKey.test(seed.owner) || !core.isCanonicalUuid(seed.identity) || bindingIds.has(id))
       reject('invalid_release', `boundary binding ${seed.owner}/${id}`);
     bindingIds.add(id);
     const ref = refKey(seed.boundary);
@@ -281,7 +286,7 @@ export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
     };
   });
   const removeBoundaryBindings = source.removeBoundaryBindings.map((removal) => {
-    if (!ownerKey.test(removal.owner) || !isCanonicalUuid(removal.identity))
+    if (!ownerKey.test(removal.owner) || !core.isCanonicalUuid(removal.identity))
       reject('invalid_release', 'boundary binding removal');
     return { owner: removal.owner, identity: removal.identity, permission: removal.permission };
   });
@@ -316,11 +321,13 @@ export function prepareRelease(source: ReleaseSource): VerifiedReleaseManifest {
     removeBoundaryBindings,
     hash,
   });
-  verified.add(manifest);
+  verified.set(manifest, core);
   return manifest;
 }
 
 export interface ReconcilerOptions {
+  /** The runtime's core; releases prepared by another core are refused. */
+  readonly core: AuthorizationCore;
   /** Deployment workload identity recorded in audit events. */
   readonly actor: IdentityId;
   /** Validators and obligation handlers this binary registers; a release needing more is refused. */
@@ -341,15 +348,15 @@ export class ManifestReconciler {
   readonly #options: ReconcilerOptions;
 
   constructor(runner: TenantTransactionRunner, options: ReconcilerOptions) {
-    if (!isCanonicalUuid(options.actor))
+    if (!options.core.isCanonicalUuid(options.actor))
       throw new TypeError('Reconciler actor must be a canonical UUID');
     this.#runner = runner;
     this.#options = options;
   }
 
   async reconcile(tenant: TenantId, release: VerifiedReleaseManifest): Promise<SyncResult> {
-    if (!verified.has(release))
-      reject('invalid_release', 'release was not prepared by prepareRelease');
+    if (verified.get(release) !== this.#options.core)
+      reject('invalid_release', 'release was not prepared by prepareRelease with this core');
     const needed = [
       ...release.declarations.capabilities.validators,
       ...release.declarations.capabilities.obligationHandlers,

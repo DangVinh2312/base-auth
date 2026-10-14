@@ -1,29 +1,20 @@
 import { refKey } from './declarations.js';
-import {
-  ConfigurationError,
-  canonicalTimestamp,
-  deepFreeze,
-  isDenySafe,
-  lowerExpr,
-  normalizeValue,
-  simplify,
-} from './expression.js';
-import { isValidated } from './policy-validator.js';
-import {
-  type AuthorizedPlan,
-  type AuthoritySnapshot,
-  type Decision,
-  type FieldKind,
-  isCanonicalUuid,
-  type PlanExpr,
-  type RuleFact,
-  type Scalar,
-  type TrustedInput,
-  type UserAuthorizedPlan,
-  type UserAuthoritySnapshot,
-  type UserDecision,
-  type UserTrustedInput,
-  type ValueRef,
+import { ConfigurationError, deepFreeze, isDenySafe, lowerExpr, simplify } from './expression.js';
+import type { AuthorizationCore } from './runtime.js';
+import type {
+  AuthorizedPlan,
+  AuthoritySnapshot,
+  Decision,
+  FieldKind,
+  PlanExpr,
+  RuleFact,
+  Scalar,
+  TrustedInput,
+  UserAuthorizedPlan,
+  UserAuthoritySnapshot,
+  UserDecision,
+  UserTrustedInput,
+  ValueRef,
 } from './types.js';
 
 class Denied extends Error {}
@@ -39,14 +30,19 @@ const deny = (reason: string): never => {
  * Tenant and membership are hard boundaries checked first. Any missing, unknown or malformed fact
  * or configuration denies; nothing is skipped or truncated. Pure: no I/O, inputs are not mutated.
  */
-export function plan(input: TrustedInput, snapshot: AuthoritySnapshot): Decision {
+export function plan(
+  core: AuthorizationCore,
+  input: TrustedInput,
+  snapshot: AuthoritySnapshot,
+): Decision {
   try {
-    if (!isValidated(snapshot.declarations)) deny('unvalidated_declarations');
-    if (!isCanonicalUuid(input.tenant) || input.tenant !== snapshot.tenant) deny('tenant_mismatch');
+    if (!core.isValidated(snapshot.declarations)) deny('unvalidated_declarations');
+    if (!core.isCanonicalUuid(input.tenant) || input.tenant !== snapshot.tenant)
+      deny('tenant_mismatch');
     const membership = snapshot.membership ?? deny('inactive_membership');
     if (membership.identity !== input.principal.id || membership.state !== 'active')
       deny('inactive_membership');
-    const decision = buildPlan(input, {
+    const decision = buildPlan(core, input, {
       ...snapshot,
       user: { id: membership.identity, state: membership.state },
     });
@@ -67,9 +63,13 @@ export function plan(input: TrustedInput, snapshot: AuthoritySnapshot): Decision
 }
 
 /** Product entry point: no tenant routing or membership is involved. */
-export function planUser(input: UserTrustedInput, snapshot: UserAuthoritySnapshot): UserDecision {
+export function planUser(
+  core: AuthorizationCore,
+  input: UserTrustedInput,
+  snapshot: UserAuthoritySnapshot,
+): UserDecision {
   try {
-    return buildPlan(input, snapshot);
+    return buildPlan(core, input, snapshot);
   } catch (error) {
     if (error instanceof Denied) return { effect: 'deny', internalReason: error.message };
     if (error instanceof ConfigurationError)
@@ -78,17 +78,21 @@ export function planUser(input: UserTrustedInput, snapshot: UserAuthoritySnapsho
   }
 }
 
-function buildPlan(input: UserTrustedInput, snapshot: UserAuthoritySnapshot): UserDecision {
+function buildPlan(
+  core: AuthorizationCore,
+  input: UserTrustedInput,
+  snapshot: UserAuthoritySnapshot,
+): UserDecision {
   const declarations = snapshot.declarations;
-  if (!isValidated(declarations)) deny('unvalidated_declarations');
+  if (!core.isValidated(declarations)) deny('unvalidated_declarations');
 
   const principal = input.principal;
-  if (!isCanonicalUuid(principal.id) || typeof principal.assurance !== 'number')
+  if (!core.isCanonicalUuid(principal.id) || typeof principal.assurance !== 'number')
     deny('invalid_principal');
   if (snapshot.user?.id !== principal.id || snapshot.user.state !== 'active') deny('inactive_user');
-  const now = canonicalTimestamp(input.now) ?? deny('invalid_now');
-  const validUntil = canonicalTimestamp(input.validUntil) ?? deny('invalid_valid_until');
-  if (validUntil <= now) deny('invalid_validity_window');
+  const now = core.canonicalTimestamp(input.now) ?? deny('invalid_now');
+  const validUntil = core.canonicalTimestamp(input.validUntil) ?? deny('invalid_valid_until');
+  if (core.compareValues('timestamp', validUntil, now) <= 0) deny('invalid_validity_window');
 
   // Registered resource/action, catalog binding and its exact policy version.
   const resource = Object.hasOwn(declarations.resources, input.resource)
@@ -165,10 +169,11 @@ function buildPlan(input: UserTrustedInput, snapshot: UserAuthoritySnapshot): Us
   }
 
   const resolveCommon = (ref: ValueRef, kind: FieldKind): Scalar | undefined => {
-    if (ref.from === 'literal') return normalizeValue(kind, ref.value);
-    if (ref.from === 'principal' && ref.name === 'id') return normalizeValue(kind, principal.id);
+    if (ref.from === 'literal') return core.normalizeValue(kind, ref.value);
+    if (ref.from === 'principal' && ref.name === 'id')
+      return core.normalizeValue(kind, principal.id);
     if (ref.from === 'context' && Object.hasOwn(input.context, ref.name))
-      return normalizeValue(kind, input.context[ref.name]);
+      return core.normalizeValue(kind, input.context[ref.name]);
     return undefined;
   };
   const bind =
@@ -177,7 +182,7 @@ function buildPlan(input: UserTrustedInput, snapshot: UserAuthoritySnapshot): Us
       const value =
         ref.from === 'parameter'
           ? parameters && Object.hasOwn(parameters, ref.name)
-            ? normalizeValue(kind, parameters[ref.name])
+            ? core.normalizeValue(kind, parameters[ref.name])
             : undefined
           : resolveCommon(ref, kind);
       return value ?? deny(`unresolved_value:${ref.from}`);

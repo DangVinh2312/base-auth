@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import * as core from '@base-authorization/core';
+import type { UserEdgeFact, UserExceptionFact } from '@base-authorization/core';
 import {
   alice,
   bob,
+  core,
   declarations,
   facts,
   input,
@@ -98,7 +99,7 @@ test('user authorization exports a tenant-free plan and shares policy, boundary 
   const ungranted = core.planUser(userInput(), { ...authority, rules: [] });
   if (ungranted.effect === 'allow') {
     assert.equal(core.evaluateUser(ungranted.plan, userFacts()).effect, 'deny');
-    const exception: core.UserExceptionFact = {
+    const exception: UserExceptionFact = {
       objectId: 'record',
       permission: 'submission.read',
       subject: { kind: 'identity', identity: alice },
@@ -125,7 +126,7 @@ test('user record allows stay inside policy; record deny wins', () => {
     userSnapshot(),
   );
   if (decision.effect !== 'allow') throw new Error(decision.internalReason);
-  const allow: core.UserExceptionFact = {
+  const allow: UserExceptionFact = {
     objectId: 'record',
     permission: 'submission.approve',
     subject: { kind: 'identity', identity: alice },
@@ -168,7 +169,7 @@ test('user ReBAC traverses typed edges with expiry and missing facts fail closed
     ],
   });
   if (decision.effect !== 'allow') throw new Error(decision.internalReason);
-  const edge: core.UserEdgeFact = {
+  const edge: UserEdgeFact = {
     source: 'record',
     relation: { key: 'submission.assignee', version: 1 },
     target: { kind: 'identity', identity: alice },

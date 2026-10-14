@@ -5,29 +5,38 @@ import { DataSource, QueryFailedError } from 'typeorm';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
+} from '@base-authorization/typeorm-postgres/operations';
+import {
+  ProductTransactionRunner,
   verifyProductPrivileges,
-} from '../packages/typeorm-postgres/dist/product-database.js';
+} from '@base-authorization/typeorm-postgres/composition';
 import { ProductInitial1792108800000 } from '../packages/typeorm-postgres/dist/migrations/product/001-initial.js';
 import { productRowsBody } from '../packages/typeorm-postgres/dist/migrations/product/004-protection-guards.js';
+import {
+  systemActivationBody,
+  tokenConsumptionBody,
+} from '../packages/typeorm-postgres/dist/migrations/product/008-system-activation.js';
 import { requireRootMarkerBody } from '../packages/typeorm-postgres/dist/migrations/product/007-root-marker.js';
-import { ProductTransactionRunner } from '../packages/typeorm-postgres/dist/product-transaction.js';
 import { startPostgres, withClient, sqlState, type TestPostgres } from './setup-postgres.ts';
 
 let fixture: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
 let fixturePasswords: Record<
-  'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap',
+  'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox',
   string
 >;
 let connections: Awaited<ReturnType<typeof provisionProductDatabase>>;
 before(async () => {
   fixture = await startPostgres();
   const passwords = Object.fromEntries(
-    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap'].map((p) => [
+    ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map((p) => [
       p,
       randomBytes(20).toString('hex'),
     ]),
-  ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap', string>;
+  ) as Record<
+    'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox',
+    string
+  >;
   fixturePasswords = passwords;
   connections = await provisionProductDatabase(fixture.superuser, passwords);
   pools = {} as typeof pools;
@@ -60,6 +69,19 @@ test('real runtime logins cannot read credentials, escalate roles, alter schema 
   await withClient(connections.identity, async (c) => {
     assert.equal(await sqlState(c.query('DELETE FROM user_role')), '42501');
   });
+});
+test('every runtime login is refused CREATE in any schema, TEMP objects and replica mode by PostgreSQL itself', async () => {
+  for (const purpose of runtimeLogins) {
+    await withClient(connections[purpose], async (c) => {
+      for (const statement of [
+        'CREATE TABLE public.forbidden(id integer)',
+        'CREATE TEMP TABLE forbidden_temp(id integer)',
+        'CREATE SCHEMA forbidden_schema',
+        'SET session_replication_role=replica',
+      ])
+        assert.equal(await sqlState(c.query(statement)), '42501', `${purpose}: ${statement}`);
+    });
+  }
 });
 test('code rows and ownership transitions protected, sync cannot take runtime ownership', async () => {
   const key = Buffer.from('system.root');
@@ -199,6 +221,258 @@ test('startup rejects any privilege drift, not only sampled grants', async () =>
         /privilege drift|Unsafe product credential/,
         grant,
       );
+    } finally {
+      await withClient(fixture.superuser, (c) => c.query(revoke));
+    }
+    await verifyProductPrivileges(pools);
+  }
+});
+const runtimeLogins = ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const;
+const onDatabase = (statement: string) =>
+  `DO $$BEGIN EXECUTE format('${statement.replace('%DB', '%I')}',current_database()); END$$`;
+async function rejectsDrift(purposes: readonly (typeof runtimeLogins)[number][], label: string) {
+  for (const purpose of purposes) {
+    const probe = verifyProductPrivileges({ [purpose]: pools[purpose] }).then(() => {
+      throw new Error(`${purpose}: probe accepted ${label}`);
+    });
+    await assert.rejects(probe, (error: Error) => {
+      assert.match(
+        error.message,
+        /privilege drift|Unsafe product credential/,
+        `${purpose}: ${label}`,
+      );
+      // The failure names the drift, never connection details or credentials.
+      for (const secret of [...Object.values(fixturePasswords), fixture.superuser.host])
+        assert.ok(!error.message.includes(secret), `${purpose}: ${label}`);
+      return true;
+    });
+  }
+}
+test('every runtime login rejects CREATE, TEMP, grant option and role membership drift individually', async () => {
+  await verifyProductPrivileges(pools);
+  for (const purpose of runtimeLogins) {
+    const role = `product_${purpose}`;
+    for (const [grant, revoke] of [
+      [`GRANT CREATE ON SCHEMA public TO ${role}`, `REVOKE CREATE ON SCHEMA public FROM ${role}`],
+      [
+        `GRANT CREATE ON SCHEMA public TO ${role} WITH GRANT OPTION`,
+        `REVOKE CREATE ON SCHEMA public FROM ${role}`,
+      ],
+      [`CREATE SCHEMA other; GRANT USAGE,CREATE ON SCHEMA other TO ${role}`, 'DROP SCHEMA other'],
+      [
+        onDatabase(`GRANT TEMP ON DATABASE %DB TO ${role}`),
+        onDatabase(`REVOKE TEMP ON DATABASE %DB FROM ${role}`),
+      ],
+      [
+        onDatabase(`GRANT TEMP ON DATABASE %DB TO ${role} WITH GRANT OPTION`),
+        onDatabase(`REVOKE TEMP ON DATABASE %DB FROM ${role}`),
+      ],
+      [
+        onDatabase(`GRANT CREATE ON DATABASE %DB TO ${role} WITH GRANT OPTION`),
+        onDatabase(`REVOKE CREATE ON DATABASE %DB FROM ${role}`),
+      ],
+      [`GRANT product_fence_owner TO ${role}`, `REVOKE product_fence_owner FROM ${role}`],
+      [
+        `GRANT product_session_owner TO ${role} WITH ADMIN OPTION`,
+        `REVOKE product_session_owner FROM ${role}`,
+      ],
+      // Re-delegating the access a login legitimately holds is drift as well.
+      [
+        `GRANT USAGE ON SCHEMA public TO ${role} WITH GRANT OPTION`,
+        `REVOKE GRANT OPTION FOR USAGE ON SCHEMA public FROM ${role}`,
+      ],
+      [
+        onDatabase(`GRANT CONNECT ON DATABASE %DB TO ${role} WITH GRANT OPTION`),
+        onDatabase(`REVOKE GRANT OPTION FOR CONNECT ON DATABASE %DB FROM ${role}`),
+      ],
+    ] as const) {
+      await withClient(fixture.superuser, (c) => c.query(grant));
+      try {
+        await rejectsDrift([purpose], grant);
+      } finally {
+        await withClient(fixture.superuser, (c) => c.query(revoke));
+      }
+      await verifyProductPrivileges(pools);
+    }
+  }
+});
+test('every runtime login rejects PUBLIC CREATE and TEMP drift', async () => {
+  for (const [grant, revoke] of [
+    ['GRANT CREATE ON SCHEMA public TO PUBLIC', 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'],
+    ['CREATE SCHEMA other; GRANT CREATE ON SCHEMA other TO PUBLIC', 'DROP SCHEMA other'],
+    [
+      onDatabase('GRANT TEMP ON DATABASE %DB TO PUBLIC'),
+      onDatabase('REVOKE TEMP ON DATABASE %DB FROM PUBLIC'),
+    ],
+    [
+      onDatabase('GRANT CREATE ON DATABASE %DB TO PUBLIC'),
+      onDatabase('REVOKE CREATE ON DATABASE %DB FROM PUBLIC'),
+    ],
+  ] as const) {
+    await withClient(fixture.superuser, (c) => c.query(grant));
+    try {
+      await rejectsDrift(runtimeLogins, grant);
+    } finally {
+      await withClient(fixture.superuser, (c) => c.query(revoke));
+    }
+    await verifyProductPrivileges(pools);
+  }
+});
+test('startup rejects missing, miswired or inventory-diverging protection triggers and functions', async () => {
+  const rootMarker =
+    'CREATE CONSTRAINT TRIGGER require_root_marker AFTER INSERT ON user_role DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.require_root_marker()';
+  const activation = (table: string, events: string) =>
+    `CREATE TRIGGER protect_system_activation BEFORE ${events} ON ${table} FOR EACH ROW EXECUTE FUNCTION public.protect_system_activation()`;
+  const userRoleActivation = activation('user_role', 'INSERT OR UPDATE OF user_id,role_key');
+  const tokenActivation = activation('one_time_token', 'INSERT');
+  const dropRoot = 'DROP TRIGGER require_root_marker ON user_role';
+  const fn = (name: string, body: string, definer = '') =>
+    `CREATE OR REPLACE FUNCTION public.${name}() RETURNS trigger LANGUAGE plpgsql ${definer} SET search_path=pg_catalog,pg_temp AS $fn$${body}$fn$`;
+  for (const [alter, restore] of [
+    // Missing triggers.
+    [dropRoot, rootMarker],
+    ['DROP TRIGGER protect_system_activation ON user_role', userRoleActivation],
+    ['DROP TRIGGER protect_system_activation ON one_time_token', tokenActivation],
+    // Root marker: not deferrable, wrong function, wrong table, wrong timing, extra copy.
+    [
+      `${dropRoot}; CREATE TRIGGER require_root_marker AFTER INSERT ON user_role FOR EACH ROW EXECUTE FUNCTION public.require_root_marker()`,
+      `${dropRoot}; ${rootMarker}`,
+    ],
+    [
+      `${dropRoot}; CREATE CONSTRAINT TRIGGER require_root_marker AFTER INSERT ON user_role DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION public.require_root_marker()`,
+      `${dropRoot}; ${rootMarker}`,
+    ],
+    [
+      `${dropRoot}; CREATE CONSTRAINT TRIGGER require_root_marker AFTER INSERT ON user_role DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.protect_product_state()`,
+      `${dropRoot}; ${rootMarker}`,
+    ],
+    [
+      `${dropRoot}; CREATE CONSTRAINT TRIGGER require_root_marker AFTER INSERT ON user_boundary DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.require_root_marker()`,
+      `DROP TRIGGER require_root_marker ON user_boundary; ${rootMarker}`,
+    ],
+    [
+      `${dropRoot}; CREATE CONSTRAINT TRIGGER require_root_marker AFTER INSERT OR UPDATE ON user_role DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.require_root_marker()`,
+      `${dropRoot}; ${rootMarker}`,
+    ],
+    [
+      `${dropRoot}; CREATE CONSTRAINT TRIGGER require_root_marker AFTER INSERT ON user_role DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (false) EXECUTE FUNCTION public.require_root_marker()`,
+      `${dropRoot}; ${rootMarker}`,
+    ],
+    [
+      'CREATE CONSTRAINT TRIGGER require_root_marker_copy AFTER INSERT ON user_role DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.require_root_marker()',
+      'DROP TRIGGER require_root_marker_copy ON user_role',
+    ],
+    // Replica/always firing modes differ from the expected origin-only mode.
+    [
+      'ALTER TABLE user_role ENABLE REPLICA TRIGGER protect_system_activation',
+      'ALTER TABLE user_role ENABLE TRIGGER protect_system_activation',
+    ],
+    [
+      'ALTER TABLE user_role ENABLE ALWAYS TRIGGER require_root_marker',
+      'ALTER TABLE user_role ENABLE TRIGGER require_root_marker',
+    ],
+    // Same trigger name bound to a same-named function in another schema.
+    [
+      `CREATE SCHEMA shadow; CREATE FUNCTION shadow.protect_system_activation() RETURNS trigger LANGUAGE plpgsql AS $f$BEGIN RETURN NEW; END$f$; REVOKE ALL ON FUNCTION shadow.protect_system_activation() FROM PUBLIC; DROP TRIGGER protect_system_activation ON one_time_token; CREATE TRIGGER protect_system_activation BEFORE INSERT ON one_time_token FOR EACH ROW EXECUTE FUNCTION shadow.protect_system_activation()`,
+      `DROP TRIGGER protect_system_activation ON one_time_token; ${tokenActivation}; DROP SCHEMA shadow CASCADE`,
+    ],
+    // System activation wiring: event, timing and wrong table for the same name.
+    [
+      `DROP TRIGGER protect_system_activation ON one_time_token; ${activation('one_time_token', 'INSERT OR UPDATE')}`,
+      `DROP TRIGGER protect_system_activation ON one_time_token; ${tokenActivation}`,
+    ],
+    [
+      `DROP TRIGGER protect_system_activation ON one_time_token; CREATE TRIGGER protect_system_activation AFTER INSERT ON one_time_token FOR EACH ROW EXECUTE FUNCTION public.protect_system_activation()`,
+      `DROP TRIGGER protect_system_activation ON one_time_token; ${tokenActivation}`,
+    ],
+    [
+      `DROP TRIGGER protect_system_activation ON one_time_token; ${activation('user_boundary', 'INSERT')}`,
+      `DROP TRIGGER protect_system_activation ON user_boundary; ${tokenActivation}`,
+    ],
+    [
+      `DROP TRIGGER protect_system_activation ON user_role; CREATE TRIGGER protect_system_activation BEFORE INSERT OR UPDATE OF user_id,role_key ON user_role FOR EACH STATEMENT EXECUTE FUNCTION public.protect_system_activation()`,
+      `DROP TRIGGER protect_system_activation ON user_role; ${userRoleActivation}`,
+    ],
+    // Neutralized bodies behind the same name, owner and settings.
+    [
+      fn('protect_system_activation', 'BEGIN RETURN NEW; END', 'SECURITY DEFINER'),
+      fn('protect_system_activation', systemActivationBody, 'SECURITY DEFINER'),
+    ],
+    [
+      fn('protect_token_consumption', 'BEGIN RETURN NEW; END'),
+      fn('protect_token_consumption', tokenConsumptionBody),
+    ],
+    // Function inventory: overload and unprotected search_path.
+    [
+      'CREATE FUNCTION public.protect_system_activation(int) RETURNS int LANGUAGE sql AS $f$SELECT 1$f$; REVOKE ALL ON FUNCTION public.protect_system_activation(int) FROM PUBLIC',
+      'DROP FUNCTION public.protect_system_activation(int)',
+    ],
+    [
+      'ALTER FUNCTION protect_system_activation() SET search_path=public',
+      'ALTER FUNCTION protect_system_activation() SET search_path=pg_catalog,pg_temp',
+    ],
+    [
+      'ALTER FUNCTION require_root_marker() SET search_path=pg_catalog,pg_temp,public',
+      'ALTER FUNCTION require_root_marker() SET search_path=pg_catalog,pg_temp',
+    ],
+    [
+      'ALTER FUNCTION protect_system_activation() OWNER TO product_migration',
+      'ALTER FUNCTION protect_system_activation() OWNER TO product_session_owner',
+    ],
+    [
+      'ALTER FUNCTION protect_product_rows() OWNER TO product_session_owner',
+      'ALTER FUNCTION protect_product_rows() OWNER TO product_migration',
+    ],
+    // Security-definer owner hardening must hold for the owner of the activation guard.
+    ['ALTER ROLE product_session_owner LOGIN', 'ALTER ROLE product_session_owner NOLOGIN'],
+    [
+      'GRANT product_data TO product_session_owner',
+      'REVOKE product_data FROM product_session_owner',
+    ],
+    [
+      'GRANT CREATE ON SCHEMA public TO product_session_owner',
+      'REVOKE CREATE ON SCHEMA public FROM product_session_owner',
+    ],
+  ] as const) {
+    await withClient(fixture.superuser, (c) => c.query(alter));
+    try {
+      await assert.rejects(verifyProductPrivileges(pools), /protection drift/, alter);
+    } finally {
+      await withClient(fixture.superuser, (c) => c.query(restore));
+    }
+    await verifyProductPrivileges(pools).catch((error: Error) => {
+      throw new Error(`restore of [${alter}] left drift: ${error.message}`);
+    });
+  }
+  // A dropped guard function takes its triggers with it and cannot start the runtime.
+  await withClient(fixture.superuser, (c) =>
+    c.query('DROP FUNCTION public.protect_system_activation() CASCADE'),
+  );
+  try {
+    await assert.rejects(verifyProductPrivileges(pools), /protection drift/);
+  } finally {
+    await withClient(fixture.superuser, (c) =>
+      c.query(`${fn('protect_system_activation', systemActivationBody, 'SECURITY DEFINER')};
+        REVOKE ALL ON FUNCTION public.protect_system_activation() FROM PUBLIC;
+        ALTER FUNCTION public.protect_system_activation() OWNER TO product_session_owner;
+        ${userRoleActivation}; ${tokenActivation}`),
+    );
+  }
+  await verifyProductPrivileges(pools);
+});
+test('protection function ACL is exact for every runtime login', async () => {
+  const targets = ['protect_system_activation', 'protect_token_consumption', 'require_root_marker'];
+  const cases = targets.flatMap((name) => [
+    ...(['PUBLIC', ...runtimeLogins.map((p) => `product_${p}`)] as const).map((grantee) => ({
+      grant: `GRANT EXECUTE ON FUNCTION public.${name}() TO ${grantee}${grantee === 'PUBLIC' ? '' : ' WITH GRANT OPTION'}`,
+      revoke: `REVOKE EXECUTE ON FUNCTION public.${name}() FROM ${grantee}`,
+      affected: grantee === 'PUBLIC' ? runtimeLogins : [grantee.slice('product_'.length) as never],
+    })),
+  ]);
+  for (const { grant, revoke, affected } of cases) {
+    await withClient(fixture.superuser, (c) => c.query(grant));
+    try {
+      await rejectsDrift(affected, grant);
     } finally {
       await withClient(fixture.superuser, (c) => c.query(revoke));
     }
@@ -407,12 +681,31 @@ test('forward protection migration preserves preexisting product fixture rows', 
       "INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1,'Before upgrade')",
       [Buffer.from('retained')],
     );
+    await initial.query(
+      "INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES('10000000-0000-4000-8000-000000000089','10000000-0000-4000-8000-000000000088','\\x6c6567616379',1,statement_timestamp(),'{}')",
+    );
   } finally {
     await initial.destroy();
   }
   const upgraded = await new DataSource(productDataSourceOptions(connection)).initialize();
   try {
-    assert.equal((await upgraded.runMigrations()).length, 7);
+    // Every forward product migration after the initial one (002..011).
+    assert.equal((await upgraded.runMigrations()).length, 10);
+    // Events written before delivery state existed become pending, never-attempted deliveries.
+    assert.deepEqual(
+      await upgraded.query(
+        'SELECT delivery_attempts,lease_token,lease_until,dead_at,delivered_at FROM audit_outbox',
+      ),
+      [
+        {
+          delivery_attempts: 0,
+          lease_token: null,
+          lease_until: null,
+          dead_at: null,
+          delivered_at: null,
+        },
+      ],
+    );
     assert.equal(
       (await upgraded.query<{ label: string }[]>('SELECT label FROM role_definition'))[0]!.label,
       'Before upgrade',

@@ -3,15 +3,14 @@ import { describe, test } from 'node:test';
 import {
   type AuthoritySnapshot,
   type CompleteFacts,
-  evaluate,
   type ExceptionFact,
-  plan,
   type RuleFact,
   type TrustedInput,
 } from '@base-authorization/core';
 import {
   alice,
   bob,
+  core,
   declarations,
   facts,
   input,
@@ -23,6 +22,8 @@ import {
   tenantB,
   validated,
 } from './fixtures.ts';
+
+const { evaluate, plan } = core;
 
 function decide(i: TrustedInput, s: AuthoritySnapshot, f: CompleteFacts): 'allow' | 'deny' {
   const decision = plan(i, s);

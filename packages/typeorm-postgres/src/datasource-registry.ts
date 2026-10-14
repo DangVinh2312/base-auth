@@ -1,6 +1,18 @@
-import { parseTenantId, type TenantId } from '@base-authorization/core';
+import type { TenantId } from '@base-authorization/core';
 import { DataSource, type DataSourceOptions } from 'typeorm';
 import { tenantEntities } from './entities/tenant.entity.js';
+
+const routableTenant = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/**
+ * Legacy tenant routing: database and role identifiers are derived from the tenant id, so this is
+ * the SQL identifier grammar owned here (canonical lowercase UUID only, no aliases), not a value
+ * codec. Throws instead of normalizing.
+ */
+export function parseRoutableTenant(value: unknown): TenantId {
+  if (typeof value !== 'string' || !routableTenant.test(value))
+    throw new TypeError('Tenant id must be a canonical lowercase UUID');
+  return value as TenantId;
+}
 
 /**
  * Chosen by the gateway/command adapter, never taken from a client request.
@@ -75,7 +87,7 @@ export class TenantDataSourceRegistry {
   async acquire(tenantInput: TenantId, purpose: ConnectionPurpose): Promise<TenantConnectionLease> {
     let tenant: TenantId;
     try {
-      tenant = parseTenantId(tenantInput);
+      tenant = parseRoutableTenant(tenantInput);
     } catch {
       throw new TenantRoutingError('Tenant is not routable');
     }
@@ -259,7 +271,7 @@ export function directoryRouteResolver(
 
 /** Deterministic, injection-free names derived from the canonical tenant UUID. */
 export function tenantDatabaseName(tenant: TenantId): string {
-  return `authz_t_${parseTenantId(tenant).replaceAll('-', '')}`;
+  return `authz_t_${parseRoutableTenant(tenant).replaceAll('-', '')}`;
 }
 
 export function tenantRoleName(tenant: TenantId, purpose: ConnectionPurpose): string {

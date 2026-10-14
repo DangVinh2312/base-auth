@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
+  type AuthorizationCore,
   canonicalJson,
-  isCanonicalUuid,
   refKey,
   type IdentityId,
   type Scalar,
@@ -18,6 +18,7 @@ import {
   type RejectReason,
 } from './manifest-reconciler.js';
 import { ProductTransactionRunner } from './product-transaction.js';
+import { appendProductAudit, PRODUCT_OFFLINE_ACTOR } from './product-audit.js';
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
 const reject = (reason: RejectReason, detail: string): never => {
@@ -46,19 +47,23 @@ export interface ProductReleaseManifest extends VerifiedReleaseManifest {
   readonly removeSystemGrants: readonly SystemGrantRemoval[];
   readonly removeDefaultGrants: readonly DefaultGrant[];
 }
-const productVerified = new WeakSet<object>();
+/** Release → the authorization core that prepared it (provenance; never part of the hash). */
+const productVerified = new WeakMap<object, AuthorizationCore>();
 const ownerKey = /^[a-z][a-z0-9._-]{0,127}$/;
 const hashPattern = /^[0-9a-f]{64}$/;
-export function prepareProductRelease(source: ProductReleaseSource): ProductReleaseManifest {
+export function prepareProductRelease(
+  source: ProductReleaseSource,
+  core: AuthorizationCore,
+): ProductReleaseManifest {
   if (
     source.systemGrants.length > 1000 ||
     source.removeSystemGrants.length > 1000 ||
     (source.removeDefaultGrants?.length ?? 0) > 1000
   )
     reject('invalid_release', 'system grants limit');
-  const base = prepareRelease(source);
+  const base = prepareRelease(source, core);
   // Reuse the existing exact permission/template/parameter validator for each system grant.
-  const checked = prepareRelease({ ...source, defaultGrants: source.systemGrants });
+  const checked = prepareRelease({ ...source, defaultGrants: source.systemGrants }, core);
   const owners = new Set<string>();
   const systemGrants = source.systemGrants.map((g, i) => {
     const id = `${g.owner}/${g.key}`;
@@ -94,10 +99,10 @@ export function prepareProductRelease(source: ProductReleaseSource): ProductRele
     return Object.freeze({ ...r });
   });
   // Same exact permission/template/parameter validation as the grants being removed.
-  const removeDefaultGrants = prepareRelease({
-    ...source,
-    defaultGrants: source.removeDefaultGrants ?? [],
-  }).defaultGrants;
+  const removeDefaultGrants = prepareRelease(
+    { ...source, defaultGrants: source.removeDefaultGrants ?? [] },
+    core,
+  ).defaultGrants;
   const removedIds = new Set(removeDefaultGrants.map(grantId));
   if (
     removedIds.size !== removeDefaultGrants.length ||
@@ -133,7 +138,7 @@ export function prepareProductRelease(source: ProductReleaseSource): ProductRele
     removeDefaultGrants: Object.freeze(removeDefaultGrants),
   });
   freezeRelease(release);
-  productVerified.add(release);
+  productVerified.set(release, core);
   return release;
 }
 
@@ -148,14 +153,17 @@ export class ProductManifestReconciler {
   constructor(
     private readonly runner: ProductTransactionRunner,
     private readonly options: {
+      /** The runtime's core; a release prepared by another core is refused. */
+      core: AuthorizationCore;
       actor: IdentityId;
       capabilities: { validators: readonly string[]; obligationHandlers: readonly string[] };
     },
   ) {
-    if (!isCanonicalUuid(options.actor)) throw new TypeError('Invalid manifest actor');
+    if (!options.core.isCanonicalUuid(options.actor)) throw new TypeError('Invalid manifest actor');
   }
   async reconcile(release: ProductReleaseManifest): Promise<SyncResult> {
-    if (!productVerified.has(release)) reject('invalid_release', 'unprepared product release');
+    if (productVerified.get(release) !== this.options.core)
+      reject('invalid_release', 'product release was not prepared with this core');
     const available = new Set([
       ...this.options.capabilities.validators,
       ...this.options.capabilities.obligationHandlers,
@@ -207,15 +215,13 @@ export class ProductManifestReconciler {
         [release.hash, release.sequence, RUNTIME_CAPABILITY, materialized],
       );
       const revision = String(BigInt(tx.revision) + 1n);
-      await m.query(
-        `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,clock_timestamp(),$4)`,
-        [
-          this.options.actor,
-          utf8('manifest.sync'),
-          revision,
-          canonicalJson({ sequence: release.sequence, hash: release.hash }),
-        ],
-      );
+      await appendProductAudit(tx, {
+        kind: 'manifest.sync',
+        actor: this.options.actor,
+        sequence: release.sequence,
+        hash: release.hash,
+        publishedRevision: revision,
+      });
       return { changed: true, revision, manifestHash: release.hash };
     });
   }
@@ -798,12 +804,11 @@ export async function bootstrapProductRoot(
   release: ProductReleaseManifest,
   input: RootBootstrapInput,
 ): Promise<{ initialized: boolean; activationSecret?: string }> {
-  if (
-    !productVerified.has(release) ||
-    !isCanonicalUuid(input.operationId) ||
-    !isCanonicalUuid(input.userId)
-  )
+  const core = productVerified.get(release);
+  if (!core || !core.isCanonicalUuid(input.operationId) || !core.isCanonicalUuid(input.userId))
     reject('invalid_release', 'invalid bootstrap input');
+  if (input.userId === PRODUCT_OFFLINE_ACTOR)
+    reject('invalid_release', 'offline actor id cannot be a user');
   return runner.run('bootstrap', async (tx) => {
     const m = tx.manager;
     const [marker] = await m.query<
@@ -893,15 +898,13 @@ export async function bootstrapProductRoot(
       'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
       [input.operationId, input.userId],
     );
-    await m.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,statement_timestamp(),$4)`,
-      [
-        input.userId,
-        utf8('root.bootstrap'),
-        String(BigInt(tx.revision) + 1n),
-        canonicalJson({ operationId: input.operationId, method: input.method }),
-      ],
-    );
+    await appendProductAudit(tx, {
+      kind: 'root.bootstrap',
+      actor: PRODUCT_OFFLINE_ACTOR,
+      target: { userId: input.userId },
+      operationId: input.operationId,
+      method: input.method,
+    });
     return { initialized: true, activationSecret };
   });
 }
@@ -920,9 +923,12 @@ export interface RootReissueInput {
 export async function reissueRootActivation(
   runner: ProductTransactionRunner,
   input: RootReissueInput,
+  core: AuthorizationCore,
 ): Promise<{ activationSecret: string }> {
-  if (!isCanonicalUuid(input.userId) || (input.method !== 'local' && input.method !== 'oidc'))
+  if (!core.isCanonicalUuid(input.userId) || (input.method !== 'local' && input.method !== 'oidc'))
     reject('invalid_release', 'invalid Root reissue input');
+  if (input.userId === PRODUCT_OFFLINE_ACTOR)
+    reject('invalid_release', 'offline actor id cannot be a user');
   return runner.run('bootstrap', async (tx) => {
     const m = tx.manager;
     const [target] = await m.query<
@@ -961,15 +967,12 @@ export async function reissueRootActivation(
         input.method === 'local' ? 'activation' : 'oidc-activation',
       ],
     );
-    await m.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,statement_timestamp(),$4)`,
-      [
-        input.userId,
-        utf8('root.reissue'),
-        String(BigInt(tx.revision) + 1n),
-        canonicalJson({ method: input.method }),
-      ],
-    );
+    await appendProductAudit(tx, {
+      kind: 'root.reissue',
+      actor: PRODUCT_OFFLINE_ACTOR,
+      target: { userId: input.userId },
+      method: input.method,
+    });
     return { activationSecret };
   });
 }
@@ -988,6 +991,7 @@ export interface RootRevocationInput {
 export async function revokeProductRoot(
   runner: ProductTransactionRunner,
   input: RootRevocationInput,
+  core: AuthorizationCore,
 ): Promise<{ revoked: boolean }> {
   const printable = (value: unknown, max: number) =>
     typeof value === 'string' &&
@@ -995,8 +999,8 @@ export async function revokeProductRoot(
     value.length <= max &&
     !/\p{Cc}/u.test(value);
   if (
-    !isCanonicalUuid(input.operationId) ||
-    !isCanonicalUuid(input.userId) ||
+    !core.isCanonicalUuid(input.operationId) ||
+    !core.isCanonicalUuid(input.userId) ||
     !printable(input.approval, 200) ||
     !printable(input.reason, 1000)
   )
@@ -1007,16 +1011,14 @@ export async function revokeProductRoot(
       [input.userId, utf8('system.root')],
     );
     if (!removed.length) return { revoked: false };
-    await tx.manager.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,reason,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,statement_timestamp(),$4,$5)`,
-      [
-        input.userId,
-        utf8('root.revoke'),
-        String(BigInt(tx.revision) + 1n),
-        input.reason,
-        canonicalJson({ operationId: input.operationId, approval: input.approval }),
-      ],
-    );
+    await appendProductAudit(tx, {
+      kind: 'root.revoke',
+      actor: PRODUCT_OFFLINE_ACTOR,
+      target: { userId: input.userId },
+      operationId: input.operationId,
+      approval: input.approval,
+      reason: input.reason,
+    });
     return { revoked: true };
   });
 }
