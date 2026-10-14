@@ -1,4 +1,45 @@
-# Bằng chứng kiểm chứng một sản phẩm
+# Bằng chứng giai đoạn A — Foundation Hardening, API Structure & Pluggable Adapters
+
+Ngày: 2026-10-14. Môi trường: Node 24.20.0, pnpm 12.3.4, Docker local, PostgreSQL 18.4 disposable (Testcontainers), macOS. Working tree chưa commit trên branch `feat/foundation-hardening-adapters`; không staging/production, không push/deploy. Kết quả dưới đây là lượt chạy local của T11 trên working tree này; không thay thế CI hoặc kiểm chứng production, và không nâng trạng thái production-ready. Phase B (T8–T10) chưa thực hiện.
+
+| Lệnh (từ repo root)              | Exit | Kết quả                                                                                                                                                   |
+| -------------------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install --frozen-lockfile` | 0    | Lockfile up to date; `pnpm-lock.yaml` không đổi (md5 trước/sau giống nhau)                                                                                |
+| `pnpm run format:check`          | 1    | Chỉ 23 file trong `.superpowers/` (workspace SDD tạm, xóa khi kết thúc) bị báo; mọi file nguồn/tài liệu branch thay đổi hoặc mới: `prettier --check` sạch |
+| `pnpm run lint`                  | 0    | pass                                                                                                                                                      |
+| `pnpm run typecheck`             | 0    | pass                                                                                                                                                      |
+| `pnpm run build`                 | 0    | pass                                                                                                                                                      |
+| `pnpm run test:unit`             | 0    | 227/227 pass, 0 skip                                                                                                                                      |
+| `pnpm run test:integration`      | 0    | 184/184 pass, 0 skip/cancelled; không có Testcontainers startup timeout (đủ 12 suites, `--test-concurrency=3`)                                            |
+| `pnpm run test:e2e`              | 0    | 1/1 pass (HTTP process thật + PostgreSQL)                                                                                                                 |
+
+Đây là một lượt chạy full-suite thật, không phải targeted rerun. `format:check` toàn repo chỉ xanh sau khi xóa `.superpowers/`; không sửa `.prettierignore` cho workspace tạm.
+
+## Mutation checks trên bản sao cô lập
+
+Bản sao repo (kèm `node_modules`) trong thư mục tạm; working tree không bị mutate; mỗi mutation: áp dụng → build → chạy test hành vi → ghi test fail → khôi phục (so `cmp` với nguồn) rồi xóa bản sao.
+
+| Mutation                                                                                                       | Test hành vi fail                                                                                                                                                                                                                                               | Kết luận |
+| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| Bỏ boundary conjunct khỏi predicate (`packages/core/src/planner.ts`; SQL compile cùng predicate)               | Unit core 8 fail (permission-boundary, seeded property "boundary never enlarges", user-decision). Integration `product-authorization` + `permission-boundary` 11 fail (list/detail/count parity, narrowing/removing binding, "three applications, one core" ×6) | Bị bắt   |
+| Bypass Root: predicate `true` khi role `system.root`                                                           | Unit `user facts must identify the active principal; Root has no grant bypass`, `user authorization exports a tenant-free plan...`; integration 3 fail (list/detail/count parity, integer writes, boundary tightening)                                          | Bị bắt   |
+| Bỏ application fence: shared runner không gọi `authz_acquire_shared_fence`                                     | `boundary tightening waits for shared access; decisions after commit read fresh authority` (`true !== false`) và 2 audit test phụ thuộc revision                                                                                                                | Bị bắt   |
+| Timestamp adapter cắt microsecond (đổi codec trong `createProductAuthorizationCore` thành bản giữ 3 chữ số lẻ) | `test/product-values.integration-spec.ts`: `timestamp literal, parameter deny, boundary and expiry: SQL equals evaluateUser on DB facts`, `writes keep all six fractional digits...`                                                                            | Bị bắt   |
+| (Bổ sung) cùng lỗi cắt microsecond ngay trong adapter Day.js                                                   | `packages/value-adapters` conformance 7 fail (`keeps full microsecond precision`, `.000001 sorts before .000002`, năm round-trip)                                                                                                                               | Bị bắt   |
+
+Ghi chú: mutation fence thay lệnh khóa bằng truy vấn trả revision hằng (không khóa), nên hai test audit fail thêm vì revision hằng; test khóa mới là bằng chứng hành vi. Test conformance của adapter chỉ chạy adapter được đưa vào; lỗi trong composition root (hàng thứ tư) do test PostgreSQL parity bắt, không phải conformance.
+
+## Phạm vi giai đoạn A đã kiểm (tóm tắt, chi tiết ở ledger kế hoạch)
+
+T1: codec ports + Day.js adapter (61 test conformance/scalar). T2–T3: instance core, provenance A/B, fail-closed khi codec lỗi, PostgreSQL parity timestamp µs, hash manifest giữ nguyên. T4: probe CREATE/TEMP/grant option/trigger/function ACL mới. T5: audit typed target/`resultingRevision`, obligation registry. T6: inventory 24 route, OpenAPI hash, DI behavioural, bootstrap fail trước listen, route inventory chạy ở `onModuleInit`. T7: exports map + ESLint boundary + `test/package-boundaries.spec.ts` (21 test).
+
+## Gates chưa được chứng nhận (giai đoạn A)
+
+Giữ nguyên danh sách ở cuối tài liệu này, thêm: T8 (I/O trong fence theo số đo), T9 (limiter/session/cleanup), T10 (audit sink và recovery delivery bền vững) chưa thực hiện; delegation, generic administration, resource-to-resource domain binding chưa có; adapter thời gian thứ hai chưa có (conformance chưa là export dùng lại); `product-authority` còn `Date.parse` cho freshness 300s (số học trên clock DB, không phải validation timestamp). CI GitHub chưa chạy.
+
+---
+
+# Lịch sử — bằng chứng một sản phẩm trước giai đoạn A (không chứng nhận working tree hiện tại)
 
 Ngày: 2026-10-14 (chạy lại sau sửa review findings 1–10 và năm vòng review độc lập). Môi trường Node24.20.0, pnpm12.3.4, Docker29.8.2, PostgreSQL18.4 disposable. Không staging/production, commit/push/deploy. Các lệnh sau đã chạy trên implementation hiện tại; không lấy spike hoặc kết quả tenant cũ làm chứng nhận bản mới.
 

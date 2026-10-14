@@ -4,12 +4,14 @@ import { after, before, test } from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { DataSource } from 'typeorm';
 import {
-  ProductTransactionRunner,
   TransactionConflictError,
-  productDataSourceOptions,
-  provisionProductDatabase,
   type ProductTransactionOptions,
 } from '@base-authorization/typeorm-postgres';
+import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres/composition';
+import {
+  productDataSourceOptions,
+  provisionProductDatabase,
+} from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 let postgres: TestPostgres;

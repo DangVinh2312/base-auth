@@ -1,24 +1,24 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import { type IdentityId, parseTenantId, type TenantId } from '@base-authorization/core';
+import type { IdentityId, TenantId } from '@base-authorization/core';
+import { ReleaseRejectedError } from '@base-authorization/typeorm-postgres';
 import {
   type ConnectionPurpose,
   directoryRouteResolver,
   identityDataSourceOptions,
   ManifestReconciler,
   prepareRelease,
-  ReleaseRejectedError,
   type ReleaseSource,
   TenantDataSourceRegistry,
   tenantDatabaseName,
   TenantProvisioner,
   tenantRoleName,
   TenantTransactionRunner,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import type pg from 'pg';
 import { DataSource } from 'typeorm';
-import { declarationsSource } from './fixtures/resources.ts';
+import { declarationsSource, core } from './fixtures/resources.ts';
 import {
   type Connection,
   openClient,
@@ -27,6 +27,8 @@ import {
   type TestPostgres,
   withClient,
 } from './setup-postgres.ts';
+
+const { parseTenantId } = core;
 
 const tenantA = parseTenantId('00000000-0000-4000-8000-0000000000a8');
 const tenantB = parseTenantId('00000000-0000-4000-8000-0000000000b8');
@@ -110,7 +112,7 @@ const v2Source = {
     },
   ],
 };
-const r1 = prepareRelease(release('1', '0'));
+const r1 = prepareRelease(release('1', '0'), core);
 const r2 = prepareRelease(
   release('2', '1', {
     declarations: v2Source,
@@ -125,6 +127,7 @@ const r2 = prepareRelease(
     ],
     seeds: [seed('review-module', 'default-submission-site')],
   }),
+  core,
 );
 
 describe('manifest reconciliation (boot sync)', () => {
@@ -202,7 +205,7 @@ describe('manifest reconciliation (boot sync)', () => {
       ),
     });
     runner = new TenantTransactionRunner(registry, { deadlineMs: 10_000, lockTimeoutMs: 5_000 });
-    reconciler = new ManifestReconciler(runner, { actor: deployer, capabilities });
+    reconciler = new ManifestReconciler(runner, { core, actor: deployer, capabilities });
     admin = await openClient({ ...postgres.admin, database: tenantDatabaseName(tenantA) });
   });
   after(async () => {
@@ -220,6 +223,7 @@ describe('manifest reconciliation (boot sync)', () => {
           capabilities: { validators: ['minimumAssurance@1'], obligationHandlers: [] },
         },
       }),
+      core,
     );
     await rejected(() => reconciler.reconcile(tenantA, needs), 'missing_capability');
   });
@@ -262,6 +266,7 @@ describe('manifest reconciliation (boot sync)', () => {
           { key: 'manager', authorityLevel: 50, label: 'Manager' },
         ],
       }),
+      core,
     );
     assert.notEqual(conflicting.hash, r1.hash);
     await rejected(() => reconciler.reconcile(tenantA, conflicting), 'conflicting_release');
@@ -269,7 +274,7 @@ describe('manifest reconciliation (boot sync)', () => {
 
   test('a release whose expected predecessor is not current is rejected', async () => {
     await rejected(
-      () => reconciler.reconcile(tenantA, prepareRelease(release('3', '2'))),
+      () => reconciler.reconcile(tenantA, prepareRelease(release('3', '2'), core)),
       'predecessor_mismatch',
     );
   });
@@ -364,6 +369,7 @@ describe('manifest reconciliation (boot sync)', () => {
           seed('review-module', 'second', otherSiteKey),
         ],
       }),
+      core,
     );
     await rejected(() => reconciler.reconcile(tenantA, r3), 'collision');
     assert.equal(
@@ -387,6 +393,7 @@ describe('manifest reconciliation (boot sync)', () => {
           seed('other-module', 'same-edge'),
         ],
       }),
+      core,
     );
     await rejected(() => reconciler.reconcile(tenantA, r3), 'collision');
   });
@@ -400,6 +407,7 @@ describe('manifest reconciliation (boot sync)', () => {
           seed('review-module', 'ghost', '00000000-0000-4000-8000-00000000dead'),
         ],
       }),
+      core,
     );
     await rejected(() => reconciler.reconcile(tenantA, r3), 'missing_reference');
   });
@@ -429,7 +437,10 @@ describe('manifest reconciliation (boot sync)', () => {
 
   test('seeds are removed only by an explicit removal from the same owner', async () => {
     const base = { declarations: v2Source, defaultGrants: r2.defaultGrants.map((g) => ({ ...g })) };
-    await reconciler.reconcile(tenantA, prepareRelease(release('3', '2', { ...base, seeds: [] })));
+    await reconciler.reconcile(
+      tenantA,
+      prepareRelease(release('3', '2', { ...base, seeds: [] }), core),
+    );
     assert.equal(
       await count('relation_edge WHERE seed_owner IS NOT NULL'),
       1,
@@ -442,6 +453,7 @@ describe('manifest reconciliation (boot sync)', () => {
           ...base,
           removeSeeds: [{ owner: 'other-module', key: 'default-submission-site' }],
         }),
+        core,
       ),
     );
     assert.equal(
@@ -456,6 +468,7 @@ describe('manifest reconciliation (boot sync)', () => {
           ...base,
           removeSeeds: [{ owner: 'review-module', key: 'default-submission-site' }],
         }),
+        core,
       ),
     );
     assert.equal(await count('relation_edge WHERE seed_owner IS NOT NULL'), 0);
@@ -468,10 +481,12 @@ describe('manifest reconciliation (boot sync)', () => {
         declarations: v2Source,
         defaultGrants: r2.defaultGrants.map((g) => ({ ...g })),
       }),
+      core,
     );
     const second = new ManifestReconciler(
       new TenantTransactionRunner(registry, { deadlineMs: 10_000, lockTimeoutMs: 5_000 }),
       {
+        core,
         actor: deployer,
         capabilities,
       },

@@ -1,12 +1,10 @@
 import {
+  type AuthorizationCore,
+  type KeyKind,
   type UserId,
   type UserAuthoritySnapshot,
   type UserAuthorizedPlan,
   type ValidatedDeclarations,
-  planUser,
-  isCanonicalUuid,
-  parseKey,
-  normalizeValue,
   type Scalar,
 } from '@base-authorization/core';
 import { ProductTransactionRunner, type ProductTransaction } from './product-transaction.js';
@@ -19,17 +17,21 @@ import {
 } from './product-sql.js';
 import { ProductDataGateway, ProductInvalidRequest, type ListQuery } from './product-gateway.js';
 import { sessionDigest, ProductAuthenticationError } from './product-identity.js';
+import { appendProductAudit } from './product-audit.js';
+import {
+  fulfillProductObligations,
+  type ProductObligationRegistry,
+} from './product-obligations.js';
 
 export class ProductAccessDenied extends Error {
   constructor() {
     super('Access denied');
   }
 }
-const utf8 = (s: string) => Buffer.from(s, 'utf8');
 /** Request keys come from callers: a malformed key is invalid input, not a server fault. */
-function requestKey(kind: Parameters<typeof parseKey>[0], key: string) {
+function requestKey(core: AuthorizationCore, kind: KeyKind, key: string) {
   try {
-    return parseKey(kind, key);
+    return core.parseKey(kind, key);
   } catch {
     throw new ProductInvalidRequest('Malformed key');
   }
@@ -132,13 +134,24 @@ export interface ProductResourceWrite {
 /** Public service owns session, facts, plan and effects in one transaction; callers cannot supply a plan. */
 export class ProductAuthorization {
   private readonly gateway: ProductDataGateway;
+  private readonly registry: UserAuthoritySnapshot['registry'];
+  private readonly obligations: ProductObligationRegistry;
+  /** Obligation handlers are fixed at composition (frozen copy); core sees exactly their names. */
   constructor(
     private readonly transactions: ProductTransactionRunner,
     private readonly bindings: ProductBindingRegistry,
-    private readonly registry: UserAuthoritySnapshot['registry'],
+    capabilities: {
+      readonly validators: UserAuthoritySnapshot['registry']['validators'];
+      readonly obligations: ProductObligationRegistry;
+    },
     private readonly writable: readonly ProductResourceWrite[] = [],
   ) {
     this.gateway = new ProductDataGateway(bindings);
+    this.obligations = Object.freeze({ ...capabilities.obligations });
+    this.registry = {
+      validators: capabilities.validators,
+      obligationHandlers: Object.freeze(Object.keys(this.obligations)),
+    };
   }
   async checkSession(secret: string): Promise<void> {
     await this.transactions.run('read', async (tx) => {
@@ -150,7 +163,8 @@ export class ProductAuthorization {
       'SELECT * FROM public.resolve_session($1)',
       [sessionDigest(secret)],
     );
-    if (!session || !isCanonicalUuid(session.user_id)) throw new ProductAuthenticationError();
+    if (!session || !this.bindings.core.isCanonicalUuid(session.user_id))
+      throw new ProductAuthenticationError();
     return session;
   }
   private async access<T>(
@@ -173,7 +187,7 @@ export class ProductAuthorization {
         this.bindings.declarations,
         this.registry,
       );
-      const decision = planUser(
+      const decision = this.bindings.core.planUser(
         {
           principal: { id: session.user_id, assurance: session.assurance === 'mfa' ? 2 : 1 },
           resource,
@@ -191,27 +205,9 @@ export class ProductAuthorization {
       );
       if (decision.effect !== 'allow') throw new ProductAccessDenied();
       const result = await work(decision.plan, tx);
-      for (const obligation of decision.obligations) {
-        if (obligation.handler !== 'audit@1') throw new ProductAccessDenied();
-        await this.audit(tx, decision.plan, `access.${action}`);
-      }
+      await fulfillProductObligations(tx, decision.plan, this.obligations);
       return result;
     });
-  }
-  private async audit(
-    tx: ProductTransaction,
-    plan: UserAuthorizedPlan,
-    kind: string,
-  ): Promise<void> {
-    await tx.manager.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,permission_key,policy_revision,occurred_at,safe_metadata) VALUES(gen_random_uuid(),$1,$2,$3,$4,statement_timestamp(),'{}')`,
-      [
-        plan.userId,
-        utf8(kind),
-        utf8(plan.permission),
-        tx.mode === 'admin' ? String(BigInt(tx.revision) + 1n) : tx.revision,
-      ],
-    );
   }
   list(secret: string, resource: string, action: string, query: ListQuery = {}) {
     return this.access(secret, resource, action, 'read', (plan, tx) =>
@@ -222,7 +218,11 @@ export class ProductAuthorization {
     return this.access(secret, resource, action, 'read', (plan, tx) =>
       this.gateway.detail(
         plan,
-        requestKey(this.bindings.declarations.resources[resource]!.keyKind, key),
+        requestKey(
+          this.bindings.core,
+          this.bindings.declarations.resources[resource]!.keyKind,
+          key,
+        ),
         tx,
       ),
     );
@@ -248,7 +248,7 @@ export class ProductAuthorization {
       const bound = compilePlan(plan, this.bindings);
       const params = [...bound.parameters];
       const assignments = fields.map((f) => {
-        const value = normalizeValue(
+        const value = this.bindings.core.normalizeValue(
           this.bindings.declarations.resources[resource]!.fields[f]!.kind,
           changes[f],
         );
@@ -256,20 +256,28 @@ export class ProductAuthorization {
         params.push(value);
         return `${quoteIdentifier(binding.columns[f]!)}=CAST($${params.length} AS ${fieldPgTypes[this.bindings.declarations.resources[resource]!.fields[f]!.kind]})`;
       });
-      params.push(requestKey(this.bindings.declarations.resources[resource]!.keyKind, key).value);
-      const rows = await tx.manager.query<unknown[]>(
-        `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[this.bindings.declarations.resources[resource]!.keyKind]}) RETURNING 1) SELECT * FROM updated`,
+      const keyKind = this.bindings.declarations.resources[resource]!.keyKind;
+      const typedKey = requestKey(this.bindings.core, keyKind, key);
+      params.push(typedKey.value);
+      const rows = await tx.manager.query<{ object_id: string }[]>(
+        `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[keyKind]}) RETURNING r.${quoteIdentifier(binding.objectIdColumn)} AS object_id) SELECT * FROM updated`,
         params,
       );
-      if (rows.length) await this.audit(tx, plan, 'data.update');
+      if (rows.length)
+        await appendProductAudit(tx, {
+          kind: 'data.update',
+          actor: plan.userId,
+          permission: plan.permission,
+          target: { resource, keyKind, key: typedKey.value, objectId: rows[0]!.object_id },
+        });
       return rows.length === 1;
     });
   }
   async suspendUser(secret: string, target: string): Promise<boolean> {
-    if (!isCanonicalUuid(target)) throw new ProductAccessDenied();
+    if (!this.bindings.core.isCanonicalUuid(target)) throw new ProductAccessDenied();
     return this.access(secret, 'account', 'suspend', 'admin', async (plan, tx) => {
       if (plan.userId === target) throw new ProductAccessDenied();
-      const row = await this.gateway.detail(plan, parseKey('uuid', target), tx);
+      const row = await this.gateway.detail(plan, this.bindings.core.parseKey('uuid', target), tx);
       if (!row) return false;
       const rank = await tx.manager.query<{ id: string; rank: string }[]>(
         `SELECT id,authority_level::text rank FROM account_rank WHERE id=ANY($1::uuid[])`,
@@ -283,7 +291,12 @@ export class ProductAuthorization {
         `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
         [target],
       );
-      await this.audit(tx, plan, 'account.suspend');
+      await appendProductAudit(tx, {
+        kind: 'account.suspend',
+        actor: plan.userId,
+        permission: plan.permission,
+        target: { userId: target },
+      });
       return true;
     });
   }

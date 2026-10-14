@@ -5,19 +5,31 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer } from 'node:net';
 import { DataSource } from 'typeorm';
 import { type IdentityId } from '@base-authorization/core';
+import { type ProductDatabasePurpose } from '@base-authorization/typeorm-postgres';
 import {
-  provisionProductDatabase,
-  productDataSourceOptions,
   ProductTransactionRunner,
   ProductIdentityService,
   createProductPasswordHasher,
   ProductManifestReconciler,
+} from '@base-authorization/typeorm-postgres/composition';
+import {
+  provisionProductDatabase,
+  productDataSourceOptions,
   bootstrapProductRoot,
-  type ProductDatabasePurpose,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/operations';
+import { NestFactory } from '@nestjs/core';
 import { startPostgres } from '../../../test/setup-postgres.ts';
-import { ProductDocument1792108800002 } from '../dist/product-migration.js';
-import { productRelease } from '../dist/product-manifest.js';
+import { AppModule } from '../dist/app.module.js';
+import { loadConfig } from '../dist/config/app.config.js';
+import { ProductRuntime } from '../dist/infrastructure/product-runtime.js';
+import { ProductDocument1792108800002 } from '../dist/documents/migrations/product-document.js';
+import {
+  createProductAuthorizationCore,
+  createProductRelease,
+} from '../dist/authorization/product-manifest.js';
+
+const core = createProductAuthorizationCore();
+const productRelease = createProductRelease(core);
 async function freePort() {
   const s = createServer();
   await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
@@ -65,6 +77,7 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   await new ProductDocument1792108800002().up(migration);
   await migration.release();
   await new ProductManifestReconciler(runner, {
+    core,
     actor: randomUUID() as IdentityId,
     capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
   }).reconcile(productRelease);
@@ -287,4 +300,35 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   await new Promise<void>((r) => running.processChild.once('exit', () => r()));
   assert.notEqual(child.exitCode, 0);
   await assert.rejects(fetch(`${origin}/documents`));
+  child = undefined;
+  // The same failure in-process, with main.ts's sequence: readiness stays closed, no listener,
+  // and the (repeatable) cleanup returns every connection the runtime opened.
+  const sessions = async () =>
+    new Set(
+      (
+        await ds.migration.query<{ pid: number }[]>(
+          "SELECT pid FROM pg_stat_activity WHERE usename IN ('product_data','product_identity','product_authority','product_sync')",
+        )
+      ).map((r) => r.pid),
+    );
+  const before = await sessions();
+  const runtime = await ProductRuntime.create(loadConfig(env));
+  assert.ok([...(await sessions())].filter((pid) => !before.has(pid)).length >= 4);
+  const app = await NestFactory.create(AppModule.register(runtime), {
+    logger: false,
+    abortOnError: false,
+  });
+  await assert.rejects(app.listen(port));
+  assert.equal(runtime.readiness.ready, false);
+  await assert.rejects(fetch(`${origin}/health/live`));
+  await runtime.onApplicationShutdown();
+  await runtime.onApplicationShutdown();
+  let leaked: number[] = [];
+  for (let i = 0; i < 50; i++) {
+    const current = await sessions();
+    leaked = [...current].filter((pid) => !before.has(pid));
+    if (!leaked.length) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.deepEqual(leaked, []);
 });

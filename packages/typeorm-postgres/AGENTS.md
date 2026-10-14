@@ -4,8 +4,19 @@ Adapter PostgreSQL/TypeORM: schema, migrations, tenant provisioning, connection 
 
 ## Ranh giới
 
-- Phụ thuộc `@base-authorization/core` qua `workspace:*` và public exports; không import NestJS hay code của `apps/api`.
+- Phụ thuộc `@base-authorization/core` qua `workspace:*` và public exports; không import NestJS, code của `apps/api` hay `value-adapters`. Nhận `AuthorizationCore` làm argument (`prepare*Release(source, core)`, binding registries, reconciler `options.core`, `PostgresAuthority`, root offline commands); release/declarations của core khác bị từ chối. Tenant id legacy kiểm bằng grammar identifier nội bộ (`parseRoutableTenant`) vì tên DB/role suy ra từ nó.
 - Không export DataSource/QueryRunner/credential thô cho handler. Lease và `manager` chỉ dành cho adapter.
+- Public entrypoints (`package.json#exports`, mỗi `src/<name>.ts` chỉ re-export, không logic). Đây là ranh giới cho developer, không phải process isolation; `test/package-boundaries.spec.ts` chốt danh sách export, ESLint chặn handler import entrypoint đặc quyền.
+
+| Entrypoint      | Nội dung                                                                                                                           | Ai được import                                        |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `.`             | Error classes, helper thuần (`canonicalLoginEmail`, `rateLimitClient`), type contracts (service types chỉ `export type`)           | Mọi nơi, kể cả handler                                |
+| `./composition` | Constructors/low-level: `ProductTransactionRunner`, services, registries, gateway, `productObligations`, `verifyProductPrivileges` | `apps/api/src/infrastructure`, `tools/`, test adapter |
+| `./operations`  | Offline: provision/migrate/data source options, root bootstrap/revoke/reissue, `appendProductAudit`                                | `tools/`, test offline                                |
+| `./legacy`      | API tenant lịch sử (registry, provisioner, tenant runner/gateway/compiler, reconciler cũ)                                          | Test/CLI legacy, `apps/api/src/legacy`                |
+
+Thêm export mới: chọn entrypoint theo bảng và cập nhật literal trong `test/package-boundaries.spec.ts`; không thêm raw runner/pool/audit writer vào root.
+
 - Entities không được dùng để sinh schema: `synchronize: false`, migrations viết tay.
 
 ## Runtime một sản phẩm
@@ -29,11 +40,11 @@ Các file/bảng tenant bên dưới là compatibility/historical, không wire v
 | `tenant-provisioner.ts`          | Tạo DB/role theo tenant, ma trận quyền `tenantPrivileges`, resume idempotent                          |
 | `datasource-registry.ts`         | `TenantDataSourceRegistry`: single-flight, refcount, eviction, budget, anchor                         |
 | `authority-store.ts`             | Đọc authority facts từ tenant DB                                                                      |
-| `sql-compiler.ts`                | `BindingRegistry`, `compilePlan`/`compileNamed` → SQL có bind parameter                               |
+| `sql-compiler.ts`                | `BindingRegistry(core, …)`, `compilePlan`/`compileNamed` → SQL có bind parameter                      |
 | `data-gateway.ts`                | `DataGateway`: list/detail/count cùng predicate, projection allowlist                                 |
 | `tenant-transaction.ts`          | `TenantTransactionRunner` (fence, timeout, retry 40P01/40001/55P03), `PostgresAuthority.withSnapshot` |
 | `obligations.ts`                 | `fulfillObligations` trong transaction trước khi trả payload                                          |
-| `manifest-reconciler.ts`         | `prepareRelease` + `ManifestReconciler.reconcile` (sequence/hash, không downgrade, seeds)             |
+| `manifest-reconciler.ts`         | `prepareRelease(source, core)` + `ManifestReconciler.reconcile` (sequence/hash, không downgrade)      |
 
 Mọi truy cập authority/data đi qua `withSnapshot`/`TenantTransactionRunner`: fence là statement đầu, facts đọc ở statement sau, cùng transaction. Mode `read/write` (data role, shared fence qua hàm `authz_acquire_shared_fence`), `admin` (authority, `FOR UPDATE` + revision), `sync` (sync role). Permission boundary được load cùng authority trong fence; giữ cùng semantics ở product path.
 

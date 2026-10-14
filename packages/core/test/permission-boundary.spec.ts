@@ -5,19 +5,18 @@ import { describe, test } from 'node:test';
 import {
   type AuthoritySnapshot,
   type BoundaryBindingFact,
-  evaluate,
   type ExceptionFact,
   type Expr,
   type FactObject,
   type PermissionBoundary,
-  plan,
   type RuleFact,
   type SystemDeclarations,
   type TrustedInput,
-  validate,
   type ValidatedDeclarations,
 } from '@base-authorization/core';
-import { alice, bob, later, now, tenantA, tenantB } from './fixtures.ts';
+import { alice, bob, core, later, now, tenantA, tenantB } from './fixtures.ts';
+
+const { evaluate, plan, validate } = core;
 
 const lit = (value: string) => ({ from: 'literal', value }) as const;
 const anyOf = (field: string, values: string[]): Expr => ({

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import { parseTenantId, type TenantId } from '@base-authorization/core';
+import type { TenantId } from '@base-authorization/core';
 import {
   type ConnectionPurpose,
   directoryRouteResolver,
@@ -12,7 +12,7 @@ import {
   TenantProvisioner,
   tenantRoleName,
   TenantRoutingError,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import { DataSource } from 'typeorm';
 import {
   type Connection,
@@ -21,6 +21,9 @@ import {
   type TestPostgres,
   withClient,
 } from './setup-postgres.ts';
+import { core } from './fixtures/resources.ts';
+
+const { parseTenantId } = core;
 
 const tenantA = parseTenantId('00000000-0000-4000-8000-00000000000a');
 const tenantB = parseTenantId('00000000-0000-4000-8000-00000000000b');

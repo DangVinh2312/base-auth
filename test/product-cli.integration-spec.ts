@@ -5,6 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PRODUCT_OFFLINE_ACTOR } from '@base-authorization/typeorm-postgres/composition';
 import { startPostgres, withClient } from './setup-postgres.ts';
 test('offline CLI provisions, forward migrates, syncs and bootstraps once without printing activation secret', async (t) => {
   const pg = await startPostgres();
@@ -40,6 +41,15 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   assert.match(run('migrate'), /Applied 0/);
   run('sync');
   run('sync');
+  // The CLI publishes exactly the release the API runtime prepares (one codec composition).
+  const { createProductAuthorizationCore, createProductRelease } =
+    await import('../apps/api/dist/authorization/product-manifest.js');
+  await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
+    const state = await client.query<{ hash: string }>(
+      "SELECT encode(manifest_hash,'hex') hash FROM authz_state WHERE singleton",
+    );
+    assert.equal(state.rows[0]?.hash, createProductRelease(createProductAuthorizationCore()).hash);
+  });
   const invited = randomUUID();
   const inviteArtifact = join(dir, 'invite-proof');
   const inviteOutput = run(
@@ -115,7 +125,39 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   assert.notEqual(unknown.status, 0, 'reissue needs an existing pending account');
   await assert.rejects(readFile(join(dir, 'unknown-proof'), 'utf8'));
   const userId = randomUUID();
+  const cliRevision = () =>
+    withClient(
+      { ...c, database: 'cli_fixture' },
+      async (client) =>
+        (await client.query<{ r: string }>('SELECT revision::text r FROM authz_state')).rows[0]!.r,
+    );
+  const beforeEnroll = await cliRevision();
   run('enroll', '--user', userId, '--method', 'local', '--email', 'root-cli@example.test');
+  const afterEnroll = await cliRevision();
+  assert.equal(BigInt(afterEnroll), BigInt(beforeEnroll) + 1n);
+  await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
+    // Offline identity events: operator sentinel as actor, the enrolled/invited account as target.
+    const enrolled = await client.query<{ actor: string; revision: string; metadata: object }>(
+      `SELECT actor_id::text actor,policy_revision::text revision,safe_metadata metadata FROM audit_outbox WHERE event_kind=$1 AND safe_metadata->>'targetUserId'=$2`,
+      [Buffer.from('identity.enroll'), userId],
+    );
+    assert.deepEqual(enrolled.rows, [
+      {
+        actor: PRODUCT_OFFLINE_ACTOR,
+        revision: beforeEnroll,
+        metadata: { method: 'local', targetUserId: userId, resultingRevision: afterEnroll },
+      },
+    ]);
+    const invites = await client.query<{ actor: string; target: string }>(
+      `SELECT actor_id::text actor,safe_metadata->>'targetUserId' target FROM audit_outbox WHERE event_kind=$1`,
+      [Buffer.from('identity.invite')],
+    );
+    assert.ok(invites.rows.length > 0);
+    for (const row of invites.rows) {
+      assert.equal(row.actor, PRODUCT_OFFLINE_ACTOR);
+      assert.ok(row.target && row.target !== row.actor);
+    }
+  });
   const outputPath = join(dir, 'activation-proof');
   const operation = randomUUID();
   const output = run(
@@ -205,5 +247,58 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
       [userId, Buffer.from('root.revoke')],
     );
     assert.deepEqual(rows.rows[0], { n: 0, marker: true, audit: 1 });
+  });
+});
+
+test('offline CLI refuses the offline actor id as a user for enroll, invite, bootstrap and reissue-root', async (t) => {
+  const pg = await startPostgres();
+  const dir = await mkdtemp(join(tmpdir(), 'product-cli-actor-'));
+  t.after(async () => {
+    await pg.stop();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const c = pg.superuser;
+  const env: Record<string, string> = {
+    PATH: process.env.PATH || '',
+    DATABASE_ADMIN_URL: `postgres://${c.username}:${c.password}@${c.host}:${c.port}/postgres`,
+    PRODUCT_DATABASE_NAME: 'cli_actor_fixture',
+  };
+  for (const p of ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap']) {
+    const password = randomBytes(24).toString('hex');
+    env[`PRODUCT_${p.toUpperCase()}_PASSWORD`] = password;
+    env[`PRODUCT_${p.toUpperCase()}_DATABASE_URL`] =
+      `postgres://product_${p}:${password}@${c.host}:${c.port}/cli_actor_fixture`;
+  }
+  const cli = (command: string, ...args: string[]) =>
+    spawnSync(process.execPath, ['tools/product.ts', command, ...args], {
+      env,
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+  for (const setup of ['provision', 'migrate', 'sync']) assert.equal(cli(setup).status, 0, setup);
+  const user = ['--user', PRODUCT_OFFLINE_ACTOR];
+  const artifact = (name: string) => ['--activation-file', join(dir, name)];
+  const attempts: [string, string[], RegExp][] = [
+    ['enroll', [...user, '--method', 'local', '--email', 'actor@example.test'], /\(Error\)/],
+    ['invite', [...user, '--method', 'local', ...artifact('invite-proof')], /\(Error\)/],
+    [
+      'bootstrap',
+      [...user, '--operation', randomUUID(), '--method', 'local', ...artifact('b-proof')],
+      /ReleaseRejectedError invalid_release/,
+    ],
+    [
+      'reissue-root',
+      [...user, '--method', 'local', ...artifact('r-proof')],
+      /ReleaseRejectedError invalid_release/,
+    ],
+  ];
+  for (const [command, args, failure] of attempts) {
+    const result = cli(command, ...args);
+    assert.notEqual(result.status, 0, `${command} must refuse the offline actor id`);
+    assert.match(result.stderr, failure, command);
+  }
+  await withClient({ ...c, database: 'cli_actor_fixture' }, async (client) => {
+    const rows = await client.query('SELECT 1 FROM app_user WHERE id=$1', [PRODUCT_OFFLINE_ACTOR]);
+    assert.equal(rows.rowCount, 0);
   });
 });

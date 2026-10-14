@@ -7,6 +7,7 @@
     "@base-authorization/core": "workspace:*",
     "@base-authorization/nest": "workspace:*",
     "@base-authorization/typeorm-postgres": "workspace:*",
+    "@base-authorization/value-adapters": "workspace:*",
     "@nestjs/common": "12.1.2",
     "@nestjs/core": "12.1.2",
     "@nestjs/platform-express": "12.1.2",

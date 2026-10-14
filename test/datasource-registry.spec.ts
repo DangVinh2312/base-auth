@@ -9,7 +9,7 @@ import {
   TenantRoutingError,
   type TenantRoute,
   TenantUnavailableError,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 
 const tenantA = '00000000-0000-4000-8000-00000000000a' as TenantId;
 const tenantB = '00000000-0000-4000-8000-00000000000b' as TenantId;

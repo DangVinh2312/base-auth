@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validate, planUser, type UserAuthoritySnapshot } from '@base-authorization/core';
+import type { UserAuthoritySnapshot } from '@base-authorization/core';
 import {
   ProductBindingRegistry,
-  compilePlan,
-} from '../packages/typeorm-postgres/dist/product-sql.js';
-import { declarations, snapshot, input } from '../packages/core/test/fixtures.ts';
+  compileProductPlan as compilePlan,
+} from '@base-authorization/typeorm-postgres/composition';
+import { declarations, snapshot, input, core } from '../packages/core/test/fixtures.ts';
+
+const { planUser, validate } = core;
 
 test('product SQL uses native keys and bound values without any tenant contract', () => {
   const d = validate(declarations());
   assert.ok(d.ok);
-  const registry = new ProductBindingRegistry(d.declarations, {
+  const registry = new ProductBindingRegistry(core, d.declarations, {
     resources: [
       {
         resource: 'submission',

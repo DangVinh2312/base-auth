@@ -343,6 +343,9 @@ export async function verifyProductPrivileges(
        OR EXISTS(SELECT FROM pg_namespace n WHERE has_schema_privilege(current_user,n.oid,'CREATE'))
        OR has_database_privilege(current_user,current_database(),'CREATE')
        OR has_database_privilege(current_user,current_database(),'TEMP')
+       -- a login must not be able to re-delegate the access it holds
+       OR EXISTS(SELECT FROM pg_namespace n WHERE has_schema_privilege(current_user,n.oid,'USAGE WITH GRANT OPTION'))
+       OR has_database_privilege(current_user,current_database(),'CONNECT WITH GRANT OPTION')
        -- replica mode skips every protection trigger
        OR has_parameter_privilege(current_user,'session_replication_role','SET')
        OR current_setting('session_replication_role')<>'origin'

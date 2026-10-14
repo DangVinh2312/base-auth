@@ -1,8 +1,8 @@
 import {
+  type AuthorizationCore,
   type AuthoritySnapshot,
   type BoundaryRequirement,
   type IdentityId,
-  isCanonicalUuid,
   type Lifecycle,
   type PermissionFact,
   type RelationRef,
@@ -21,9 +21,10 @@ export type AuthorityFacts = Omit<AuthoritySnapshot, 'declarations' | 'registry'
 export async function readAuthorityFacts(
   tx: TenantTransaction,
   identity: IdentityId,
+  core: AuthorizationCore,
 ): Promise<AuthorityFacts> {
   const { tenant, manager, revision } = tx;
-  if (!isCanonicalUuid(tenant) || !isCanonicalUuid(identity))
+  if (!core.isCanonicalUuid(tenant) || !core.isCanonicalUuid(identity))
     throw new TypeError('Tenant and identity must be canonical UUIDs');
   const membership = await manager.query<{ state: 'active' | 'suspended' }[]>(
     'SELECT state FROM membership WHERE tenant_id = $1 AND identity_id = $2',
@@ -136,11 +137,12 @@ const utf8 = (value: string) => Buffer.from(value, 'utf8');
 export async function writeBoundaryBinding(
   tx: TenantTransaction,
   change: BoundaryBindingChange,
+  core: AuthorizationCore,
 ): Promise<void> {
   if (tx.mode !== 'admin')
     throw new Error('Boundary bindings change only under the exclusive fence (admin mode)');
   const { actor, identity, permission, boundary } = change;
-  if (!isCanonicalUuid(actor) || !isCanonicalUuid(identity))
+  if (!core.isCanonicalUuid(actor) || !core.isCanonicalUuid(identity))
     throw new TypeError('Actor and identity must be canonical UUIDs');
   if (actor === identity) throw new Error('An actor cannot change its own permission boundary');
   const m = tx.manager;

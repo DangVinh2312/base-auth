@@ -1,7 +1,7 @@
 import {
+  type AuthorizationCore,
   type UserAuthorizedPlan,
   type FieldKind,
-  isValidated,
   type KeyKind,
   type PlanExpr,
   refKey,
@@ -71,8 +71,14 @@ export class ProductBindingRegistry {
   readonly #resources = new Map<string, ProductResourceBinding>();
   readonly #domains = new Map<string, ProductDomainRelationBinding>();
 
-  constructor(declarations: ValidatedDeclarations, bindings: ProductStorageBindings) {
-    if (!isValidated(declarations)) throw new TypeError('Declarations must come from validate()');
+  /** Validated `declarations` must come from this core; the gateway normalizes with it too. */
+  constructor(
+    readonly core: AuthorizationCore,
+    declarations: ValidatedDeclarations,
+    bindings: ProductStorageBindings,
+  ) {
+    if (!core.isValidated(declarations))
+      throw new TypeError('Declarations must come from validate() of this authorization core');
     this.declarations = declarations;
     for (const binding of bindings.resources) {
       const resource = Object.hasOwn(declarations.resources, binding.resource)

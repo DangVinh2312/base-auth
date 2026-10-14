@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { canonicalTimestamp, evaluate } from '@base-authorization/core';
 import {
   BindingRegistry,
   compilePlan,
   runMigrations,
   tenantDataSourceOptions,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import {
   fixtureDeclarations,
   readPlan,
@@ -16,8 +15,11 @@ import {
   submissionFacts,
   tenantA,
   tenantFixture,
+  core,
 } from './fixtures/resources.ts';
 import { type Connection, startPostgres, type TestPostgres, withClient } from './setup-postgres.ts';
+
+const { canonicalTimestamp, evaluate } = core;
 
 /**
  * The tenant schema on a database whose default collation is ICU (`und`), where 'Zeta' < 'a' is
@@ -66,7 +68,7 @@ describe('string ordering is independent of the database collation', () => {
       ]);
       const compiled = compilePlan(
         authorized,
-        new BindingRegistry(fixtureDeclarations(), storageBindings),
+        new BindingRegistry(core, fixtureDeclarations(), storageBindings),
       );
       const sqlIds = await withClient(db, async (c) =>
         (

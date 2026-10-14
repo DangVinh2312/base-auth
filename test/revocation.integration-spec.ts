@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { type IdentityId, plan, type TrustedInput } from '@base-authorization/core';
+import type { IdentityId, TrustedInput } from '@base-authorization/core';
+import { TransactionConflictError } from '@base-authorization/typeorm-postgres';
 import {
   AuthorityUnavailableError,
   BindingRegistry,
@@ -10,8 +11,7 @@ import {
   PostgresAuthority,
   tenantRoleName,
   TenantTransactionRunner,
-  TransactionConflictError,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import type pg from 'pg';
 import {
   alice,
@@ -21,8 +21,11 @@ import {
   startGatewayEnvironment,
   storageBindings,
   tenantA,
+  core,
 } from './fixtures/resources.ts';
 import { openClient, withClient } from './setup-postgres.ts';
+
+const { plan } = core;
 
 const bytes = (value: string) => Buffer.from(value, 'utf8');
 
@@ -37,11 +40,11 @@ describe('tenant fence, revocation and transaction limits', () => {
   before(async () => {
     env = await startGatewayEnvironment();
     runner = new TenantTransactionRunner(env.registry, { deadlineMs: 2_000, lockTimeoutMs: 1_500 });
-    authority = new PostgresAuthority(runner, fixtureDeclarations(), {
+    authority = new PostgresAuthority(core, runner, fixtureDeclarations(), {
       validators: {},
       obligationHandlers: [],
     });
-    gateway = new DataGateway(new BindingRegistry(fixtureDeclarations(), storageBindings));
+    gateway = new DataGateway(new BindingRegistry(core, fixtureDeclarations(), storageBindings));
     admin = await openClient(env.adminOn(tenantA));
     monitor = await openClient(env.postgres.superuser);
     await admin.query(

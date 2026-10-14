@@ -5,21 +5,6 @@ export type TenantId = string & { readonly tenantId: unique symbol };
 /** Branded global identity id (canonical lowercase UUID). Not a security boundary either. */
 export type IdentityId = string & { readonly identityId: unique symbol };
 
-const canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-export function isCanonicalUuid(value: unknown): value is string {
-  return typeof value === 'string' && canonicalUuid.test(value);
-}
-
-/**
- * Accepts only the canonical lowercase UUID form so one tenant cannot have aliases.
- * Throws instead of normalizing: callers must not route on unverified spellings.
- */
-export function parseTenantId(value: unknown): TenantId {
-  if (!isCanonicalUuid(value)) throw new TypeError('Tenant id must be a canonical lowercase UUID');
-  return value as TenantId;
-}
-
 export type KeyKind = 'integer' | 'uuid' | 'string';
 /** Typed object key. Integers stay canonical decimal strings, never JS numbers. */
 export interface Key {

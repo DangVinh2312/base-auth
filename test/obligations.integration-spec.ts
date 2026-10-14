@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
-import {
-  type AuthorizedPlan,
-  parseKey,
-  plan,
-  type TrustedInput,
-  validate,
-} from '@base-authorization/core';
+import type { AuthorizedPlan, TrustedInput } from '@base-authorization/core';
 import {
   BindingRegistry,
   DataGateway,
@@ -16,9 +10,9 @@ import {
   PostgresAuthority,
   type TenantTransaction,
   TenantTransactionRunner,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import type pg from 'pg';
-import { AuditOutboxService } from '../apps/api/dist/audit/audit-outbox.service.js';
+import { AuditOutboxService } from '../apps/api/dist/legacy/audit-outbox.service.js';
 import {
   alice,
   declarationsSource,
@@ -26,8 +20,11 @@ import {
   startGatewayEnvironment,
   storageBindings,
   tenantA,
+  core,
 } from './fixtures/resources.ts';
 import { openClient } from './setup-postgres.ts';
+
+const { parseKey, plan, validate } = core;
 
 const bytes = (value: string) => Buffer.from(value, 'utf8');
 
@@ -36,7 +33,7 @@ describe('obligations and the audit outbox', () => {
   let authority: PostgresAuthority;
   let gateway: DataGateway;
   let admin: pg.Client;
-  const outbox = new AuditOutboxService();
+  const outbox = new AuditOutboxService(core);
 
   // Approve carries a mandatory audit obligation in this variant of the fixture manifest.
   const result = validate({
@@ -52,11 +49,11 @@ describe('obligations and the audit outbox', () => {
   before(async () => {
     env = await startGatewayEnvironment();
     const runner = new TenantTransactionRunner(env.registry);
-    authority = new PostgresAuthority(runner, declarations, {
+    authority = new PostgresAuthority(core, runner, declarations, {
       validators: {},
       obligationHandlers: ['auditApproval@1'],
     });
-    gateway = new DataGateway(new BindingRegistry(declarations, storageBindings));
+    gateway = new DataGateway(new BindingRegistry(core, declarations, storageBindings));
     admin = await openClient(env.adminOn(tenantA));
     await admin.query(
       `INSERT INTO policy_rule VALUES ($1, gen_random_uuid(), $2, NULL, $3, 'allow', $4, 1, '{}', 'tenant')`,

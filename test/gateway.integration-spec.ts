@@ -1,19 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import {
-  type AuthorizedPlan,
-  canonicalTimestamp,
-  evaluate,
-  parseKey,
-  plan as planDecision,
-} from '@base-authorization/core';
+import type { AuthorizedPlan } from '@base-authorization/core';
 import {
   BindingRegistry,
   DataGateway,
   readAuthorityFacts,
   type TenantTransaction,
   TenantTransactionRunner,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import {
   alice,
   carol,
@@ -26,8 +20,11 @@ import {
   submissionFacts,
   tenantA,
   tenantB,
+  core,
 } from './fixtures/resources.ts';
 import { withClient } from './setup-postgres.ts';
+
+const { canonicalTimestamp, evaluate, parseKey, plan: planDecision } = core;
 
 const read = 'submission.read';
 
@@ -42,7 +39,7 @@ describe('data gateway', () => {
   before(async () => {
     env = await startGatewayEnvironment();
     runner = new TenantTransactionRunner(env.registry, { deadlineMs: 10_000 });
-    gateway = new DataGateway(new BindingRegistry(fixtureDeclarations(), storageBindings));
+    gateway = new DataGateway(new BindingRegistry(core, fixtureDeclarations(), storageBindings));
   });
   after(async () => {
     await env?.stop();
@@ -280,7 +277,7 @@ describe('data gateway', () => {
           ],
         ),
       );
-      const facts = await readAuthorityFacts(txA, alice);
+      const facts = await readAuthorityFacts(txA, alice, core);
       assert.deepEqual(facts.membership, { identity: alice, state: 'active' });
       assert.deepEqual(facts.roles, ['reviewer']);
       const now = new Date();

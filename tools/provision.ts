@@ -7,14 +7,22 @@
 // and are never printed.
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { parseTenantId } from '@base-authorization/core';
-import { TenantProvisioner } from '@base-authorization/typeorm-postgres';
+import { createAuthorizationCore } from '@base-authorization/core';
+import { TenantProvisioner } from '@base-authorization/typeorm-postgres/legacy';
+import {
+  createDayjsTimestampCodec,
+  createStandardValueCodecs,
+} from '@base-authorization/value-adapters';
 import { adminConnection, identityDatabaseName, requireEnv } from './env.ts';
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: { id: { type: 'string' }, label: { type: 'string' } },
   args: process.argv.slice(2).filter((arg) => arg !== '--'),
+});
+// Legacy composition root: same standard codecs as the product runtime.
+const core = createAuthorizationCore({
+  values: createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() }),
 });
 const provisioner = new TenantProvisioner(adminConnection(), {
   identityDatabase: identityDatabaseName(),
@@ -28,7 +36,7 @@ switch (positionals[0]) {
   }
   case 'tenant': {
     if (!values.label) throw new Error('--label is required');
-    const tenantId = parseTenantId(values.id ?? randomUUID());
+    const tenantId = core.parseTenantId(values.id ?? randomUUID());
     console.log(`provisioning tenant ${tenantId} (re-run with --id ${tenantId} to resume)`);
     await provisioner.provision({
       tenantId,

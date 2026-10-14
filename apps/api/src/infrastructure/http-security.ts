@@ -1,6 +1,6 @@
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import type { AppConfig } from './config.js';
+import type { AppConfig } from '../config/app.config.js';
 export interface HttpRequest {
   headers: Record<string, string | undefined>;
   ip?: string;

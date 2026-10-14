@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadConfig } from '../apps/api/dist/config.js';
+import { loadConfig } from '../apps/api/dist/config/app.config.js';
 import { ProductInvalidRequest, rateLimitClient } from '@base-authorization/typeorm-postgres';
 import {
   bodyFields,
   enforceCsrf,
   cookieName,
   sessionSecret,
-} from '../apps/api/dist/http-security.js';
-import { ProductErrorFilter } from '../apps/api/dist/product.filter.js';
-import { ProductController } from '../apps/api/dist/product.controller.js';
-import { ProductMetrics } from '../apps/api/dist/metrics.js';
+} from '../apps/api/dist/infrastructure/http-security.js';
+import { ProductErrorFilter } from '../apps/api/dist/infrastructure/product-error.filter.js';
+import { AuthController } from '../apps/api/dist/auth/auth.controller.js';
+import { ProductMetrics } from '../apps/api/dist/health/product-metrics.js';
 const env = {
   NODE_ENV: 'test',
   AUTH_METHODS: 'local',
@@ -85,7 +85,7 @@ test('error filter: caller input is 400, programming faults are 503 and logged',
   try {
     assert.equal(status(new ProductInvalidRequest('bad key')), 400);
     // The deliberate 503 of an unconfigured capability, as the controller throws it.
-    const unavailable: unknown = await new ProductController({
+    const unavailable: unknown = await new AuthController({
       config,
       recoveryDelivery: undefined,
     } as never)
@@ -124,7 +124,7 @@ test('recovery request answers the same whether delivery hangs or fails', async 
     () => new Promise<void>(() => {}),
     () => Promise.reject(new Error('down')),
   ]) {
-    const controller = new ProductController({
+    const controller = new AuthController({
       config,
       recoveryDelivery: delivery,
       identity: { requestPasswordReset: () => Promise.resolve({ userId: 'u', token: 't' }) },

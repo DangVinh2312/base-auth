@@ -33,6 +33,7 @@
   "devDependencies": {
     "@base-authorization/core": "workspace:*",
     "@base-authorization/typeorm-postgres": "workspace:*",
+    "@base-authorization/value-adapters": "workspace:*",
     "@eslint/js": "10.0.1",
     "@testcontainers/postgresql": "12.2.0",
     "@types/node": "24.9.2",

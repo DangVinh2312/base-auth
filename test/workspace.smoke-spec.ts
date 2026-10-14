@@ -61,7 +61,7 @@ for (const missing of [
   });
 }
 test('local-only configuration needs no IdP and rejects offline credentials without leaking secrets', async () => {
-  const { loadConfig } = await import('../apps/api/dist/config.js');
+  const { loadConfig } = await import('../apps/api/dist/config/app.config.js');
   assert.equal(loadConfig(validEnv).oidcProviders.length, 0);
   assert.throws(() => loadConfig({ ...validEnv, AUTH_METHODS: 'oidc' }), /OIDC_PROVIDERS_JSON/);
   const result = runApiExpectingExit({
@@ -75,7 +75,7 @@ test('local-only configuration needs no IdP and rejects offline credentials with
   assert.doesNotMatch(result.stderr + result.stdout, /do-not-print-me|leaky_user/);
 });
 
-test('importing @base-authorization/core loads no framework, ORM or driver module', () => {
+test('importing @base-authorization/core loads no framework, ORM, driver or value library', () => {
   const manifest = JSON.parse(
     readFileSync(new URL('../packages/core/package.json', import.meta.url), 'utf8'),
   ) as {
@@ -101,7 +101,25 @@ test('importing @base-authorization/core loads no framework, ORM or driver modul
   assert.ok(exports.length > 0, 'core must expose a public API');
   assert.ok(loaded.some((url) => url.includes('/packages/core/dist/')));
   const forbidden = loaded.filter((url) =>
-    /node_modules\/(@nestjs|typeorm|pg|pg-[a-z]+|reflect-metadata|express)\//.test(url),
+    /node_modules\/(@nestjs|typeorm|pg|pg-[a-z]+|reflect-metadata|express|dayjs|moment)\/|\/packages\/value-adapters\//.test(
+      url,
+    ),
   );
   assert.deepEqual(forbidden, []);
+  assert.ok(exports.includes('createAuthorizationCore'));
+});
+
+test('API runtime and offline CLI take their codecs from one composition', () => {
+  const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+  // The only place that picks value codecs for the product; both entry points call it.
+  const manifest = read('../apps/api/src/authorization/product-manifest.ts');
+  assert.match(
+    manifest,
+    /createStandardValueCodecs\(\{ timestamp: createDayjsTimestampCodec\(\) \}\)/,
+  );
+  for (const path of ['../apps/api/src/infrastructure/product-runtime.ts', '../tools/product.ts']) {
+    const source = read(path);
+    assert.match(source, /createProductAuthorizationCore\(\)/, path);
+    assert.doesNotMatch(source, /createAuthorizationCore\(|createStandardValueCodecs\(/, path);
+  }
 });

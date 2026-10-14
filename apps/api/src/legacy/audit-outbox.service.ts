@@ -1,5 +1,5 @@
-import { type IdentityId, isCanonicalUuid } from '@base-authorization/core';
-import type { TenantTransaction } from '@base-authorization/typeorm-postgres';
+import type { AuthorizationCore, IdentityId } from '@base-authorization/core';
+import type { TenantTransaction } from '@base-authorization/typeorm-postgres/legacy';
 
 export interface AuditEvent {
   /** Idempotency key for the sink; a duplicate fails the transaction. */
@@ -22,7 +22,10 @@ const maxMetadataBytes = 2_048;
  * committed or released. Delivery to an external sink is a separate worker (Task 12).
  */
 export class AuditOutboxService {
+  constructor(private readonly core: AuthorizationCore) {}
+
   async append(tx: TenantTransaction, event: AuditEvent): Promise<void> {
+    const { isCanonicalUuid } = this.core;
     if (!isCanonicalUuid(event.eventId) || !isCanonicalUuid(event.actorId)) {
       throw new TypeError('Audit event and actor ids must be canonical UUIDs');
     }

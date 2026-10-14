@@ -8,24 +8,31 @@ import * as oidc from 'openid-client';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres';
-import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/operations';
+import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres/composition';
+import { ProductAuthenticationError } from '@base-authorization/typeorm-postgres';
 import {
+  PRODUCT_OFFLINE_ACTOR,
   ProductIdentityService,
   createProductPasswordHasher,
   newSessionSecret,
   sessionDigest,
-  ProductAuthenticationError,
-} from '@base-authorization/typeorm-postgres';
-import { ProductOidcService, type ProductOidcProvider } from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/composition';
+import { type ProductOidcProvider } from '@base-authorization/typeorm-postgres';
+import { ProductOidcService } from '@base-authorization/typeorm-postgres/composition';
 import {
   ProductAuthorization,
   ProductBindingRegistry,
   ProductManifestReconciler,
-} from '@base-authorization/typeorm-postgres';
+  productObligations,
+} from '@base-authorization/typeorm-postgres/composition';
 import type { IdentityId } from '@base-authorization/core';
-import { productRelease, productBindings } from '../apps/api/dist/product-manifest.js';
-import { ProductDocument1792108800002 } from '../apps/api/dist/product-migration.js';
+import {
+  createProductAuthorizationCore,
+  createProductRelease,
+  productBindings,
+} from '../apps/api/dist/authorization/product-manifest.js';
+import { ProductDocument1792108800002 } from '../apps/api/dist/documents/migrations/product-document.js';
 import { startPostgres, type TestPostgres } from './setup-postgres.ts';
 
 let postgres: TestPostgres;
@@ -40,6 +47,8 @@ const issuer = 'https://issuer.fixture';
 const redirectUri = 'https://app.fixture/oidc/callback';
 const subject = 'exact-subject';
 const userId = randomUUID();
+const core = createProductAuthorizationCore();
+const productRelease = createProductRelease(core);
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = {
   ...publicKey.export({ format: 'jwk' }),
@@ -399,6 +408,7 @@ test('real signed OIDC code+PKCE, claims rejection, state/browser replay, and no
   assert.equal(actor.userId, userId);
   assert.equal(actor.assurance, 'oidc');
   await new ProductManifestReconciler(runner, {
+    core,
     actor: userId as IdentityId,
     capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
   }).reconcile(productRelease);
@@ -422,10 +432,10 @@ test('real signed OIDC code+PKCE, claims rejection, state/browser replay, and no
   );
   const authorizationService = new ProductAuthorization(
     runner,
-    new ProductBindingRegistry(productRelease.declarations, productBindings),
+    new ProductBindingRegistry(core, productRelease.declarations, productBindings),
     {
       validators: { 'fresh@1': (_parameters, input) => input.context.freshAuthentication === true },
-      obligationHandlers: ['audit@1'],
+      obligations: productObligations,
     },
   );
   const localSession = await identity.login(
@@ -881,4 +891,19 @@ test('provider revoke racing network exchange denies new session; OIDC-only cann
     )[0]!.n,
     0,
   );
+});
+test('invitation issuance refuses the offline actor id even for a pending account', async () => {
+  await fixtureAdmin.query(
+    `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'actor-collision@example.test','pending')`,
+    [PRODUCT_OFFLINE_ACTOR],
+  );
+  await assert.rejects(
+    runner.run('revoke', (tx) => identity.issueActivation(tx, PRODUCT_OFFLINE_ACTOR)),
+    ProductAuthenticationError,
+  );
+  const tokens = await fixtureAdmin.query<unknown[]>(
+    'SELECT 1 FROM one_time_token WHERE user_id=$1',
+    [PRODUCT_OFFLINE_ACTOR],
+  );
+  assert.equal(tokens.length, 0);
 });

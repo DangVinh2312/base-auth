@@ -3,20 +3,23 @@ import { after, before, test } from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import type { IdentityId } from '@base-authorization/core';
+import { type ProductDatabasePurpose } from '@base-authorization/typeorm-postgres';
 import {
-  provisionProductDatabase,
-  productDataSourceOptions,
   ProductTransactionRunner,
   ProductManifestReconciler,
   prepareProductRelease,
-  bootstrapProductRoot,
-  reissueRootActivation,
   ProductIdentityService,
   createProductPasswordHasher,
-  type ProductDatabasePurpose,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/composition';
+import {
+  provisionProductDatabase,
+  productDataSourceOptions,
+  bootstrapProductRoot,
+  reissueRootActivation,
+} from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
-import { productDeclarations } from '../apps/api/dist/product-manifest.js';
+import { productDeclarations } from '../apps/api/dist/authorization/product-manifest.js';
+import { core } from '../packages/core/test/fixtures.ts';
 
 let fixture: TestPostgres;
 let fixtureNumber = 0;
@@ -68,10 +71,11 @@ async function withProduct(
   const migration = await new DataSource(productDataSourceOptions(settings.migration)).initialize();
   try {
     const reconciler = new ProductManifestReconciler(new ProductTransactionRunner({ sync }), {
+      core,
       actor,
       capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
     });
-    await reconciler.reconcile(prepareProductRelease(base));
+    await reconciler.reconcile(prepareProductRelease(base, core));
     await run(reconciler, migration, settings);
   } finally {
     await migration.destroy();
@@ -97,14 +101,17 @@ test('new release cannot adopt drift in a persisted grant omitted from its manif
       "UPDATE policy_rule SET parameters='{}',effect='deny' WHERE system_owner=$1",
       [Buffer.from(grant.owner)],
     );
-    const prior = prepareProductRelease(base);
+    const prior = prepareProductRelease(base, core);
     await assert.rejects(reconciler.reconcile(prior), /drift|not_ready|immutable_definition/);
-    const next = prepareProductRelease({
-      ...base,
-      sequence: '2',
-      predecessor: '1',
-      systemGrants: [],
-    });
+    const next = prepareProductRelease(
+      {
+        ...base,
+        sequence: '2',
+        predecessor: '1',
+        systemGrants: [],
+      },
+      core,
+    );
     await assert.rejects(reconciler.reconcile(next), /drift|not_ready|immutable_definition/);
     assert.equal(
       (
@@ -122,7 +129,7 @@ test('stable system owner/key with a wrong rule ID cannot silently satisfy a new
       randomUUID(),
       Buffer.from(grant.owner),
     ]);
-    const next = prepareProductRelease({ ...base, sequence: '2', predecessor: '1' });
+    const next = prepareProductRelease({ ...base, sequence: '2', predecessor: '1' }, core);
     await assert.rejects(
       reconciler.reconcile(next),
       /drift|not_ready|collision|immutable_definition/,
@@ -142,7 +149,7 @@ test('deny effect cannot masquerade as an unchanged explicit system allow grant'
     await offlineAlter(migration, "UPDATE policy_rule SET effect='deny' WHERE system_owner=$1", [
       Buffer.from(grant.owner),
     ]);
-    const next = prepareProductRelease({ ...base, sequence: '2', predecessor: '1' });
+    const next = prepareProductRelease({ ...base, sequence: '2', predecessor: '1' }, core);
     await assert.rejects(reconciler.reconcile(next), /drift|not_ready|immutable_definition/);
     assert.equal(
       (
@@ -180,11 +187,11 @@ test('OIDC Root bootstrap issues a one-time OIDC proof only for one exact pre-bo
       };
       // A second enabled binding would let another subject finish the activation.
       await assert.rejects(
-        bootstrapProductRoot(runner, prepareProductRelease(base), input),
+        bootstrapProductRoot(runner, prepareProductRelease(base, core), input),
         /OIDC binding/,
       );
       await migration.query(`DELETE FROM external_identity WHERE subject='second'`);
-      const result = await bootstrapProductRoot(runner, prepareProductRelease(base), input);
+      const result = await bootstrapProductRoot(runner, prepareProductRelease(base, core), input);
       assert.match(result.activationSecret ?? '', /^[A-Za-z0-9_-]{43}$/);
       assert.deepEqual(
         await migration.query('SELECT purpose FROM one_time_token WHERE user_id=$1', [target]),
@@ -200,15 +207,19 @@ test('OIDC Root bootstrap issues a one-time OIDC proof only for one exact pre-bo
         { method: 'local' as const },
       ])
         await assert.rejects(
-          reissueRootActivation(runner, { userId, ...wrong }),
+          reissueRootActivation(runner, { userId, ...wrong }, core),
           /OIDC binding|method/,
         );
-      const reissued = await reissueRootActivation(runner, {
-        userId,
-        method: 'oidc',
-        issuer: 'https://idp.example.test',
-        subject: 'root-subject',
-      });
+      const reissued = await reissueRootActivation(
+        runner,
+        {
+          userId,
+          method: 'oidc',
+          issuer: 'https://idp.example.test',
+          subject: 'root-subject',
+        },
+        core,
+      );
       assert.notEqual(reissued.activationSecret, result.activationSecret);
     } finally {
       await bootstrap.destroy();
@@ -288,7 +299,7 @@ test('only the bootstrap credential issues activation for a system account', asy
         runner,
         await createProductPasswordHasher(new Set()),
       );
-      const release = prepareProductRelease(base);
+      const release = prepareProductRelease(base, core);
       const bootstrapInput = (userId: string) => ({
         operationId: randomUUID(),
         userId: userId as IdentityId,
@@ -335,13 +346,17 @@ test('only the bootstrap credential issues activation for a system account', asy
       );
       // The bootstrap credential reissues a lost or expired proof for the pending Root only.
       await assert.rejects(
-        reissueRootActivation(runner, { userId: invited as IdentityId, method: 'local' }),
+        reissueRootActivation(runner, { userId: invited as IdentityId, method: 'local' }, core),
         /pending bootstrap Root/,
       );
-      const { activationSecret } = await reissueRootActivation(runner, {
-        userId: root as IdentityId,
-        method: 'local',
-      });
+      const { activationSecret } = await reissueRootActivation(
+        runner,
+        {
+          userId: root as IdentityId,
+          method: 'local',
+        },
+        core,
+      );
       assert.deepEqual(
         await migration.query(
           'SELECT count(*)::int n FROM one_time_token WHERE user_id=$1 AND consumed_at IS NULL',
@@ -361,7 +376,7 @@ test('only the bootstrap credential issues activation for a system account', asy
       );
       await identity.activate(activationSecret, 'a long unique reissued root password', 'reissue');
       await assert.rejects(
-        reissueRootActivation(runner, { userId: root as IdentityId, method: 'local' }),
+        reissueRootActivation(runner, { userId: root as IdentityId, method: 'local' }, core),
         /pending bootstrap Root/,
       );
     } finally {

@@ -2,8 +2,6 @@ import {
   type UserAuthorizedPlan,
   type FieldKind,
   type Key,
-  normalizeValue,
-  parseKey,
   type PlanExpr,
 } from '@base-authorization/core';
 import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
@@ -109,7 +107,7 @@ export class ProductDataGateway {
     const declared = this.#registry.declarations.resources[plan.resource]!;
     if (key.kind !== declared.keyKind)
       throw new ProductInvalidRequest(`${plan.resource} keys are ${declared.keyKind}`);
-    const value = parseKey(key.kind, key.value).value;
+    const value = this.#registry.core.parseKey(key.kind, key.value).value;
     const parameters = [...bound.parameters, value];
     const rows = await tx.manager.query<Row[]>(
       `SELECT ${this.#projection(binding)} FROM ${quoteIdentifier(binding.table)} r WHERE ${bound.sql}` +
@@ -196,7 +194,7 @@ export class ProductDataGateway {
         node.op === 'eq' ||
         ((node.op === 'lt' || node.op === 'lte') && orderedKinds.includes(field.kind))
       ) {
-        const value = normalizeValue(field.kind, node.value);
+        const value = this.#registry.core.normalizeValue(field.kind, node.value);
         if (value === undefined)
           throw new ProductInvalidRequest(
             `Filter value for ${String(node.field)} must be a ${field.kind}`,

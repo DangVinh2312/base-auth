@@ -5,22 +5,17 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
-import {
-  type AuthorizedPlan,
-  canonicalTimestamp,
-  evaluate,
-  type ExceptionFact,
-  type Expr,
-  type FactObject,
-  type IdentityId,
-  parseKey,
-  parseTenantId,
-  type PermissionBoundary,
-  plan,
-  type SystemDeclarations,
-  type TenantId,
-  validate,
+import type {
+  AuthorizedPlan,
+  ExceptionFact,
+  Expr,
+  FactObject,
+  IdentityId,
+  PermissionBoundary,
+  SystemDeclarations,
+  TenantId,
 } from '@base-authorization/core';
+import { ReleaseRejectedError } from '@base-authorization/typeorm-postgres';
 import {
   AuthorityUnavailableError,
   BindingRegistry,
@@ -31,7 +26,6 @@ import {
   ManifestReconciler,
   PostgresAuthority,
   prepareRelease,
-  ReleaseRejectedError,
   type ReleaseSource,
   RUNTIME_CAPABILITY,
   type StorageBindings,
@@ -42,7 +36,7 @@ import {
   type TenantTransaction,
   TenantTransactionRunner,
   writeBoundaryBinding,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import type pg from 'pg';
 import { DataSource } from 'typeorm';
 import {
@@ -53,6 +47,9 @@ import {
   type TestPostgres,
   withClient,
 } from './setup-postgres.ts';
+import { core } from './fixtures/resources.ts';
+
+const { canonicalTimestamp, evaluate, parseKey, parseTenantId, plan, validate } = core;
 
 const tenantA = parseTenantId('00000000-0000-4000-8000-0000000000a9');
 const tenantB = parseTenantId('00000000-0000-4000-8000-0000000000b9');
@@ -354,12 +351,16 @@ describe('permission boundary on PostgreSQL', () => {
   };
   const bind = (member: IdentityId, permission: string, boundary: string | null, version = 1) =>
     runner.run(tenantA, 'admin', (tx) =>
-      writeBoundaryBinding(tx, {
-        actor: operator,
-        identity: member,
-        permission,
-        boundary: boundary === null ? null : { key: boundary, version },
-      }),
+      writeBoundaryBinding(
+        tx,
+        {
+          actor: operator,
+          identity: member,
+          permission,
+          boundary: boundary === null ? null : { key: boundary, version },
+        },
+        core,
+      ),
     );
   const bindingOf = async (member: IdentityId, permission: string) =>
     (
@@ -468,17 +469,18 @@ describe('permission boundary on PostgreSQL', () => {
     });
     runner = new TenantTransactionRunner(registry, { deadlineMs: 10_000, lockTimeoutMs: 5_000 });
     reconciler = new ManifestReconciler(runner, {
+      core,
       actor: deployer,
       capabilities: { validators: ['minimumAssurance@1'], obligationHandlers: [] },
     });
-    authority = new PostgresAuthority(runner, runtimeDeclarations, {
+    authority = new PostgresAuthority(core, runner, runtimeDeclarations, {
       validators: {
         'minimumAssurance@1': (parameters, context) =>
           context.principal.assurance >= Number(parameters.minimum ?? Number.POSITIVE_INFINITY),
       },
       obligationHandlers: [],
     });
-    gateway = new DataGateway(new BindingRegistry(runtimeDeclarations, storageBindings));
+    gateway = new DataGateway(new BindingRegistry(core, runtimeDeclarations, storageBindings));
     admin = await openClient({ ...postgres.admin, database: tenantDatabaseName(tenantA) });
     monitor = await openClient(postgres.superuser);
     for (const member of [alice, bob, carol, dave]) {
@@ -497,7 +499,7 @@ describe('permission boundary on PostgreSQL', () => {
   });
 
   test('first sync publishes definitions, entries, requirements and code-owned bindings', async () => {
-    const result = await reconciler.reconcile(tenantA, prepareRelease(release('1', '0')));
+    const result = await reconciler.reconcile(tenantA, prepareRelease(release('1', '0'), core));
     assert.equal(result.changed, true);
     assert.deepEqual(await fence(), {
       revision: '2',
@@ -593,23 +595,31 @@ describe('permission boundary on PostgreSQL', () => {
     const unchanged = await fence();
     await assert.rejects(
       runner.run(tenantA, 'write', (tx) =>
-        writeBoundaryBinding(tx, {
-          actor: operator,
-          identity: bob,
-          permission: 'customer.export',
-          boundary: { key: 'regionalExport', version: 1 },
-        }),
+        writeBoundaryBinding(
+          tx,
+          {
+            actor: operator,
+            identity: bob,
+            permission: 'customer.export',
+            boundary: { key: 'regionalExport', version: 1 },
+          },
+          core,
+        ),
       ),
       /exclusive fence/,
     );
     await assert.rejects(
       runner.run(tenantA, 'admin', (tx) =>
-        writeBoundaryBinding(tx, {
-          actor: alice,
-          identity: alice,
-          permission: 'customer.export',
-          boundary: null,
-        }),
+        writeBoundaryBinding(
+          tx,
+          {
+            actor: alice,
+            identity: alice,
+            permission: 'customer.export',
+            boundary: null,
+          },
+          core,
+        ),
       ),
       /own permission boundary/,
     );
@@ -810,7 +820,7 @@ describe('permission boundary on PostgreSQL', () => {
     // Release 2 publishes new definition versions; nobody's binding moves with it.
     await reconciler.reconcile(
       tenantA,
-      prepareRelease(release('2', '1', { declarations: declarations(v2Boundaries) })),
+      prepareRelease(release('2', '1', { declarations: declarations(v2Boundaries) }), core),
     );
     assert.deepEqual(await bindingOf(alice, 'contract.approve'), {
       boundary: 'approvalAmount@1',
@@ -843,11 +853,14 @@ describe('permission boundary on PostgreSQL', () => {
       (await visible(bob, 'customer', 'export')).reason,
       'boundary_requirement_mismatch',
     );
-    const current = prepareRelease(release('2', '1', { declarations: declarations(v2Boundaries) }));
+    const current = prepareRelease(
+      release('2', '1', { declarations: declarations(v2Boundaries) }),
+      core,
+    );
     await rejected(() => reconciler.reconcile(tenantA, current), 'not_ready');
     await reconciler.reconcile(
       tenantA,
-      prepareRelease(release('3', '2', { declarations: declarations(v2Boundaries) })),
+      prepareRelease(release('3', '2', { declarations: declarations(v2Boundaries) }), core),
     );
     assert.equal(await count('permission_catalog WHERE boundary_requirement IS NULL'), 0);
     assert.equal((await visible(bob, 'customer', 'export')).keys.length, 4);
@@ -857,6 +870,7 @@ describe('permission boundary on PostgreSQL', () => {
     const v2 = (sequence: string, predecessor: string, changes: Partial<ReleaseSource> = {}) =>
       prepareRelease(
         release(sequence, predecessor, { declarations: declarations(v2Boundaries), ...changes }),
+        core,
       );
     const carolSeed = (version: number, owner = 'access-module') => ({
       owner,
@@ -874,7 +888,7 @@ describe('permission boundary on PostgreSQL', () => {
         () =>
           reconciler.reconcile(
             tenantA,
-            prepareRelease(release('4', '3', { declarations: declarations(changed) })),
+            prepareRelease(release('4', '3', { declarations: declarations(changed) }), core),
           ),
         'immutable_definition',
       );
@@ -912,6 +926,7 @@ describe('permission boundary on PostgreSQL', () => {
                   declarations: declarations(boundaries),
                   boundaryBindings: [carolSeed(2)],
                 }),
+                core,
               ),
             ),
           'definition_in_use',

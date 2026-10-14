@@ -78,12 +78,14 @@ pnpm run root:revoke -- --user <uuid> --operation <uuid> --approval <approval-re
 1. Mở sự cố có operation ID, reason, target UUID/method và exact boundary/grant refs. Kiểm identity target qua kênh độc lập; không dựa vào email match hoặc password do admin tự đặt.
 2. Một người có thẩm quyền khác operator phê duyệt bằng hệ thống approval độc lập; lưu approval ID/hash và thời hạn. Operator không được tự phê duyệt. Production phải chốt hệ thống approval/key pinning trước khi tạo command tự động.
 3. Dừng mọi thao tác identity nhạy cảm liên quan target; dùng capability offline ngắn hạn, không inject vào API. Người phụ trách identity xử lý activation/recovery bằng proof thật; không tạo session impersonation.
-4. Offline authorization operation lấy exclusive application fence; đọc manifest/system grants còn đúng hash, kiểm target và boundary exact. Chỉ thay assignment/bindings đã được duyệt; ghi approver reference/hash, reason, target, revision và audit event cùng transaction (audit DB của `root:*` lấy target làm `actor_id` và lưu operation/approval reference; danh tính operator và approver nằm trong bản ghi sự cố/approval được tham chiếu, không trong DB sản phẩm); tăng revision rồi commit. Không đổi marker hoặc definitions để vượt checks. Nếu cần sửa drift/ownership, đó là migration/repair riêng được duyệt, không disable trigger bằng runtime.
+4. Offline authorization operation lấy exclusive application fence; đọc manifest/system grants còn đúng hash, kiểm target và boundary exact. Chỉ thay assignment/bindings đã được duyệt; ghi approver reference/hash, reason, target, revision và audit event cùng transaction (audit DB của `root:*`, `identity:enroll`/`identity:invite` ghi `actor_id` là sentinel operator offline `PRODUCT_OFFLINE_ACTOR`, target account ở `safe_metadata.targetUserId`, và lưu operation/approval reference; danh tính operator và approver nằm trong bản ghi sự cố/approval được tham chiếu, không trong DB sản phẩm); tăng revision rồi commit. Không đổi marker hoặc definitions để vượt checks. Nếu cần sửa drift/ownership, đó là migration/repair riêng được duyệt, không disable trigger bằng runtime.
 5. Kiểm quyền target thực tế và các deny/boundary sau commit, thu hồi capability offline và xác nhận audit ra sink độc lập. Revoke Root cũ cũng cần approval rõ ràng; không coi count(root)=0 là lý do tự cấp mới.
 
 Các bước này là gate vận hành, không là bằng chứng đã diễn tập production. Chưa cung cấp approval authority/audit sink thật; không chạy sửa dữ liệu thật trong phiên này.
 
 ## 5. Manifest, privileges, rollback và metrics
+
+Audit (ADR 0009): `policy_revision` là revision dùng để đánh giá quyền; event mutation ghi revision sau commit ở `safe_metadata.resultingRevision` (event cũ trước mốc này không có field này và `policy_revision` của một số writer là revision sau commit — không rewrite). `access.*` là event quyết định của obligation `audit@1`, khác với event effect (`data.update`, `account.suspend`, ...). Effect và audit cùng transaction; sink delivery chưa triển khai.
 
 Startup so khớp chính xác ACL bảng/cột/hàm của từng login runtime (kể cả grant cho PUBLIC hoặc WITH GRANT OPTION) với ma trận code; mọi grant dư hoặc thiếu làm boot fail. Body/owner/search_path của function bảo vệ và binding của mọi trigger trên bảng được bảo vệ cũng phải khớp chính xác; migration ứng dụng không được thêm trigger hay `CREATE OR REPLACE` các function này. Suspend là một chiều với authority: gỡ suspend là repair offline có duyệt. Gán/thu hồi role code-owned thường (vd. `reviewer`) là authority fact; `system.*` chỉ qua lệnh offline. Default grant chỉ gỡ bằng `removeDefaultGrants` của release sau, khớp chính xác permission/role/template/parameters.
 
@@ -108,3 +110,19 @@ pnpm run test:e2e
 Docker local chạy PostgreSQL18.4 disposable. OIDC fixture có RSA signatures, token/JWKS HTTP server và actual protocol library checks; routing network tới fixture là test-only, không kiểm production TLS/discovery. SQL/evaluator parity, bigint/collation, boundaries, deny, privilege, migrations, bootstrap/reset/link/revoke concurrency được kiểm trong suites. 55P03 có contention thật; 40P01/40001 được fault-inject trực tiếp vào product runner với rollback/effects PostgreSQL thật; không gọi chúng là deadlock/serialization do DB tự phát sinh.
 
 Chưa mở generic role/grant/boundary/relation administration, file/export/job, public signup, UI, IdP backchannel logout hoặc cache allow. Route không khai báo bị startup/CI tests từ chối; capability chưa có không được quảng cáo đã hoạt động. Workflow có các lệnh thực, chưa chạy trên GitHub trong phiên này. Không commit/push/deploy.
+
+## 7. Thứ tự bootstrap, legacy và phần chưa triển khai (giai đoạn A)
+
+Thứ tự khởi động API (`main.ts` → `ProductRuntime.create` → `NestFactory` → `listen`); bước nào lỗi thì listener không mở và readiness giữ `false`:
+
+1. `ProductRuntime.create`: chọn codecs (`createProductAuthorizationCore()`), mở bốn pool runtime; thiếu/sai codec hoặc pool lỗi thì dừng, cleanup không leak pool.
+2. `ProductRouteInventory.onModuleInit`: mọi route phải có đúng một classification (chạy ở `onModuleInit` nên luôn trước mọi `onApplicationBootstrap`, dù `RuntimeModule` nằm sâu).
+3. `ProductRuntime.onApplicationBootstrap`: privilege/protection probe (`verifyProductPrivileges`: ACL, owner/search_path/body function, trigger Root/activation, CREATE/TEMP/grant option).
+4. Manifest sync (`ProductManifestReconciler`, cùng release/core với CLI, obligations registry thật).
+5. OIDC provider sync (không tự disable/đổi version provider).
+6. Domain checks (bảng resource khai báo phải tồn tại).
+7. `ReadinessGate.markReady()` rồi mới `listen`. `onApplicationShutdown` idempotent (memoized).
+
+Legacy: tenant runtime (`./legacy` của `typeorm-postgres`, `apps/api/src/legacy/audit-outbox.service.ts`, `db:*:legacy`, `tools/provision.ts`, `tools/migrate.ts`) giữ để đối chiếu/mapping lịch sử và regression; không wire vào `AppModule`, không chạy lên product database. Không xóa như dead code khi chưa có quyết định migration dữ liệu.
+
+Chưa triển khai (không được quảng cáo là đã có): delegation; generic administration (role/grant/boundary/relation API); resource-to-resource domain binding; audit sink và recovery delivery bền vững (T10: outbox worker, lease, ack, mã hóa payload nhạy cảm); giảm I/O trong fence bằng số đo (T8); limiter/session activity/cleanup theo batch (T9); adapter thời gian thứ hai (Moment); platform publishing. Phase B (T8–T10) chưa thực hiện. Tài liệu này không nâng trạng thái production-ready.

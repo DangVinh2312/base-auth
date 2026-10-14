@@ -49,15 +49,16 @@
 
 - `packages/core`: pure types, AST, validation, planning/evaluation; không NestJS, TypeORM, SQL driver, network hoặc tên domain.
 - `packages/nest`: decorators, guards, route manifest, context, readiness; phụ thuộc core ports, không phụ thuộc entity nghiệp vụ.
+- `packages/value-adapters`: codec giá trị thuần (`ScalarCodec`/`ValueCodecs` do core khai báo; Day.js timestamp strict); phụ thuộc core (type) và thư viện giá trị, core không import package này.
 - `packages/typeorm-postgres`: compiler SQL, data gateway, authority store, transactions, migrations và fixed-purpose product pools (tenant pools chỉ legacy).
 - `apps/api`: ghép các adapter; authn/admin và domain demo nằm ở đây. D2/D3 là fixtures kiểm chứng khả năng tái sử dụng.
 - Tách đọc/ghi/cache khi trách nhiệm khác nhau; không tạo cache service khi chưa có cache.
-- Package public API qua entrypoint khai báo trong `package.json#exports` (hiện chủ yếu `src/index.ts`); không deep-import private source. Không export credentials, raw connection hoặc bypass authorization cho handler; entrypoint composition/operations nếu được thêm không dành cho handler.
+- Package public API qua entrypoint khai báo trong `package.json#exports` (`src/index.ts`, và với `typeorm-postgres` thêm `./composition`, `./operations`, `./legacy`); không deep-import private source. Không export credentials, raw connection hoặc bypass authorization cho handler; handler chỉ import root + facade token (ESLint chặn phần còn lại). Đây là ranh giới cho developer, không phải process isolation.
 - `tsconfig.base.json` chỉ chứa defaults chung. Chốt module format/decorator metadata khi scaffold và test build thật; core không cần decorator metadata.
 
 ## Ports và adapters
 
-- Hướng refactor nằm trong `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`; đây là kế hoạch, không phải xác nhận đã có codec factory/package adapter. Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
+- Kế hoạch `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`: giai đoạn A (T0–T7, T11) đã triển khai trong working tree (`createAuthorizationCore`, `packages/value-adapters`, API theo capability, entrypoints, audit typed; bằng chứng ở checkbox/ledger và `docs/single-product-verification.md`); giai đoạn B (T8–T10) chưa thực hiện. Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
 - Core sở hữu contract thuần; adapter sở hữu thư viện/driver; composition root chọn implementation. Không import Day.js/Moment, NestJS, DB hoặc HTTP client vào core, không để kiểu riêng của thư viện rò vào port.
 - Chỉ thêm port khi có capability cần thay implementation; không biến mọi helper thành plugin. Không cài nhiều thư viện cùng chức năng chỉ để minh họa khả năng thay thế.
 - Adapter là trusted code cố định lúc boot, không được chọn từ request/admin payload. Thiếu adapter, input sai hoặc adapter lỗi phải reject/fail closed; không fallback parser lỏng hay silently allow.

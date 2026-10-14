@@ -1,24 +1,33 @@
 import { open, unlink } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
-import { type IdentityId, isCanonicalUuid } from '@base-authorization/core';
+import type { IdentityId } from '@base-authorization/core';
 import {
-  productDataSourceOptions,
-  provisionProductDatabase,
-  ProductTransactionRunner,
-  ProductManifestReconciler,
-  bootstrapProductRoot,
-  revokeProductRoot,
-  reissueRootActivation,
   ReleaseRejectedError,
   canonicalLoginEmail,
-  ProductIdentityService,
-  createProductPasswordHasher,
   type PostgresConnectionSettings,
   type ProductDatabasePurpose,
 } from '@base-authorization/typeorm-postgres';
-import { productRelease } from '../apps/api/dist/product-manifest.js';
-import { ProductDocument1792108800002 } from '../apps/api/dist/product-migration.js';
+import {
+  ProductTransactionRunner,
+  ProductManifestReconciler,
+  ProductIdentityService,
+  createProductPasswordHasher,
+  PRODUCT_OFFLINE_ACTOR,
+  productObligations,
+} from '@base-authorization/typeorm-postgres/composition';
+import {
+  productDataSourceOptions,
+  provisionProductDatabase,
+  bootstrapProductRoot,
+  revokeProductRoot,
+  reissueRootActivation,
+  appendProductAudit,
+} from '@base-authorization/typeorm-postgres/operations';
+import {
+  createProductAuthorizationCore,
+  createProductRelease,
+} from '../apps/api/dist/authorization/product-manifest.js';
+import { ProductDocument1792108800002 } from '../apps/api/dist/documents/migrations/product-document.js';
 import { adminConnection, requireEnv } from './env.ts';
 function connection(variable: string): PostgresConnectionSettings {
   try {
@@ -41,6 +50,9 @@ function connection(variable: string): PostgresConnectionSettings {
     throw new Error(`${variable} must be a PostgreSQL URL`);
   }
 }
+// Same codec composition as the API runtime (apps/api authorization/product-manifest).
+const core = createProductAuthorizationCore();
+const { isCanonicalUuid } = core;
 const [command, ...args] = process.argv.slice(2);
 const flags: Record<string, string> = {};
 for (let i = 0; i < args.length; i += 2) {
@@ -94,13 +106,18 @@ try {
     const sync = await source('sync');
     const runner = new ProductTransactionRunner({ sync });
     await new ProductManifestReconciler(runner, {
-      actor: '00000000-0000-4000-8000-000000000001' as IdentityId,
-      capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
-    }).reconcile(productRelease);
+      core,
+      actor: PRODUCT_OFFLINE_ACTOR,
+      capabilities: {
+        validators: ['fresh@1'],
+        obligationHandlers: Object.keys(productObligations),
+      },
+    }).reconcile(createProductRelease(core));
     console.log('Manifest synchronized.');
   } else if (command === 'enroll' || command === 'invite') {
     const userId = flags['--user'];
-    if (!isCanonicalUuid(userId)) throw new Error('--user must be an explicit canonical UUID');
+    if (!isCanonicalUuid(userId) || userId === PRODUCT_OFFLINE_ACTOR)
+      throw new Error('--user must be an explicit canonical UUID, not the offline actor id');
     const method = flags['--method'];
     if (method !== 'local' && method !== 'oidc') throw new Error('--method local|oidc is required');
     const identity = await source('identity');
@@ -125,7 +142,12 @@ try {
         // issueActivation rechecks that the account is pending and fits the method.
         if (reissue) {
           const token = await service!.issueActivation(tx, userId, method);
-          await service!.audit(tx, userId, 'identity.invite');
+          await appendProductAudit(tx, {
+            kind: 'identity.invite',
+            actor: PRODUCT_OFFLINE_ACTOR,
+            target: { userId },
+            method,
+          });
           return token;
         }
         await tx.manager.query(
@@ -137,16 +159,12 @@ try {
             'INSERT INTO external_identity(issuer,subject,user_id) VALUES($1,$2,$3)',
             [flags['--issuer'], flags['--subject'], userId],
           );
-        await tx.manager.query(
-          `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES($1,$2,$3,$4,statement_timestamp(),$5)`,
-          [
-            randomUUID(),
-            userId,
-            Buffer.from('identity.enroll'),
-            String(BigInt(tx.revision) + 1n),
-            JSON.stringify({ method }),
-          ],
-        );
+        await appendProductAudit(tx, {
+          kind: 'identity.enroll',
+          actor: PRODUCT_OFFLINE_ACTOR,
+          target: { userId },
+          method,
+        });
         return service?.issueActivation(tx, userId, method);
       });
       committed = true;
@@ -175,7 +193,7 @@ try {
     try {
       const bootstrap = await source('bootstrap');
       const runner = new ProductTransactionRunner({ bootstrap });
-      const result = await bootstrapProductRoot(runner, productRelease, {
+      const result = await bootstrapProductRoot(runner, createProductRelease(core), {
         operationId,
         userId: userId as IdentityId,
         method,
@@ -203,12 +221,16 @@ try {
     if (!flags['--approval'] || !flags['--reason'])
       throw new Error('Root revocation requires --approval and --reason');
     const bootstrap = await source('bootstrap');
-    const result = await revokeProductRoot(new ProductTransactionRunner({ bootstrap }), {
-      operationId,
-      userId: userId as IdentityId,
-      approval: flags['--approval'],
-      reason: flags['--reason'],
-    });
+    const result = await revokeProductRoot(
+      new ProductTransactionRunner({ bootstrap }),
+      {
+        operationId,
+        userId: userId as IdentityId,
+        approval: flags['--approval'],
+        reason: flags['--reason'],
+      },
+      core,
+    );
     console.log(
       result.revoked
         ? 'Root assignment revoked; marker unchanged.'
@@ -225,11 +247,15 @@ try {
     let committed = false;
     try {
       const bootstrap = await source('bootstrap');
-      const result = await reissueRootActivation(new ProductTransactionRunner({ bootstrap }), {
-        userId: userId as IdentityId,
-        method,
-        ...(method === 'oidc' ? { issuer: flags['--issuer'], subject: flags['--subject'] } : {}),
-      });
+      const result = await reissueRootActivation(
+        new ProductTransactionRunner({ bootstrap }),
+        {
+          userId: userId as IdentityId,
+          method,
+          ...(method === 'oidc' ? { issuer: flags['--issuer'], subject: flags['--subject'] } : {}),
+        },
+        core,
+      );
       committed = true;
       await file.writeFile(result.activationSecret + '\n');
       console.log('Root activation proof reissued; earlier proofs are void.');

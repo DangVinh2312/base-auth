@@ -2,13 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { DataSource } from 'typeorm';
-import {
-  evaluateUser,
-  parseKey,
-  planUser,
-  type UserCompleteFacts,
-  type UserId,
-} from '@base-authorization/core';
+import type { UserCompleteFacts, UserId } from '@base-authorization/core';
 import {
   ProductAuthorization,
   ProductBindingRegistry,
@@ -16,12 +10,17 @@ import {
   ProductManifestReconciler,
   ProductTransactionRunner,
   prepareProductRelease,
-  productDataSourceOptions,
-  provisionProductDatabase,
   readProductAuthority,
   sessionDigest,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/composition';
+import {
+  productDataSourceOptions,
+  provisionProductDatabase,
+} from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
+import { core } from './fixtures/resources.ts';
+
+const { evaluateUser, parseKey, planUser } = core;
 
 let postgres: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
@@ -43,111 +42,114 @@ const rows = [
 const policy = { key: 'pending', version: 1 };
 const boundary = { key: 'amountLimit', version: 1 };
 const registry = { validators: {}, obligationHandlers: [] };
-const release = prepareProductRelease({
-  sequence: '1',
-  predecessor: '0',
-  declarations: {
-    resources: [
-      {
-        key: 'item',
-        keyKind: 'integer',
-        fields: {
-          amount: { kind: 'decimal' },
-          status: { kind: 'string' },
-          title: { kind: 'string' },
+const release = prepareProductRelease(
+  {
+    sequence: '1',
+    predecessor: '0',
+    declarations: {
+      resources: [
+        {
+          key: 'item',
+          keyKind: 'integer',
+          fields: {
+            amount: { kind: 'decimal' },
+            status: { kind: 'string' },
+            title: { kind: 'string' },
+          },
+          actions: {
+            read: { policy, boundary: 'required' },
+            update: { policy, boundary: 'required' },
+          },
         },
-        actions: {
-          read: { policy, boundary: 'required' },
-          update: { policy, boundary: 'required' },
+      ],
+      policies: [
+        {
+          ...policy,
+          contextRequirements: [],
+          obligations: [],
+          requiredScope: {
+            op: 'eq',
+            field: 'status',
+            value: { from: 'literal', value: 'pending' },
+          },
         },
-      },
-    ],
-    policies: [
-      {
-        ...policy,
-        contextRequirements: [],
-        obligations: [],
-        requiredScope: {
-          op: 'eq',
-          field: 'status',
-          value: { from: 'literal', value: 'pending' },
+      ],
+      templates: [
+        {
+          key: 'allItems',
+          version: 1,
+          resource: 'item',
+          parameters: {},
+          expression: { op: 'constant', value: true },
         },
-      },
-    ],
-    templates: [
-      {
-        key: 'allItems',
-        version: 1,
-        resource: 'item',
-        parameters: {},
-        expression: { op: 'constant', value: true },
-      },
-      {
-        key: 'deniedTitle',
-        version: 1,
-        resource: 'item',
-        parameters: {},
-        expression: {
-          op: 'eq',
-          field: 'title',
-          value: { from: 'literal', value: 'denied' },
+        {
+          key: 'deniedTitle',
+          version: 1,
+          resource: 'item',
+          parameters: {},
+          expression: {
+            op: 'eq',
+            field: 'title',
+            value: { from: 'literal', value: 'denied' },
+          },
         },
-      },
-      {
-        key: 'assigned',
-        version: 1,
-        resource: 'item',
-        parameters: {},
-        expression: {
-          op: 'exists',
-          relation: 'item.assignee@1',
-          where: { op: 'eq', field: 'identityId', value: { from: 'principal', name: 'id' } },
+        {
+          key: 'assigned',
+          version: 1,
+          resource: 'item',
+          parameters: {},
+          expression: {
+            op: 'exists',
+            relation: 'item.assignee@1',
+            where: { op: 'eq', field: 'identityId', value: { from: 'principal', name: 'id' } },
+          },
         },
-      },
-    ],
-    relations: [
-      {
-        key: 'item.assignee',
-        version: 1,
-        sourceType: 'item',
-        target: { kind: 'identity' },
-        binding: { kind: 'edgeStore' },
-      },
-    ],
-    boundaries: [1, 2].map((version) => ({
-      key: boundary.key,
-      version,
-      entries: ['item.read', 'item.update'].map((permission) => ({
-        permission,
-        contextRequirements: [],
-        requiredScope: {
-          op: 'lte',
-          field: 'amount',
-          value: { from: 'literal', value: version === 1 ? '20' : '0' },
+      ],
+      relations: [
+        {
+          key: 'item.assignee',
+          version: 1,
+          sourceType: 'item',
+          target: { kind: 'identity' },
+          binding: { kind: 'edgeStore' },
         },
+      ],
+      boundaries: [1, 2].map((version) => ({
+        key: boundary.key,
+        version,
+        entries: ['item.read', 'item.update'].map((permission) => ({
+          permission,
+          contextRequirements: [],
+          requiredScope: {
+            op: 'lte',
+            field: 'amount',
+            value: { from: 'literal', value: version === 1 ? '20' : '0' },
+          },
+        })),
       })),
+      capabilities: { validators: [], obligationHandlers: [] },
+    },
+    roles: [
+      { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
+      { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
+    ],
+    defaultGrants: [],
+    seeds: [],
+    removeSeeds: [],
+    boundaryBindings: [],
+    removeBoundaryBindings: [],
+    systemGrants: ['read', 'update'].map((action) => ({
+      owner: 'fixture',
+      key: `root-${action}`,
+      role: 'system.root',
+      permission: `item.${action}`,
+      template: { key: 'allItems', version: 1 },
+      parameters: {},
     })),
-    capabilities: { validators: [], obligationHandlers: [] },
+    removeSystemGrants: [],
   },
-  roles: [
-    { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
-    { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
-  ],
-  defaultGrants: [],
-  seeds: [],
-  removeSeeds: [],
-  boundaryBindings: [],
-  removeBoundaryBindings: [],
-  systemGrants: ['read', 'update'].map((action) => ({
-    owner: 'fixture',
-    key: `root-${action}`,
-    role: 'system.root',
-    permission: `item.${action}`,
-    template: { key: 'allItems', version: 1 },
-    parameters: {},
-  })),
-  removeSystemGrants: [],
-});
+  core,
+);
 
 before(async () => {
   postgres = await startPostgres();
@@ -178,6 +180,7 @@ before(async () => {
     [sessionDigest(secret), userId],
   );
   await new ProductManifestReconciler(runner, {
+    core,
     actor: userId,
     capabilities: release.declarations.capabilities,
   }).reconcile(release);
@@ -250,7 +253,7 @@ before(async () => {
         'never projected',
       ]);
   });
-  bindings = new ProductBindingRegistry(release.declarations, {
+  bindings = new ProductBindingRegistry(core, release.declarations, {
     resources: [
       {
         resource: 'item',
@@ -263,7 +266,7 @@ before(async () => {
     ],
     domains: {},
   });
-  authorization = new ProductAuthorization(runner, bindings, registry, [
+  authorization = new ProductAuthorization(runner, bindings, { validators: {}, obligations: {} }, [
     { resource: 'item', action: 'update', fields: ['title'] },
   ]);
 });

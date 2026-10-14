@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/core" },
+    { "path": "packages/value-adapters" },
     { "path": "packages/nest" },
     { "path": "packages/typeorm-postgres" },
     { "path": "apps/api" }

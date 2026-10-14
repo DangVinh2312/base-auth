@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluate, type ExceptionFact, plan, validate } from '@base-authorization/core';
+import { type ExceptionFact } from '@base-authorization/core';
 import {
   alice,
+  core,
   declarations,
   facts,
   input,
@@ -12,6 +13,8 @@ import {
   tenantA,
   validated,
 } from './fixtures.ts';
+
+const { evaluate, plan, validate } = core;
 
 const pending = submission('53000000-0000-4000-8000-000000000001', '1', { status: 'pending' });
 const approved = submission('53000000-0000-4000-8000-000000000002', '2', { status: 'approved' });

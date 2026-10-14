@@ -1,22 +1,19 @@
 // D1-like fixture for compiler/gateway integration tests: three native PK types (bigint, uuid, text),
 // edge-store and domain-table relations, record exceptions. Synthetic data only.
 import { randomBytes } from 'node:crypto';
-import {
-  type AuthoritySnapshot,
-  type CompleteFacts,
-  type EdgeFact,
-  type ExceptionFact,
-  type Expr,
-  type FactObject,
-  type IdentityId,
-  parseTenantId,
-  plan,
-  type RuleFact,
-  type SystemDeclarations,
-  type TenantId,
-  type TrustedInput,
-  validate,
-  type ValidatedDeclarations,
+import type {
+  AuthoritySnapshot,
+  CompleteFacts,
+  EdgeFact,
+  ExceptionFact,
+  Expr,
+  FactObject,
+  IdentityId,
+  RuleFact,
+  SystemDeclarations,
+  TenantId,
+  TrustedInput,
+  ValidatedDeclarations,
 } from '@base-authorization/core';
 import {
   type ConnectionPurpose,
@@ -27,7 +24,7 @@ import {
   tenantDatabaseName,
   TenantProvisioner,
   tenantRoleName,
-} from '@base-authorization/typeorm-postgres';
+} from '@base-authorization/typeorm-postgres/legacy';
 import type pg from 'pg';
 import { DataSource } from 'typeorm';
 import {
@@ -36,6 +33,10 @@ import {
   type TestPostgres,
   withClient,
 } from '../setup-postgres.ts';
+import { core } from '../../packages/core/test/fixtures.ts';
+
+export { core };
+const { parseTenantId, plan, validate } = core;
 
 export const tenantA = parseTenantId('00000000-0000-4000-8000-00000000000a');
 export const tenantB = parseTenantId('00000000-0000-4000-8000-00000000000b');

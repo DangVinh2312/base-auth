@@ -1,7 +1,12 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { isIPv4, isIPv6 } from 'node:net';
 import * as argon2 from 'argon2';
 import type { ProductTransaction, ProductTransactionRunner } from './product-transaction.js';
+import {
+  appendProductAudit,
+  PRODUCT_OFFLINE_ACTOR,
+  type ProductIdentityAuditKind,
+} from './product-audit.js';
 
 export class ProductAuthenticationError extends Error {
   constructor() {
@@ -184,11 +189,8 @@ export class ProductIdentityService {
     readonly passwords: ProductPasswordHasher,
   ) {}
 
-  async audit(tx: ProductTransaction, userId: string, kind: string): Promise<void> {
-    await tx.manager.query(
-      `INSERT INTO audit_outbox(event_id,actor_id,event_kind,policy_revision,occurred_at,safe_metadata) VALUES($1,$2,$3,$4,statement_timestamp(),'{}')`,
-      [randomUUID(), userId, kind, tx.revision],
-    );
+  audit(tx: ProductTransaction, userId: string, kind: ProductIdentityAuditKind): Promise<void> {
+    return appendProductAudit(tx, { kind, actor: userId });
   }
 
   async rateLimit(clientKey: string, identifier: string, purpose: string): Promise<void> {
@@ -369,7 +371,8 @@ export class ProductIdentityService {
     userId: string,
     method: 'local' | 'oidc' = 'local',
   ): Promise<string> {
-    if (tx.mode !== 'revoke') throw new ProductAuthenticationError();
+    if (tx.mode !== 'revoke' || userId === PRODUCT_OFFLINE_ACTOR)
+      throw new ProductAuthenticationError(); // the offline actor id never names a user
     const users = await tx.manager.query<{ id: string }[]>(
       method === 'local'
         ? `SELECT id FROM app_user u WHERE id=$1 AND state='pending' AND email_canonical IS NOT NULL AND NOT EXISTS(SELECT 1 FROM local_credential WHERE user_id=u.id)`

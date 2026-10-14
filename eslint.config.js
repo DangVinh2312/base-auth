@@ -51,4 +51,59 @@ export default tseslint.config(
     files: ['packages/nest/**/*.ts'],
     rules: { 'no-restricted-imports': ['error', { patterns: driverImports }] },
   },
+  {
+    // Infrastructure composes through ./composition only; operations/legacy are offline/legacy.
+    files: ['apps/api/src/infrastructure/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@base-authorization/typeorm-postgres/operations',
+                '@base-authorization/typeorm-postgres/legacy',
+              ],
+              message:
+                'API infrastructure imports only the root contracts and ./composition; operations is for tools/, legacy is retired tenancy.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Developer boundary for HTTP handlers (not process isolation): handlers see facade tokens and
+    // adapter root contracts only. Composition lives in infrastructure/, offline work in tools/.
+    files: ['apps/api/src/{auth,documents,administration,health,openapi}/**/*.ts'],
+    ignores: ['apps/api/src/documents/migrations/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            ...driverImports,
+            {
+              group: ['@base-authorization/typeorm-postgres/*'],
+              message:
+                'Handlers use root contracts and facade tokens; composition/operations/legacy and private paths are for infrastructure and tools.',
+            },
+            {
+              group: [
+                '**/infrastructure/product-runtime*',
+                '**/infrastructure/runtime.module*',
+                '**/product-runtime*',
+              ],
+              message: 'The runtime provider is private to RuntimeModule; inject a facade token.',
+            },
+            {
+              group: ['**/packages/*/src/**', '**/packages/*/dist/**'],
+              message:
+                'Import packages by public entrypoint, never by private source or dist path.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
