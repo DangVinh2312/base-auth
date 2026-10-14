@@ -28,7 +28,8 @@
     "root:revoke": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts revoke-root",
     "root:reissue": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts reissue-root",
     "identity:enroll": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts enroll",
-    "identity:invite": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts invite"
+    "identity:invite": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts invite",
+    "identity:purge-sessions": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts purge-sessions"
   },
   "devDependencies": {
     "@base-authorization/core": "workspace:*",

@@ -24,6 +24,7 @@ import {
   systemActivationBody,
   tokenConsumptionBody,
 } from './migrations/product/008-system-activation.js';
+import { ProductSessionExpiryIndex1792108800009 } from './migrations/product/009-session-expiry-index.js';
 
 export type ProductDatabasePurpose =
   'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap';
@@ -36,6 +37,7 @@ export const productMigrations = [
   ProductAccountRank1792108800006,
   ProductRootMarker1792108800007,
   ProductSystemActivation1792108800008,
+  ProductSessionExpiryIndex1792108800009,
 ];
 export function productDataSourceOptions(
   connection: PostgresConnectionSettings,

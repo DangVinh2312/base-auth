@@ -10,12 +10,16 @@ import {
   provisionProductDatabase,
 } from '@base-authorization/typeorm-postgres/operations';
 import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres/composition';
-import { ProductAuthenticationError } from '@base-authorization/typeorm-postgres';
+import {
+  ProductAuthenticationError,
+  TransactionConflictError,
+} from '@base-authorization/typeorm-postgres';
 import {
   PRODUCT_OFFLINE_ACTOR,
   ProductIdentityService,
   createProductPasswordHasher,
   newSessionSecret,
+  purgeExpiredSessions,
   sessionDigest,
 } from '@base-authorization/typeorm-postgres/composition';
 import { type ProductOidcProvider } from '@base-authorization/typeorm-postgres';
@@ -33,11 +37,12 @@ import {
   productBindings,
 } from '../apps/api/dist/authorization/product-manifest.js';
 import { ProductDocument1792108800002 } from '../apps/api/dist/documents/migrations/product-document.js';
-import { startPostgres, type TestPostgres } from './setup-postgres.ts';
+import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 let postgres: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
 let fixtureAdmin: DataSource;
+let connections: Awaited<ReturnType<typeof provisionProductDatabase>>;
 let identity: ProductIdentityService;
 let runner: ProductTransactionRunner;
 let provider: ProductOidcProvider;
@@ -93,7 +98,7 @@ before(async () => {
       randomBytes(20).toString('hex'),
     ]),
   ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration', string>;
-  const connections = await provisionProductDatabase(postgres.superuser, secrets);
+  connections = await provisionProductDatabase(postgres.superuser, secrets);
   pools = {} as typeof pools;
   for (const purpose of ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const)
     pools[purpose] = await new DataSource(
@@ -386,6 +391,45 @@ test('database rate limiter is shared across service replicas and generic absent
   await assert.rejects(
     identity.login('absent@example.test', 'a very strong password', 'absent-fixture'),
     { message: 'Authentication failed' },
+  );
+});
+
+test('limiter calls queued on the advisory lock do not hold the fence against a revoke', async () => {
+  const password = 'queue strong password';
+  const [email] = await activeLocalUsers('queue', 1, password);
+  const session = await identity.login(email!, password, '198.51.100.30');
+  await withClient(connections.identity, async (blocker) => {
+    // Another session holds the limiter's advisory key, so limiter transactions queue behind it.
+    await blocker.query('SELECT pg_advisory_lock(1379171467)');
+    let queued: Promise<PromiseSettledResult<void>[]>;
+    let revokeMs: number | undefined;
+    try {
+      queued = Promise.allSettled(
+        [1, 2, 3].map((i) =>
+          identity.rateLimit(`198.51.100.${40 + i}`, `queue${i}@example.test`, 'queue'),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const start = Date.now();
+      const revoke = identity.logout(session.secret).then(() => (revokeMs = Date.now() - start));
+      await Promise.race([revoke, new Promise((resolve) => setTimeout(resolve, 500))]);
+    } finally {
+      await blocker.query('SELECT pg_advisory_unlock(1379171467)');
+    }
+    const outcomes = await queued;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(
+      revokeMs !== undefined && revokeMs < 500,
+      `revoke blocked for ${revokeMs ?? '>500'} ms`,
+    );
+    assert.deepEqual(
+      outcomes.map((o) => o.status),
+      ['fulfilled', 'fulfilled', 'fulfilled'],
+    );
+  });
+  await assert.rejects(
+    runner.run('read', (tx) => identity.authenticate(tx, session.secret)),
+    ProductAuthenticationError,
   );
 });
 
@@ -906,4 +950,234 @@ test('invitation issuance refuses the offline actor id even for a pending accoun
     [PRODUCT_OFFLINE_ACTOR],
   );
   assert.equal(tokens.length, 0);
+});
+
+/** Active local accounts sharing one password hash; synthetic addresses only. */
+async function activeLocalUsers(prefix: string, count: number, password: string) {
+  const hash = await identity.passwords.hash(password);
+  const emails: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = randomUUID();
+    const email = `${prefix}${i}@example.test`;
+    await pools.identity.query(
+      "INSERT INTO app_user(id,email_canonical,email_verified,state) VALUES($1,$2,true,'active')",
+      [id, email],
+    );
+    await pools.identity.query(
+      'INSERT INTO local_credential(user_id,password_hash,version) VALUES($1,$2,1)',
+      [id, hash],
+    );
+    emails.push(email);
+  }
+  return emails;
+}
+
+test('valid users behind one NAT address share its 20-attempt bucket; successes count, failures are not separate', async () => {
+  // Current policy (ADR0008, operations §3): every attempt counts, not only failures.
+  const password = 'nat shared strong password';
+  const emails = await activeLocalUsers('nat', 21, password);
+  for (const email of emails.slice(0, 20)) await identity.login(email, password, '198.51.100.7');
+  await assert.rejects(
+    identity.login(emails[20]!, password, '198.51.100.7'),
+    ProductAuthenticationError,
+  );
+  // The 21st user is not locked: the client bucket, not the account, refused it.
+  await identity.login(emails[20]!, password, '198.51.100.8');
+  // The account bucket counts successful logins too: 20 more from distinct addresses lock it.
+  for (let i = 1; i < 20; i++) await identity.login(emails[0]!, password, `203.0.113.${i}`);
+  await assert.rejects(
+    identity.login(emails[0]!, password, '203.0.113.200'),
+    ProductAuthenticationError,
+  );
+});
+
+test('replicas with separate pools enforce one shared limit under concurrent attempts', async () => {
+  const replicaPool = await new DataSource(
+    productDataSourceOptions(connections.identity),
+  ).initialize();
+  try {
+    const replica = new ProductIdentityService(
+      new ProductTransactionRunner({ identity: replicaPool }),
+      identity.passwords,
+    );
+    const attempt = (i: number) =>
+      (i % 2 ? replica : identity).rateLimit(
+        `192.0.2.${i + 1}`,
+        'replica-concurrent@example.test',
+        'replica-concurrent',
+      );
+    const outcomes = await Promise.allSettled(Array.from({ length: 30 }, (_, i) => attempt(i)));
+    // Under a loaded host a queued attempt can exceed lock_timeout: it rolls back without counting
+    // and is retried here one at a time. The shared cap must still be exactly 20.
+    let accepted = 0;
+    let refused = 0;
+    for (const [i, outcome] of outcomes.entries()) {
+      if (outcome.status === 'fulfilled') accepted++;
+      else if (outcome.reason instanceof ProductAuthenticationError) refused++;
+      else {
+        assert.ok(outcome.reason instanceof TransactionConflictError);
+        await attempt(i).then(
+          () => accepted++,
+          (error: unknown) => {
+            assert.ok(error instanceof ProductAuthenticationError);
+            refused++;
+          },
+        );
+      }
+    }
+    assert.deepEqual([accepted, refused], [20, 10]);
+  } finally {
+    await replicaPool.destroy();
+  }
+});
+
+test('data-only access does not touch idle activity; identity operations touch without extending expiry', async () => {
+  const password = 'activity strong password';
+  const [email] = await activeLocalUsers('activity', 1, password);
+  const session = await identity.login(email!, password, '198.51.100.20');
+  const digest = sessionDigest(session.secret);
+  const stamp = async () =>
+    (
+      await pools.identity.query<{ seen: string; expires: string }[]>(
+        `SELECT last_seen_at::text seen,expires_at::text expires FROM application_session WHERE token_hash=$1`,
+        [digest],
+      )
+    )[0]!;
+  await runner.run('revoke', (tx) =>
+    tx.manager.query(
+      `UPDATE application_session SET last_seen_at=statement_timestamp()-interval '10 minutes' WHERE token_hash=$1`,
+      [digest],
+    ),
+  );
+  const before = await stamp();
+  for (let i = 0; i < 3; i++)
+    await runner.run('read', (tx) => identity.authenticate(tx, session.secret));
+  assert.deepEqual(await stamp(), before);
+  await runner.run('identity', (tx) => identity.authenticate(tx, session.secret));
+  const touched = await stamp();
+  assert.ok(touched.seen > before.seen);
+  assert.equal(touched.expires, before.expires);
+  // A data-only user idle past 30 minutes is refused even while making data requests.
+  await runner.run('revoke', (tx) =>
+    tx.manager.query(
+      `UPDATE application_session SET last_seen_at=statement_timestamp()-interval '31 minutes' WHERE token_hash=$1`,
+      [digest],
+    ),
+  );
+  await assert.rejects(
+    runner.run('read', (tx) => identity.authenticate(tx, session.secret)),
+    ProductAuthenticationError,
+  );
+});
+
+test('expired sessions are purged in bounded batches; live, revoked-unexpired, recent and locked rows survive', async () => {
+  const owner = randomUUID();
+  await pools.identity.query(
+    "INSERT INTO app_user(id,email_canonical,email_verified,state) VALUES($1,'purge@example.test',true,'active')",
+    [owner],
+  );
+  const insert = async (expires: string, revoked = false) => {
+    const secret = newSessionSecret();
+    await pools.identity.query(
+      `INSERT INTO application_session(token_hash,user_id,auth_epoch,credential_version,method,assurance,authenticated_at,created_at,expires_at,revoked_at)
+       VALUES($1,$2,1,1,'local','password',statement_timestamp()-interval '30 days',statement_timestamp()-interval '30 days',statement_timestamp()+$3::interval,CASE WHEN $4 THEN statement_timestamp() END)`,
+      [sessionDigest(secret), owner, expires, revoked],
+    );
+    return sessionDigest(secret);
+  };
+  const live = await insert('1 hour');
+  const revokedLive = await insert('1 hour', true);
+  const recent = await insert('-1 hour');
+  for (let i = 0; i < 5; i++) await insert('-3 days');
+  const countOwner = async () =>
+    (
+      await pools.identity.query<{ n: number }[]>(
+        'SELECT count(*)::int n FROM application_session WHERE user_id=$1',
+        [owner],
+      )
+    )[0]!.n;
+  for (const [retention, batch] of [
+    [-1, 10],
+    [1.5, 10],
+    [3651, 10],
+    [1, 0],
+    [1, 1001],
+  ] as const)
+    await assert.rejects(purgeExpiredSessions(runner, retention, batch), RangeError);
+  const hold = () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const inside = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return { inside, gate, release, entered };
+  };
+  // A password reset holds the exclusive fence: purge waits for its commit, then runs.
+  const reset = hold();
+  const resetting = runner.run('revoke', async (tx) => {
+    await identity.invalidate(tx, owner);
+    reset.entered();
+    await reset.gate;
+  });
+  await reset.inside;
+  let purgedDuringReset: number | undefined;
+  const purging = purgeExpiredSessions(runner, 1, 2).then((n) => (purgedDuringReset = n));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(purgedDuringReset, undefined);
+  reset.release();
+  await resetting;
+  assert.equal(await purging, 2);
+  // The reset revoked every session of the owner, live ones included; none of those is purged.
+  assert.equal(await countOwner(), 6);
+  // A shared-fence identity transaction holding a row lock: purge skips that row, never waits.
+  const [busy] = await pools.identity.query<{ token_hash: Buffer }[]>(
+    "SELECT token_hash FROM application_session WHERE user_id=$1 AND expires_at<statement_timestamp()-interval '2 days' LIMIT 1",
+    [owner],
+  );
+  const lock = hold();
+  const locking = runner.run('identity', async (tx) => {
+    await tx.manager.query('SELECT 1 FROM application_session WHERE token_hash=$1 FOR UPDATE', [
+      busy!.token_hash,
+    ]);
+    lock.entered();
+    await lock.gate;
+  });
+  await lock.inside;
+  try {
+    assert.equal(await purgeExpiredSessions(runner, 1, 2), 2);
+    assert.equal(await purgeExpiredSessions(runner, 1, 2), 0);
+  } finally {
+    lock.release();
+    await locking;
+  }
+  assert.equal(await purgeExpiredSessions(runner, 1, 2), 1);
+  assert.equal(await purgeExpiredSessions(runner, 1, 2), 0);
+  const left = await pools.identity.query<{ token_hash: Buffer }[]>(
+    'SELECT token_hash FROM application_session WHERE user_id=$1',
+    [owner],
+  );
+  assert.deepEqual(
+    left.map((r) => r.token_hash.toString('hex')).sort(),
+    [live, revokedLive, recent].map((d) => d.toString('hex')).sort(),
+  );
+  const events = await fixtureAdmin.query<
+    { actor_id: string; safe_metadata: Record<string, string> }[]
+  >(
+    "SELECT actor_id,safe_metadata FROM audit_outbox WHERE event_kind=convert_to('identity.session-purge','UTF8') ORDER BY occurred_at",
+  );
+  assert.deepEqual(
+    events.map((e) => [e.actor_id, e.safe_metadata.deleted, e.safe_metadata.retentionDays]),
+    [
+      [PRODUCT_OFFLINE_ACTOR, '2', '1'],
+      [PRODUCT_OFFLINE_ACTOR, '2', '1'],
+      [PRODUCT_OFFLINE_ACTOR, '1', '1'],
+    ],
+  );
+  const [index] = await fixtureAdmin.query<{ n: number }[]>(
+    "SELECT count(*)::int n FROM pg_indexes WHERE tablename='application_session' AND indexdef LIKE '%(expires_at)'",
+  );
+  assert.equal(index!.n, 1);
 });

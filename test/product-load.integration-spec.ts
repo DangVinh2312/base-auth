@@ -2,12 +2,16 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { performance } from 'node:perf_hooks';
-import { DataSource } from 'typeorm';
+import { DataSource, type Logger } from 'typeorm';
 import {
   TransactionConflictError,
   type ProductTransactionOptions,
 } from '@base-authorization/typeorm-postgres';
-import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres/composition';
+import {
+  ProductIdentityService,
+  ProductTransactionRunner,
+  createProductPasswordHasher,
+} from '@base-authorization/typeorm-postgres/composition';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
@@ -16,6 +20,7 @@ import { startPostgres, withClient, type TestPostgres } from './setup-postgres.t
 
 let postgres: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
+let connections: Awaited<ReturnType<typeof provisionProductDatabase>>;
 const userId = randomUUID();
 const dataset = 100;
 const concurrency = 8;
@@ -29,7 +34,7 @@ before(async () => {
       randomBytes(20).toString('hex'),
     ]),
   ) as Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration', string>;
-  const connections = await provisionProductDatabase(postgres.superuser, passwords);
+  connections = await provisionProductDatabase(postgres.superuser, passwords);
   pools = {} as typeof pools;
   for (const purpose of ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const)
     pools[purpose] = await new DataSource(
@@ -193,4 +198,139 @@ test('real lock timeout retries are bounded and report timeout/retry metrics', a
   }
   assert.equal(metrics.filter(([metric]) => metric === 'retry').length, 1);
   assert.equal(metrics.filter(([metric]) => metric === 'timeout').length, 2);
+});
+
+test('limiter advisory-lock wait under concurrent revokes is measured with an empty and a full table', async (context) => {
+  const advisory: number[] = [];
+  let advisoryStatements = 0;
+  const isAdvisory = (sql: string) => sql.includes('pg_advisory_xact_lock');
+  const logger: Logger = {
+    logQuery: (sql) => {
+      if (isAdvisory(sql)) advisoryStatements++;
+    },
+    // TypeORM reports whole milliseconds above the threshold; faster statements count as 0 ms.
+    logQuerySlow: (time, sql) => {
+      if (isAdvisory(sql)) advisory.push(time);
+    },
+    logQueryError: () => undefined,
+    logSchemaBuild: () => undefined,
+    logMigration: () => undefined,
+    log: () => undefined,
+  };
+  const measured = await new DataSource({
+    ...productDataSourceOptions(connections.identity),
+    logging: ['query'],
+    logger,
+    maxQueryExecutionTime: 0.5,
+  }).initialize();
+  const metrics: { metric: string; mode: string; value: number }[] = [];
+  const runner = new ProductTransactionRunner(
+    { identity: measured },
+    {
+      onMetric: (metric, mode, value) => {
+        metrics.push({ metric, mode, value });
+      },
+    },
+  );
+  const identity = new ProductIdentityService(runner, await createProductPasswordHasher(new Set()));
+  const results: Record<string, unknown> = {};
+  try {
+    for (const scenario of ['empty', 'full'] as const) {
+      await pools.identity.query('DELETE FROM rate_limit');
+      if (scenario === 'full')
+        await pools.identity.query(
+          `INSERT INTO rate_limit(bucket_key,window_start,attempts)
+           SELECT sha256(convert_to('load-full:'||g,'UTF8')),statement_timestamp(),1+g%5 FROM generate_series(1,9990) g`,
+        );
+      advisory.length = 0;
+      advisoryStatements = 0;
+      metrics.length = 0;
+      const latencies: number[] = [];
+      const revokes: number[] = [];
+      const failures: Record<string, number> = {};
+      const record = (operation: string, error: unknown) => {
+        const code = (error as { code?: unknown }).code;
+        if (!(error instanceof Error) || typeof code !== 'string') throw error;
+        const label = `${operation}:${error.constructor.name}:${code}`;
+        failures[label] = (failures[label] ?? 0) + 1;
+      };
+      let next = 0;
+      let done = false;
+      const calls = 200;
+      const started = performance.now();
+      const revoker = (async () => {
+        while (!done) {
+          const start = performance.now();
+          try {
+            await runner.run('revoke', (tx) =>
+              tx.manager.query('UPDATE app_user SET auth_epoch=auth_epoch+1 WHERE id=$1', [userId]),
+            );
+          } catch (error) {
+            record('revoke', error);
+          }
+          revokes.push(performance.now() - start);
+        }
+      })();
+      await Promise.all(
+        Array.from({ length: concurrency }, async () => {
+          for (;;) {
+            const index = next++;
+            if (index >= calls) return;
+            const start = performance.now();
+            try {
+              await identity.rateLimit(
+                `10.${scenario === 'full' ? 1 : 0}.${index >> 8}.${index & 255}`,
+                `load${index}@example.test`,
+                'load',
+              );
+            } catch (error) {
+              record('limiter', error);
+            } finally {
+              latencies.push(performance.now() - start);
+            }
+          }
+        }),
+      );
+      done = true;
+      await revoker;
+      const elapsedMs = Number((performance.now() - started).toFixed(2));
+      const waits = [
+        ...advisory,
+        ...Array.from({ length: Math.max(0, advisoryStatements - advisory.length) }, () => 0),
+      ];
+      const fence = metrics
+        .filter((m) => m.metric === 'lock_wait' && m.mode === 'identity')
+        .map((m) => m.value);
+      const [rows] = await pools.identity.query<{ n: number }[]>(
+        'SELECT count(*)::int n FROM rate_limit',
+      );
+      results[scenario] = {
+        limiterRowsAfter: rows!.n,
+        calls,
+        elapsedMs,
+        limiterMs: {
+          p50: percentile(latencies, 0.5),
+          p95: percentile(latencies, 0.95),
+          p99: percentile(latencies, 0.99),
+        },
+        advisoryWaitMs: {
+          statements: advisoryStatements,
+          p50: percentile(waits, 0.5),
+          p95: percentile(waits, 0.95),
+          max: Math.max(0, ...waits),
+        },
+        identityFenceWaitMs: { p95: percentile(fence, 0.95), max: Math.max(0, ...fence) },
+        revokes: { n: revokes.length, p95Ms: percentile(revokes, 0.95) },
+        failures,
+      };
+      assert.equal(
+        advisoryStatements >= calls - Object.values(failures).reduce((a, b) => a + b, 0),
+        true,
+      );
+    }
+  } finally {
+    await pools.identity.query('DELETE FROM rate_limit');
+    await measured.destroy();
+  }
+  context.diagnostic(`PRODUCT_LIMITER_RESULT ${JSON.stringify({ concurrency, ...results })}`);
 });

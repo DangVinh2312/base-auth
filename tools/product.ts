@@ -14,6 +14,7 @@ import {
   createProductPasswordHasher,
   PRODUCT_OFFLINE_ACTOR,
   productObligations,
+  purgeExpiredSessions,
 } from '@base-authorization/typeorm-postgres/composition';
 import {
   productDataSourceOptions,
@@ -178,6 +179,20 @@ try {
       await file?.close();
       if (file && !committed) await unlink(artifact!).catch(() => undefined);
     }
+  } else if (command === 'purge-sessions') {
+    // Retention is a deployment decision: required, no default.
+    const retention = flags['--retention-days'];
+    if (!retention || !/^\d{1,4}$/.test(retention))
+      throw new Error('--retention-days <0-3650> is required');
+    const runner = new ProductTransactionRunner({ identity: await source('identity') });
+    // Bounded run: at most 200 short transactions of 500 rows; rerun to continue.
+    let deleted = 0;
+    for (let batch = 0; batch < 200; batch++) {
+      const n = await purgeExpiredSessions(runner, Number(retention), 500);
+      deleted += n;
+      if (n < 500) break;
+    }
+    console.log(`Purged ${deleted} expired sessions.`);
   } else if (command === 'bootstrap') {
     const userId = flags['--user'];
     const operationId = flags['--operation'];
@@ -265,7 +280,7 @@ try {
     }
   } else
     throw new Error(
-      'Expected provision|migrate|sync|enroll|invite|bootstrap|revoke-root|reissue-root',
+      'Expected provision|migrate|sync|enroll|invite|purge-sessions|bootstrap|revoke-root|reissue-root',
     );
 } catch (error) {
   // Class, release reason enum and SQLSTATE only: messages and driver details may carry secrets or PII.

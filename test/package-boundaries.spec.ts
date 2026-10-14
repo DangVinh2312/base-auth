@@ -77,6 +77,7 @@ describe('typeorm-postgres public entrypoints', () => {
         'verifyProductPrivileges',
         'productObligations',
         'PRODUCT_OFFLINE_ACTOR',
+        'purgeExpiredSessions',
       ],
       absent: [
         'provisionProductDatabase',

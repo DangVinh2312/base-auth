@@ -683,7 +683,8 @@ test('forward protection migration preserves preexisting product fixture rows', 
   }
   const upgraded = await new DataSource(productDataSourceOptions(connection)).initialize();
   try {
-    assert.equal((await upgraded.runMigrations()).length, 7);
+    // Every forward product migration after the initial one (002..009).
+    assert.equal((await upgraded.runMigrations()).length, 8);
     assert.equal(
       (await upgraded.query<{ label: string }[]>('SELECT label FROM role_definition'))[0]!.label,
       'Before upgrade',

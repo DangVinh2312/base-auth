@@ -53,6 +53,13 @@ export type ProductAuditEvent =
       readonly method: 'local' | 'oidc';
     }
   | {
+      /** Offline maintenance; counts only, no session or user identifiers. */
+      readonly kind: 'identity.session-purge';
+      readonly actor: string;
+      readonly deleted: string;
+      readonly retentionDays: string;
+    }
+  | {
       readonly kind: 'manifest.sync';
       readonly actor: string;
       readonly sequence: string;
@@ -125,6 +132,9 @@ export async function appendProductAudit(
     case 'identity.invite':
     case 'root.reissue':
       metadata.method = event.method;
+      break;
+    case 'identity.session-purge':
+      Object.assign(metadata, { deleted: event.deleted, retentionDays: event.retentionDays });
       break;
     case 'manifest.sync':
       Object.assign(metadata, { sequence: event.sequence, hash: event.hash });

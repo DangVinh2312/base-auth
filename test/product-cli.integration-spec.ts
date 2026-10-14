@@ -41,6 +41,15 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   assert.match(run('migrate'), /Applied 0/);
   run('sync');
   run('sync');
+  // Session purge needs an explicit retention; nothing has expired yet.
+  assert.match(run('purge-sessions', '--retention-days', '30'), /Purged 0 expired sessions/);
+  const noRetention = spawnSync(process.execPath, ['tools/product.ts', 'purge-sessions'], {
+    env,
+    encoding: 'utf8',
+    timeout: 30000,
+  });
+  assert.notEqual(noRetention.status, 0);
+  assert.match(noRetention.stderr, /Product operation failed \(Error\)/);
   // The CLI publishes exactly the release the API runtime prepares (one codec composition).
   const { createProductAuthorizationCore, createProductRelease } =
     await import('../apps/api/dist/authorization/product-manifest.js');

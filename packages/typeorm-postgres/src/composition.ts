@@ -25,6 +25,7 @@ export {
   ProductIdentityService,
   createProductPasswordHasher,
   newSessionSecret,
+  purgeExpiredSessions,
   secretDigest,
   sessionDigest,
 } from './product-identity.js';

@@ -25,7 +25,7 @@ Thêm export mới: chọn entrypoint theo bảng và cập nhật literal trong
 - `product-transaction.ts`: fixed-purpose pools, singleton fence, READ COMMITTED, facts statements sau lock, timeout/retry/metrics hữu hạn. Pool capability không có thì fail closed, không fallback login.
 - `product-sql.ts`, `product-gateway.ts`, `product-authority.ts`: user plan, cùng policy/boundary/grant/deny predicate, projection, native keys và write action registration. API chỉ nhận service operations, không raw manager.
 - `product-manifest.ts`: immutable release, exact system grants, protected-state drift gate, persistent bootstrap. Boot không tạo user/assignment; runtime seed không takeover.
-- `product-identity.ts`, `product-oidc.ts`: hash/exchange ngoài fence, recheck versions/session/authority trong fence; không email link hoặc secret log.
+- `product-identity.ts`, `product-oidc.ts`: hash/exchange ngoài fence, recheck versions/session/authority trong fence; không email link hoặc secret log. Limiter lấy advisory key qua `run(…, { serialize })` trước fence (ADR0010); purge session hết hạn là lệnh offline theo batch.
 - New tables/rights thay đổi phải cập nhật credential matrix, migration/privilege tests và quyết định thiết kế liên quan (nền hiện tại ADR 0008; thay quyết định đã chấp nhận thì thêm ADR superseding). Product source không import Nest hoặc app domain.
 
 Các file/bảng tenant bên dưới là compatibility/historical, không wire vào API mới. Boundary đã có trong cả legacy và user path; không báo thiếu theo prose cũ.
