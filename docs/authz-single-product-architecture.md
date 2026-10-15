@@ -23,7 +23,7 @@ Allow = ValidUserAndSession
         AND NOT AnyDeny
 ```
 
-Không role nào có quyền bỏ qua công thức. Authority level chỉ phục vụ quản trị; không thay grant. Thỏa mãn policy/boundary không tự cấp quyền. Không có quyền mới nếu endpoint hoặc resource thiếu khai báo.
+Với IAM principals, không role nào có quyền bỏ qua công thức và không có rank. Root là account `kind = root` ngoài IAM, bypass phân quyền qua `planUnrestricted` nhưng vẫn cần session hợp lệ, fresh-auth khi ghi và audit (ADR 0012). Thỏa mãn policy/boundary không tự cấp quyền. Không có quyền mới nếu endpoint hoặc resource thiếu khai báo.
 
 Bản đầu không cache quyết định allow; session và authority facts đọc từ primary. Một application fence đồng bộ thao tác dữ liệu với thay đổi quyền. Thu hồi có hiệu lực đối với authorization bắt đầu sau commit; không thu hồi được dữ liệu đã gửi.
 
@@ -163,7 +163,7 @@ Test bắt buộc: local-only boot không cần issuer; OIDC-only không cần p
 | Permission boundary | Giới hạn tối đa của user cho permission; không tự grant                                   |
 | Record exception    | Allow/deny cho user hoặc role trên một object, có reason/expiry/issuer                    |
 | Relation            | Quan hệ có kiểu/version giữa resource hoặc user; có thể bind trực tiếp FK/join table      |
-| Authority level     | Thứ bậc quản trị; actor phải cao hơn mọi người bị tác động trước/sau command              |
+| Root                | Account `kind = root` ngoài IAM, tối đa một; không phải role, không rank (ADR 0012)       |
 
 Boundary kế thừa ngữ nghĩa của [hợp đồng tổng quát](permission-boundaries.md), nhưng binding là `(user_id, permission_key)`; không có tenant/membership. Một binding trên mỗi cặp. Action khai báo `required` hoặc `optional` tường minh. Required thiếu binding thì deny; optional có binding vẫn bắt buộc kiểm. Không role inheritance hoặc boundary inheritance ở bản đầu.
 
@@ -227,7 +227,7 @@ Create kiểm candidate đã chuẩn hóa; update/delete kiểm trạng thái hi
 | Reviewer có document.read, document được giao                                      | Allow nếu policy/boundary đạt                           |
 | Reviewer đoán ID document không được giao                                          | 404 giống record không tồn tại; list không chứa record  |
 | Record allow document nhưng boundary giới hạn department khác                      | Deny                                                    |
-| Có role.assign và boundary chỉ editor/reviewer, yêu cầu gán owner                  | Deny dù authority level cao                             |
+| Có role.assign và boundary chỉ editor/reviewer, yêu cầu gán owner                  | Deny                                                    |
 | Boundary cho reviewer nhưng không có role.assign grant                             | Deny                                                    |
 | Có payment.approve, policy pending, boundary dưới 100 triệu; amount bằng 100 triệu | Deny nếu operator là `<`, tiền dùng integer minor units |
 | Có allow và deny từ hai role khác nhau                                             | Deny trên phạm vi khớp deny                             |
@@ -320,13 +320,13 @@ Giữ một fence ở bản đầu. Shared locks tương thích với nhau; tả
 
 Benchmark phải có mixed read/write, thay role/deny/relation, revoke session và slow transaction; ghi concurrency/dataset/percentile/timeout rate, không suy hiệu năng từ unit tests. Thu ngắn transaction, thêm index và chunk export trước khi đổi protocol khóa. Không giữ fence khi hash password, gọi IdP/mail hoặc stream file.
 
-Chưa phân vùng theo module/resource_type. Trước khi phân vùng phải có ADR chứng minh dependencies: thay role/policy/user status có thể tác động nhiều resource; reads cần lock toàn bộ dependency set, mutations cần invalidate đúng mọi decision, thứ tự khóa phải nhất quán. Không bảo đảm được affected set/epoch thì giữ global fence. Kiểm chứng revoke, self/peer và cross-module relations dưới concurrency là điều kiện trước khi đổi; ngưỡng cảnh báo chọn từ load test và timeout budget, không có con số throughput giả định.
+Chưa phân vùng theo module/resource_type. Trước khi phân vùng phải có ADR chứng minh dependencies: thay role/policy/user status có thể tác động nhiều resource; reads cần lock toàn bộ dependency set, mutations cần invalidate đúng mọi decision, thứ tự khóa phải nhất quán. Không bảo đảm được affected set/epoch thì giữ global fence. Kiểm chứng revoke, self/boundary và cross-module relations dưới concurrency là điều kiện trước khi đổi; ngưỡng cảnh báo chọn từ load test và timeout budget, không có con số throughput giả định.
 
 ## 10. Quản trị và bootstrap
 
-Một admin command chỉ hợp lệ khi có permission, đạt policy/boundary và candidate grants nằm trong delegation envelope. Kiểm affected set cho edit role, xóa deny, thay department/team/owner, import/bulk và bật lại user. Role có quyền cao không bypass invariant; admin ngang cấp không sửa nhau; sửa role actor đang giữ hoặc gỡ boundary của actor đều bị chặn.
+Một admin command chỉ hợp lệ khi có permission, đạt policy/boundary và candidate grants nằm trong delegation envelope. Kiểm affected set cho edit role, xóa deny, thay department/team/owner, import/bulk và bật lại user. Role có quyền cao không bypass invariant; giữa IAM principals không có rank, bảo vệ chỉ bằng grant, deny và boundary (ADR 0012); sửa role actor đang giữ hoặc gỡ boundary của actor đều bị chặn.
 
-User tự đổi password/profile qua luồng self-service có giới hạn không bị coi là quản trị role; không được dùng nó để đổi role, authority level hoặc trạng thái suspended. Admin có thể suspend user thấp cấp theo quyền, nhưng không đặt password họ biết, đổi địa chỉ recovery hay tạo session của user đó.
+User tự đổi password/profile qua luồng self-service có giới hạn không bị coi là quản trị role; không được dùng nó để đổi role hoặc trạng thái suspended. Root, hoặc IAM admin có grant trong boundary bắt buộc, có thể suspend IAM user, nhưng không đặt password họ biết, đổi địa chỉ recovery hay tạo session của user đó.
 
 Tạo Root đầu tiên bằng bootstrap command có marker một lần, pending activation và audit theo mục 10.2. Không seed password mặc định hoặc admin/admin. Khôi phục admin cuối cùng là runbook có xác minh và phê duyệt độc lập; không auto-create admin mỗi lần boot.
 
@@ -350,6 +350,8 @@ API quản trị không sửa/xóa system role, grant của system role, hoặc 
 
 ### 10.2 Bootstrap một lần và bảo vệ quyền hệ thống
 
+> Superseded một phần bởi ADR 0012: bootstrap chuyển một account pending `iam → root` đúng một lần cùng marker; Root không có assignment, system grants hay boundary bindings. Marker bền vững bên dưới vẫn áp dụng.
+
 Thêm bootstrap marker bền vững (singleton, ví dụ `security_bootstrap_state`) chỉ deploy/bootstrap credential được ghi. Không chỉ kiểm `COUNT(root_users)=0`: khi Root bị xóa/suspend, việc boot lại không được tự tái cấp quyền.
 
 Bootstrap lấy exclusive application fence, khóa marker, kiểm chưa initialized, manifest/Root/system grants hợp lệ, target account và auth method đã chỉ định; ghi assignment, boundary bindings bắt buộc, pending activation/invitation reference, marker và audit cùng transaction. Chỉ gửi invitation sau commit; secret không vào log/audit. Với OIDC, ràng buộc exact issuer+subject hoặc enrollment proof đã xác minh, không auto-link bằng email. Hai bootstrap đồng thời chỉ một lần tạo assignment; retry đúng operation id trả trạng thái cũ, không tạo người giữ Root thứ hai.
@@ -369,6 +371,8 @@ Không overwrite runtime grants, assignments, boundaries hoặc relations; code-
 Không schema migrations khi boot. Không có switch `AUTH_DISABLED`/`SKIP_POLICY` cho production; local tests dùng fixture và credential giả. Secret/config schema kiểm theo auth methods đang bật: local-only không cần OIDC issuer; OIDC enabled phải có trusted provider config. Provider definitions là deploy-owned; secret không nằm trong manifest công khai hoặc DTO.
 
 ### 11.1 Hợp đồng seed hệ thống và API boot thực tế
+
+> ADR 0012: release product v2 không còn `systemGrants`/`removeSystemGrants` và authority level; phần system grant bên dưới là lịch sử.
 
 `defaultGrants` hiện hữu chỉ seed khi permission lần đầu xuất hiện. Không dùng nó để bảo đảm Root nhận permission đã có trước khi Root được thêm. Profile mới bổ sung `systemGrants` do code sở hữu với ID/owner ổn định và exact permission/template/version/parameters; giữ `defaultGrants` riêng cho seed ban đầu có semantics đã công bố.
 
@@ -401,7 +405,7 @@ Protocol bổ sung:
 
 `AppModule` thực tế phải wire manifest sync, authority, fence và cùng readiness instance; test chỉ tạo `BootstrapCoordinator` riêng không đủ. Với profile một sản phẩm, lỗi sync/privilege/capability làm startup thất bại trước khi mở business listener hoặc khởi động worker. Không chỉ giữ readiness false trong khi protected route vẫn được phục vụ; probe listener riêng nếu cần phải không chứa business handlers.
 
-Test tối thiểu: fresh DB; boot lặp không đổi revision; hai instances cùng boot; permission cũ + Root mới; permission mới chỉ cấp theo manifest; sửa/xóa system role/grant qua API và SQL runtime bị từ chối; ownership collision rollback; drift cùng hash không ready; root vẫn bị deny/boundary/self/peer chặn; bootstrap race/idempotency/no-reseed; local và OIDC activation; khởi động API thật với manifest lỗi không phục vụ business routes.
+Test tối thiểu: fresh DB; boot lặp không đổi revision; hai instances cùng boot; permission cũ + Root mới; permission mới chỉ cấp theo manifest; sửa/xóa system role/grant qua API và SQL runtime bị từ chối; ownership collision rollback; drift cùng hash không ready; IAM vẫn bị deny/boundary chặn còn Root bypass nhưng cần fresh-auth khi ghi và audit (ADR 0012); bootstrap race/idempotency/no-reseed; local và OIDC activation; khởi động API thật với manifest lỗi không phục vụ business routes.
 
 ## 12. Ma trận đe dọa và kiểm chứng
 
@@ -413,7 +417,7 @@ Test tối thiểu: fresh DB; boot lặp không đổi revision; hai instances c
 | Brute force/enumeration/session fixation         | Shared rate-limit, generic response, dummy verify, session rotation | Nhiều replica; stale cookie sau login/reauth không hoạt động      |
 | CSRF/credential theft qua logging                | Origin/token checks, cookie flags, redaction                        | Mutation/login CSRF reject; log không có secret                   |
 | Reset token race/login dùng password cũ          | Token khóa, credential version, fence                               | Hai reset chỉ một thành công; reset thắng login verify cũ         |
-| Tự nâng quyền/peer administration                | Affected set, strict rank, delegation, boundary                     | Direct/indirect qua role/team/deny/bulk đều reject                |
+| Tự nâng quyền/peer administration                | Affected set, delegation, boundary/deny (không rank)                | Direct/indirect qua role/team/deny/bulk đều reject                |
 | Admin chiếm tài khoản user                       | Credential commands tách authority administration                   | User manager không set password/email recovery/impersonate        |
 | Record exception vượt policy/boundary            | Mandatory conjunct ngoài grants                                     | Mutation test bỏ từng conjunct phải fail                          |
 | Quyền cũ sau revoke                              | Fence, primary facts, transaction-bound plan                        | Hai connection; request sau commit không allow                    |
