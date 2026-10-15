@@ -43,7 +43,7 @@ async function stop(child: ChildProcess) {
   child.kill('SIGTERM');
   await new Promise<void>((resolve) => child.once('exit', () => resolve()));
 }
-test('actual API boot, activation/login, scoped read/write, Root boundaries and revoke/reset fail closed', async (t) => {
+test('actual API boot, activation/login, scoped read/write, Root bypass with fresh writes and revoke/reset fail closed', async (t) => {
   const pg = await startPostgres();
   const pools: DataSource[] = [];
   let child: ChildProcess | undefined;
@@ -257,6 +257,12 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   );
   assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 403);
   assert.equal((await request('/auth/reauthenticate', 'POST', { password })).status, 200);
+  // Root itself and an absent id look the same: 404 (the account resource holds IAM accounts only).
+  assert.equal((await request(`/administration/users/${root}/suspend`, 'POST')).status, 404);
+  assert.equal(
+    (await request(`/administration/users/${randomUUID()}/suspend`, 'POST')).status,
+    404,
+  );
   assert.equal(
     (await request(`/documents/${hidden}`, 'PATCH', { title: 'Root edit' })).status,
     200,

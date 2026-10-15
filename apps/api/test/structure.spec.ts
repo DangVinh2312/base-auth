@@ -195,7 +195,7 @@ const expectedOperations = [
   'update',
 ];
 // Changed deliberately: the /auth/session example userId no longer equals PRODUCT_OFFLINE_ACTOR.
-const openApiSha256 = 'a32d43665013831715820ba6d85ec7f8e3b0e8e1168d6753ceff72a0e7a48693';
+const openApiSha256 = 'f0f1c5c53e2057ded71ce665a98b4df713ae790299159dc5ca8b7fbd3879148f';
 
 test('route inventory, OpenAPI, cookie/CSRF and handler exposure are pinned', async (t) => {
   const { runtime } = fixtureRuntime();

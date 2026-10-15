@@ -437,3 +437,129 @@ test('IAM reads stay scoped and unaudited; a role named like Root grants nothing
   });
   assert.deepEqual(added, []);
 });
+
+/** An active IAM account with a local session, reauthenticated now when `fresh`. */
+async function iamUser(fresh = false) {
+  const id = randomUUID() as IdentityId;
+  const secret = randomBytes(32).toString('base64url');
+  await migration.query(`INSERT INTO app_user(id,state,email_verified) VALUES($1,'active',true)`, [
+    id,
+  ]);
+  await migration.query(
+    "INSERT INTO local_credential(user_id,password_hash,version) VALUES($1,'fixture-only',1)",
+    [id],
+  );
+  await pools.identity.query(
+    `INSERT INTO application_session(token_hash,user_id,auth_epoch,credential_version,method,assurance,authenticated_at,reauthenticated_at,expires_at) VALUES($1,$2,1,1,'local','password',statement_timestamp(),${fresh ? 'statement_timestamp()' : 'NULL'},statement_timestamp()+interval '1 hour')`,
+    [sessionDigest(secret), id],
+  );
+  return { id, secret };
+}
+const account = (id: string) =>
+  migration.query<{ state: string; epoch: string }[]>(
+    'SELECT state,auth_epoch::text epoch FROM app_user WHERE id=$1',
+    [id],
+  );
+
+test('Root suspends an IAM account; itself, absent and malformed ids reveal nothing', async () => {
+  const member = await iamUser();
+  const s = service();
+  assert.deepEqual(
+    (
+      await appended(() =>
+        assert.rejects(s.suspendUser(root.stale, member.id), ProductAccessDenied),
+      )
+    ).added,
+    [],
+  );
+  const fresh = await freshRoot();
+  const done = await appended(async () =>
+    assert.equal(await s.suspendUser(fresh, member.id), true),
+  );
+  assert.deepEqual(done.added, [
+    [
+      'account.suspend',
+      root.id,
+      'account.suspend',
+      null,
+      {
+        principalKind: 'root',
+        outcome: 'ok',
+        targetUserId: member.id,
+        resultingRevision: done.after,
+      },
+    ],
+  ]);
+  assert.deepEqual(await account(member.id), [{ state: 'suspended', epoch: '2' }]);
+  for (const target of [root.id, randomUUID()]) {
+    const absent = await appended(async () =>
+      assert.equal(await s.suspendUser(fresh, target), false),
+    );
+    assert.deepEqual(absent.added, [
+      [
+        'account.suspend',
+        root.id,
+        'account.suspend',
+        null,
+        {
+          principalKind: 'root',
+          outcome: 'absent',
+          targetUserId: target,
+          resultingRevision: absent.after,
+        },
+      ],
+    ]);
+  }
+  assert.equal((await account(root.id))[0]?.state, 'active');
+  // A non-canonical id is refused before any lookup: 403 and no event.
+  assert.deepEqual(
+    (
+      await appended(() =>
+        assert.rejects(s.suspendUser(fresh, member.id.toUpperCase()), ProductAccessDenied),
+      )
+    ).added,
+    [],
+  );
+});
+
+test('IAM suspend needs a grant and a boundary; self is 403; Root is invisible to IAM', async () => {
+  const admin = await iamUser(true);
+  const staleAdmin = randomBytes(32).toString('base64url');
+  await pools.identity.query(
+    "INSERT INTO application_session(token_hash,user_id,auth_epoch,credential_version,method,assurance,authenticated_at,expires_at) VALUES($1,$2,1,1,'local','password',statement_timestamp(),statement_timestamp()+interval '1 hour')",
+    [sessionDigest(staleAdmin), admin.id],
+  );
+  const unbounded = await iamUser(true);
+  const target = await iamUser();
+  await runner.run('admin', async (tx) => {
+    for (const user of [admin.id, unbounded.id])
+      await tx.manager.query(
+        "INSERT INTO policy_rule(rule_id,permission_key,user_id,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{}','runtime')",
+        [randomUUID(), utf8('account.suspend'), user, utf8('allAccounts')],
+      );
+    await tx.manager.query(
+      'INSERT INTO user_boundary(user_id,permission_key,boundary_key,boundary_version) VALUES($1,$2,$3,1)',
+      [admin.id, utf8('account.suspend'), utf8('accountAll')],
+    );
+  });
+  const s = service();
+  await assert.rejects(s.suspendUser(unbounded.secret, target.id), ProductAccessDenied);
+  await assert.rejects(s.suspendUser(admin.secret, admin.id), ProductAccessDenied);
+  assert.equal(await s.suspendUser(admin.secret, root.id), false);
+  assert.equal((await account(root.id))[0]?.state, 'active');
+  // freshAuthentication@1 still decides for IAM, from the same SQL boolean.
+  await assert.rejects(s.suspendUser(staleAdmin, target.id), ProductAccessDenied);
+  const done = await appended(async () =>
+    assert.equal(await s.suspendUser(admin.secret, target.id), true),
+  );
+  assert.deepEqual(done.added, [
+    ['access.suspend', admin.id, 'account.suspend', null, {}],
+    [
+      'account.suspend',
+      admin.id,
+      'account.suspend',
+      null,
+      { targetUserId: target.id, resultingRevision: done.after },
+    ],
+  ]);
+});

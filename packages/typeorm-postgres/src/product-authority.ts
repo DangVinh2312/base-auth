@@ -363,14 +363,15 @@ export class ProductAuthorization {
       'suspend',
       'admin',
       async (plan, tx, kind) => {
-        if (plan.userId === target) throw new ProductAccessDenied();
-        // iam_account (012) holds IAM accounts only; rank no longer exists (ADR 0012).
+        // One lookup through iam_account first: an absent id and any Root (Root included when it
+        // targets itself) are the same "not found" (spec 7.2). Only then the IAM self check.
         const row = await this.gateway.detail(
           plan,
           this.bindings.core.parseKey('uuid', target),
           tx,
         );
         if (!row) return false;
+        if (plan.userId === target) throw new ProductAccessDenied();
         await tx.manager.query(
           `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
           [target],

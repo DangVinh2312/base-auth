@@ -193,7 +193,7 @@ export const productOpenApi = {
         { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
       ],
       ...post(
-        'Suspend a strictly lower user under policy and required boundary',
+        'Suspend an IAM user: Root, or a grant within a required boundary',
         { status: 'suspended' },
         [],
         true,
