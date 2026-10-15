@@ -4,6 +4,7 @@ import {
   type UserId,
   type UserAuthoritySnapshot,
   type UserAuthorizedPlan,
+  type UserTrustedInput,
   type ValidatedDeclarations,
   type Scalar,
 } from '@base-authorization/core';
@@ -17,7 +18,7 @@ import {
 } from './product-sql.js';
 import { ProductDataGateway, ProductInvalidRequest, type ListQuery } from './product-gateway.js';
 import { sessionDigest, ProductAuthenticationError } from './product-identity.js';
-import { appendProductAudit } from './product-audit.js';
+import { appendProductAudit, type ProductAuditEvent } from './product-audit.js';
 import {
   fulfillProductObligations,
   type ProductObligationRegistry,
@@ -38,15 +39,26 @@ function requestKey(core: AuthorizationCore, kind: KeyKind, key: string) {
 }
 interface SessionProjection {
   user_id: UserId;
+  /** From resolve_session in this fenced transaction; never from a request or a role name. */
+  kind: 'root' | 'iam';
   assurance: string;
   authenticated_at: Date;
   reauthenticated_at: Date | null;
   expires_at: Date;
   state: 'active' | 'suspended' | 'pending';
+  /** PRODUCT_FRESH_AUTH_SQL, by the DB clock of the same statement. */
+  fresh: boolean;
   /** DB clock of the same statement and the plan deadline (never past session expiry). */
   now: string;
   deadline: string;
 }
+type PrincipalKind = SessionProjection['kind'];
+/**
+ * Fresh reauthentication: in the past and less than 300 seconds before the statement time.
+ * Evaluated in SQL so the DB clock and microseconds decide (spec 6.4).
+ */
+export const PRODUCT_FRESH_AUTH_SQL =
+  "(reauthenticated_at IS NOT NULL AND reauthenticated_at<=statement_timestamp() AND statement_timestamp()-reauthenticated_at<interval '300 seconds')";
 type Lifecycle = 'active' | 'deprecated' | 'retired';
 /**
  * Facts of one user for one permission, read in one statement after the fence. The planner only
@@ -160,23 +172,35 @@ export class ProductAuthorization {
   }
   private async session(tx: ProductTransaction, secret: string): Promise<SessionProjection> {
     const [session] = await tx.manager.query<SessionProjection[]>(
-      `SELECT s.*,to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') now,to_char(LEAST(s.expires_at,statement_timestamp()+interval '2 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') deadline FROM public.resolve_session($1) s`,
+      `SELECT s.*,${PRODUCT_FRESH_AUTH_SQL} fresh,to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') now,to_char(LEAST(s.expires_at,statement_timestamp()+interval '2 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') deadline FROM public.resolve_session($1) s`,
       [sessionDigest(secret)],
     );
-    if (!session || !this.bindings.core.isCanonicalUuid(session.user_id))
+    if (
+      !session ||
+      !this.bindings.core.isCanonicalUuid(session.user_id) ||
+      (session.kind !== 'root' && session.kind !== 'iam')
+    )
       throw new ProductAuthenticationError();
     return session;
   }
+  /**
+   * The only Root branch (ADR 0012): `kind` comes from the verified session. Root still needs a
+   * valid session, a fresh reauthentication for write/admin, a declared action, the projection
+   * and writable allowlists, and leaves one audit event per committed access.
+   */
   private async access<T>(
     secret: string,
     resource: string,
     action: string,
     mode: 'read' | 'write' | 'admin',
-    work: (plan: UserAuthorizedPlan, tx: ProductTransaction) => Promise<T>,
+    work: (plan: UserAuthorizedPlan, tx: ProductTransaction, kind: PrincipalKind) => Promise<T>,
+    rootEvent: (plan: UserAuthorizedPlan, result: T) => ProductAuditEvent,
   ): Promise<T> {
     return this.transactions.run(mode, async (tx) => {
       // Authority purpose deliberately has no session/credential read capability: use the narrow projection function.
       const session = await this.session(tx, secret);
+      if (session.kind === 'root' && mode !== 'read' && !session.fresh)
+        throw new ProductAccessDenied();
       const snapshot = await readProductAuthority(
         tx,
         session.user_id,
@@ -184,49 +208,85 @@ export class ProductAuthorization {
         this.bindings.declarations,
         this.registry,
       );
-      const decision = this.bindings.core.planUser(
-        {
-          principal: { id: session.user_id, assurance: session.assurance === 'mfa' ? 2 : 1 },
-          resource,
-          action,
-          now: session.now,
-          validUntil: session.deadline,
-          context: {
-            freshAuthentication:
-              session.reauthenticated_at !== null &&
-              session.reauthenticated_at.getTime() <= Date.parse(session.now) &&
-              Date.parse(session.now) - session.reauthenticated_at.getTime() < 300000,
-          },
-        },
-        snapshot,
-      );
+      const input: UserTrustedInput = {
+        principal: { id: session.user_id, assurance: session.assurance === 'mfa' ? 2 : 1 },
+        resource,
+        action,
+        now: session.now,
+        validUntil: session.deadline,
+        context: { freshAuthentication: session.fresh },
+      };
+      const decision =
+        session.kind === 'root'
+          ? this.bindings.core.planUnrestricted(input, snapshot)
+          : this.bindings.core.planUser(input, snapshot);
       if (decision.effect !== 'allow') throw new ProductAccessDenied();
-      const result = await work(decision.plan, tx);
+      const result = await work(decision.plan, tx, session.kind);
+      if (session.kind === 'root') await appendProductAudit(tx, rootEvent(decision.plan, result));
       await fulfillProductObligations(tx, decision.plan, this.obligations);
       return result;
     });
   }
+  /** Requested key of a Root audit target (spec 6.5); parsed like the operation parsed it. */
+  private requested(resource: string, key: string) {
+    const keyKind = this.bindings.declarations.resources[resource]!.keyKind;
+    return { resource, keyKind, key: requestKey(this.bindings.core, keyKind, key).value };
+  }
+  private static readonly ok = { principalKind: 'root', outcome: 'ok' } as const;
   list(secret: string, resource: string, action: string, query: ListQuery = {}) {
-    return this.access(secret, resource, action, 'read', (plan, tx) =>
-      this.gateway.list(plan, query, tx),
+    return this.access(
+      secret,
+      resource,
+      action,
+      'read',
+      (plan, tx) => this.gateway.list(plan, query, tx),
+      (plan) => ({
+        kind: `access.${plan.resource}.${plan.action}`,
+        actor: plan.userId,
+        permission: plan.permission,
+        ...ProductAuthorization.ok,
+      }),
     );
   }
   detail(secret: string, resource: string, action: string, key: string) {
-    return this.access(secret, resource, action, 'read', (plan, tx) =>
-      this.gateway.detail(
-        plan,
-        requestKey(
-          this.bindings.core,
-          this.bindings.declarations.resources[resource]!.keyKind,
-          key,
+    return this.access(
+      secret,
+      resource,
+      action,
+      'read',
+      (plan, tx) =>
+        this.gateway.detail(
+          plan,
+          requestKey(
+            this.bindings.core,
+            this.bindings.declarations.resources[resource]!.keyKind,
+            key,
+          ),
+          tx,
         ),
-        tx,
-      ),
+      (plan, row) => ({
+        kind: `access.${plan.resource}.${plan.action}`,
+        actor: plan.userId,
+        permission: plan.permission,
+        principalKind: 'root',
+        outcome: row ? 'ok' : 'absent',
+        target: this.requested(resource, key),
+      }),
     );
   }
   count(secret: string, resource: string, action: string) {
-    return this.access(secret, resource, action, 'read', (plan, tx) =>
-      this.gateway.count(plan, {}, tx),
+    return this.access(
+      secret,
+      resource,
+      action,
+      'read',
+      (plan, tx) => this.gateway.count(plan, {}, tx),
+      (plan) => ({
+        kind: `access.${plan.resource}.${plan.action}`,
+        actor: plan.userId,
+        permission: plan.permission,
+        ...ProductAuthorization.ok,
+      }),
     );
   }
   async update(
@@ -240,54 +300,98 @@ export class ProductAuthorization {
     const fields = Object.keys(changes);
     if (!declaration || fields.length === 0 || fields.some((f) => !declaration.fields.includes(f)))
       throw new ProductAccessDenied();
-    return this.access(secret, resource, action, 'write', async (plan, tx) => {
-      const binding = this.bindings.resource(resource);
-      const bound = compilePlan(plan, this.bindings);
-      const params = [...bound.parameters];
-      const assignments = fields.map((f) => {
-        const value = this.bindings.core.normalizeValue(
-          this.bindings.declarations.resources[resource]!.fields[f]!.kind,
-          changes[f],
-        );
-        if (value === undefined) throw new ProductAccessDenied();
-        params.push(value);
-        return `${quoteIdentifier(binding.columns[f]!)}=CAST($${params.length} AS ${fieldPgTypes[this.bindings.declarations.resources[resource]!.fields[f]!.kind]})`;
-      });
-      const keyKind = this.bindings.declarations.resources[resource]!.keyKind;
-      const typedKey = requestKey(this.bindings.core, keyKind, key);
-      params.push(typedKey.value);
-      const rows = await tx.manager.query<{ object_id: string }[]>(
-        `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[keyKind]}) RETURNING r.${quoteIdentifier(binding.objectIdColumn)} AS object_id) SELECT * FROM updated`,
-        params,
-      );
-      if (rows.length)
-        await appendProductAudit(tx, {
-          kind: 'data.update',
-          actor: plan.userId,
-          permission: plan.permission,
-          target: { resource, keyKind, key: typedKey.value, objectId: rows[0]!.object_id },
+    const objectId = await this.access(
+      secret,
+      resource,
+      action,
+      'write',
+      async (plan, tx, kind) => {
+        const binding = this.bindings.resource(resource);
+        const bound = compilePlan(plan, this.bindings);
+        const params = [...bound.parameters];
+        const assignments = fields.map((f) => {
+          const value = this.bindings.core.normalizeValue(
+            this.bindings.declarations.resources[resource]!.fields[f]!.kind,
+            changes[f],
+          );
+          if (value === undefined) throw new ProductAccessDenied();
+          params.push(value);
+          return `${quoteIdentifier(binding.columns[f]!)}=CAST($${params.length} AS ${fieldPgTypes[this.bindings.declarations.resources[resource]!.fields[f]!.kind]})`;
         });
-      return rows.length === 1;
-    });
+        const keyKind = this.bindings.declarations.resources[resource]!.keyKind;
+        const typedKey = requestKey(this.bindings.core, keyKind, key);
+        params.push(typedKey.value);
+        const rows = await tx.manager.query<{ object_id: string }[]>(
+          `WITH updated AS(UPDATE ${quoteIdentifier(binding.table)} r SET ${assignments.join(',')} WHERE ${bound.sql} AND r.${quoteIdentifier(binding.keyColumn)}=CAST($${params.length} AS ${keyPgTypes[keyKind]}) RETURNING r.${quoteIdentifier(binding.objectIdColumn)} AS object_id) SELECT * FROM updated`,
+          params,
+        );
+        if (rows.length && kind === 'iam')
+          await appendProductAudit(tx, {
+            kind: 'data.update',
+            actor: plan.userId,
+            permission: plan.permission,
+            target: { resource, keyKind, key: typedKey.value, objectId: rows[0]!.object_id },
+          });
+        return rows[0]?.object_id;
+      },
+      (plan, updated): ProductAuditEvent =>
+        updated === undefined
+          ? {
+              kind: 'data.update',
+              actor: plan.userId,
+              permission: plan.permission,
+              principalKind: 'root',
+              outcome: 'absent',
+              target: this.requested(resource, key),
+            }
+          : {
+              kind: 'data.update',
+              actor: plan.userId,
+              permission: plan.permission,
+              principalKind: 'root',
+              outcome: 'ok',
+              target: { ...this.requested(resource, key), objectId: updated },
+            },
+    );
+    return objectId !== undefined;
   }
   async suspendUser(secret: string, target: string): Promise<boolean> {
     if (!this.bindings.core.isCanonicalUuid(target)) throw new ProductAccessDenied();
-    return this.access(secret, 'account', 'suspend', 'admin', async (plan, tx) => {
-      if (plan.userId === target) throw new ProductAccessDenied();
-      // iam_account (012) holds IAM accounts only; rank no longer exists (ADR 0012).
-      const row = await this.gateway.detail(plan, this.bindings.core.parseKey('uuid', target), tx);
-      if (!row) return false;
-      await tx.manager.query(
-        `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
-        [target],
-      );
-      await appendProductAudit(tx, {
+    return this.access(
+      secret,
+      'account',
+      'suspend',
+      'admin',
+      async (plan, tx, kind) => {
+        if (plan.userId === target) throw new ProductAccessDenied();
+        // iam_account (012) holds IAM accounts only; rank no longer exists (ADR 0012).
+        const row = await this.gateway.detail(
+          plan,
+          this.bindings.core.parseKey('uuid', target),
+          tx,
+        );
+        if (!row) return false;
+        await tx.manager.query(
+          `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
+          [target],
+        );
+        if (kind === 'iam')
+          await appendProductAudit(tx, {
+            kind: 'account.suspend',
+            actor: plan.userId,
+            permission: plan.permission,
+            target: { userId: target },
+          });
+        return true;
+      },
+      (plan, suspended) => ({
         kind: 'account.suspend',
         actor: plan.userId,
         permission: plan.permission,
+        principalKind: 'root',
+        outcome: suspended ? 'ok' : 'absent',
         target: { userId: target },
-      });
-      return true;
-    });
+      }),
+    );
   }
 }

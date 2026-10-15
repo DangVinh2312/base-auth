@@ -244,21 +244,31 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
     200,
   );
   const rootPage = (await (await request('/documents')).json()) as {
-    items: unknown[];
+    items: Record<string, unknown>[];
     total: string;
   };
-  // Root is no IAM principal and holds no grant.
-  assert.equal(rootPage.total, '0');
+  // Root is outside IAM: every document, still through the projection; writes need fresh reauth.
+  assert.equal(rootPage.total, '2');
+  assert.ok(rootPage.items.every((item) => !('ownerId' in item)));
+  assert.equal((await request(`/documents/${hidden}`)).status, 200);
+  assert.equal(
+    (await request(`/documents/${hidden}`, 'PATCH', { title: 'Root edit' })).status,
+    403,
+  );
   assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 403);
   assert.equal((await request('/auth/reauthenticate', 'POST', { password })).status, 200);
-  assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 403);
+  assert.equal(
+    (await request(`/documents/${hidden}`, 'PATCH', { title: 'Root edit' })).status,
+    200,
+  );
+  assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 200);
   assert.equal(
     (
       await ds.migration.query<{ state: string }[]>('SELECT state FROM app_user WHERE id=$1', [
         user,
       ])
     )[0]?.state,
-    'active',
+    'suspended',
   );
   assert.equal((await request('/auth/logout', 'POST')).status, 200);
   assert.equal((await request('/auth/session')).status, 401);

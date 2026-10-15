@@ -8,7 +8,11 @@ export {
   compileNamed as compileProductNamed,
 } from './product-sql.js';
 export { ProductDataGateway } from './product-gateway.js';
-export { ProductAuthorization, readProductAuthority } from './product-authority.js';
+export {
+  ProductAuthorization,
+  PRODUCT_FRESH_AUTH_SQL,
+  readProductAuthority,
+} from './product-authority.js';
 export { verifyProductPrivileges } from './product-database.js';
 export { PRODUCT_OFFLINE_ACTOR } from './product-audit.js';
 export { ProductAuditOutbox } from './product-outbox.js';

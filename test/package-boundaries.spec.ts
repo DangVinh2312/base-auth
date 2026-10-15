@@ -80,6 +80,7 @@ describe('typeorm-postgres public entrypoints', () => {
         'PRODUCT_OFFLINE_ACTOR',
         'ProductAuditOutbox',
         'purgeExpiredSessions',
+        'PRODUCT_FRESH_AUTH_SQL',
       ],
       absent: [
         'provisionProductDatabase',

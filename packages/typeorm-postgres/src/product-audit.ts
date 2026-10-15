@@ -7,6 +7,14 @@ import type { ProductTransaction } from './product-transaction.js';
  */
 export const PRODUCT_OFFLINE_ACTOR = '00000000-0000-4000-8000-000000000001' as IdentityId;
 type UserTarget = { readonly userId: string };
+/** Requested record key of an access; metadata keeps `key` only for uuid/integer kinds. */
+type RequestedKey = {
+  readonly resource: string;
+  readonly keyKind: KeyKind;
+  readonly key: string;
+};
+/** Root marker, written only from the verified session kind through typed input (spec 6.5). */
+type RootOutcome = { readonly principalKind: 'root'; readonly outcome: 'ok' | 'absent' };
 
 export type ProductIdentityAuditKind =
   | 'identity.login'
@@ -27,17 +35,34 @@ export type ProductIdentityAuditKind =
  */
 export type ProductAuditEvent =
   | { readonly kind: `access.${string}`; readonly actor: string; readonly permission: string }
+  | ({
+      readonly kind: `access.${string}`;
+      readonly actor: string;
+      readonly permission: string;
+      /** Detail only: the requested key, ok or absent; never a made-up target. */
+      readonly target?: RequestedKey;
+    } & RootOutcome)
   | {
       readonly kind: 'data.update';
       readonly actor: string;
       readonly permission: string;
-      /** `key` reaches metadata only for uuid/integer kinds; string keys may carry PII. */
-      readonly target: {
-        readonly resource: string;
-        readonly keyKind: KeyKind;
-        readonly key: string;
-        readonly objectId: string;
-      };
+      readonly target: RequestedKey & { readonly objectId: string };
+    }
+  | {
+      readonly kind: 'data.update';
+      readonly actor: string;
+      readonly permission: string;
+      readonly principalKind: 'root';
+      readonly outcome: 'ok';
+      readonly target: RequestedKey & { readonly objectId: string };
+    }
+  | {
+      readonly kind: 'data.update';
+      readonly actor: string;
+      readonly permission: string;
+      readonly principalKind: 'root';
+      readonly outcome: 'absent';
+      readonly target: RequestedKey;
     }
   | {
       readonly kind: 'account.suspend';
@@ -45,6 +70,12 @@ export type ProductAuditEvent =
       readonly permission: string;
       readonly target: UserTarget;
     }
+  | ({
+      readonly kind: 'account.suspend';
+      readonly actor: string;
+      readonly permission: string;
+      readonly target: UserTarget;
+    } & RootOutcome)
   | { readonly kind: ProductIdentityAuditKind; readonly actor: string }
   | {
       readonly kind: 'identity.enroll' | 'identity.invite';
@@ -119,15 +150,20 @@ export async function appendProductAudit(
   let reason: string | null = null;
   let objectId: string | null = null;
   if ('permission' in event) permission = event.permission;
-  if ('target' in event && 'userId' in event.target) metadata.targetUserId = event.target.userId;
+  if ('target' in event && event.target && 'userId' in event.target)
+    metadata.targetUserId = event.target.userId;
   if (!event.kind.startsWith('access.')) metadata.resultingRevision = resultingRevision(tx, event);
+  if ('principalKind' in event) {
+    metadata.principalKind = event.principalKind;
+    metadata.outcome = event.outcome;
+  }
+  if ('target' in event && event.target && 'keyKind' in event.target) {
+    metadata.resource = event.target.resource;
+    metadata.keyKind = event.target.keyKind;
+    if (event.target.keyKind !== 'string') metadata.key = event.target.key;
+    if ('objectId' in event.target) objectId = event.target.objectId;
+  }
   switch (event.kind) {
-    case 'data.update':
-      metadata.resource = event.target.resource;
-      metadata.keyKind = event.target.keyKind;
-      if (event.target.keyKind !== 'string') metadata.key = event.target.key;
-      objectId = event.target.objectId;
-      break;
     case 'identity.enroll':
     case 'identity.invite':
     case 'root.reissue':
