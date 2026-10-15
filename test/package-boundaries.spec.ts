@@ -86,6 +86,7 @@ describe('typeorm-postgres public entrypoints', () => {
         'productDataSourceOptions',
         'bootstrapProductRoot',
         'appendProductAudit',
+        'systemGrantHash',
         'TenantProvisioner',
       ],
     },

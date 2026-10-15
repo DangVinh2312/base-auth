@@ -40,68 +40,33 @@ test('stable dotted system role keys are valid manifest roles without wildcard p
   assert.deepEqual(release.defaultGrants, []);
 });
 
-test('system grants require exact declared permission/template and unique stable ownership', async () => {
-  const product = await import('@base-authorization/typeorm-postgres/composition');
-  const source = {
-    sequence: '1',
-    predecessor: '0',
-    declarations: declarations(),
-    roles: [{ key: 'system.root', label: 'Root', authorityLevel: 1000 }],
-    defaultGrants: [],
-    seeds: [],
-    removeSeeds: [],
-    boundaryBindings: [],
-    removeBoundaryBindings: [],
-    systemGrants: [
-      {
-        owner: 'product',
-        key: 'root-read',
-        permission: 'submission.read',
-        role: 'system.root',
-        template: { key: 'all', version: 1 },
-        parameters: {},
-      },
-    ],
-    removeSystemGrants: [],
-  };
-  const prepared = product.prepareProductRelease(source, core);
-  assert.equal(prepared.systemGrants[0]?.key, 'root-read');
-  assert.throws(() =>
-    product.prepareProductRelease(
-      {
-        ...source,
-        systemGrants: [{ ...source.systemGrants[0]!, permission: '*' }],
-      },
-      core,
-    ),
-  );
-  assert.throws(() =>
-    product.prepareProductRelease(
-      {
-        ...source,
-        systemGrants: [...source.systemGrants, ...source.systemGrants],
-      },
-      core,
-    ),
-  );
-  // A system grant on a runtime-assignable role would escape the offline-only rule.
-  assert.throws(() =>
-    product.prepareProductRelease(
-      {
-        ...source,
-        roles: [...source.roles, { key: 'reviewer', label: 'Reviewer', authorityLevel: 10 }],
-        systemGrants: [{ ...source.systemGrants[0]!, role: 'reviewer' }],
-      },
-      core,
-    ),
-  );
+test('product release v2: roles are key and label, system.* is reserved, no system grant fields', async () => {
+  const { productReleaseSource } =
+    await import('../apps/api/dist/authorization/product-manifest.js');
+  const prepared = prepareProductRelease(productReleaseSource, core);
+  assert.deepEqual(prepared.roles, [{ key: 'reviewer', label: 'Reviewer' }]);
+  for (const field of ['systemGrants', 'removeSystemGrants'])
+    assert.equal(Object.hasOwn(prepared, field), false, field);
+  for (const key of ['system.root', 'system.audit'])
+    assert.throws(
+      () =>
+        prepareProductRelease(
+          { ...productReleaseSource, roles: [{ key, label: 'Reserved' }] },
+          core,
+        ),
+      (error) =>
+        error instanceof ReleaseRejectedError &&
+        error.reason === 'invalid_release' &&
+        /reserved/.test(error.message),
+      key,
+    );
 });
 
 test('product manifest hash is unchanged by the codec refactor (data only, no adapter in hash)', async () => {
   const { createProductAuthorizationCore, createProductRelease } =
     await import('../apps/api/dist/authorization/product-manifest.js');
-  // Release 2 data (ADR 0012) with the pre-v2 product envelope; Task 4 removes the system grant fields.
-  const expected = 'ba878a4b746edefaf548dc8c26e864d9a8ca5f7e1a01cac9e9fd7db51234170b';
+  // Release 2 (ADR 0012): product roles are key + label, no system grant fields.
+  const expected = 'e11f43e8199bf70fd4a2c8e552477b682222402510fd3d0cc35b98256f15afaa';
   const first = createProductRelease(createProductAuthorizationCore());
   const second = createProductRelease(createProductAuthorizationCore());
   assert.equal(first.hash, expected);
@@ -189,8 +154,6 @@ test('a failing value codec rejects a release with the normal release error', ()
           removeSeeds: [],
           boundaryBindings: [],
           removeBoundaryBindings: [],
-          systemGrants: [],
-          removeSystemGrants: [],
         },
         failing,
       ),

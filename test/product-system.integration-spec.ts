@@ -8,7 +8,6 @@ import {
   ProductTransactionRunner,
   ProductManifestReconciler,
   prepareProductRelease,
-  systemGrantHash,
   createProductPasswordHasher,
   ProductIdentityService,
   PRODUCT_OFFLINE_ACTOR,
@@ -38,26 +37,10 @@ const base = {
   removeSeeds: [],
   boundaryBindings: [],
   removeBoundaryBindings: [],
-  systemGrants: [],
-  removeSystemGrants: [],
-};
-const grant = {
-  owner: 'product',
-  key: 'root-suspend',
-  role: 'system.root',
-  permission: 'account.suspend',
-  template: { key: 'allAccounts', version: 1 },
-  parameters: {},
 };
 const release2 = () =>
   prepareProductRelease(
-    {
-      ...base,
-      sequence: '2',
-      predecessor: '1',
-      roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
-      systemGrants: [grant],
-    },
+    { ...base, sequence: '2', predecessor: '1', roles: [{ key: 'reviewer', label: 'Reviewer' }] },
     core,
   );
 const reconciler = () =>
@@ -92,7 +75,7 @@ after(async () => {
   await Promise.all(pools.map((p) => p.destroy()));
   await pg?.stop();
 });
-test('catalog first then late Root grants old permissions; repeated and concurrent boot do not change revision', async () => {
+test('catalog first, then a role; repeated and concurrent boot do not change revision', async () => {
   const first = prepareProductRelease(base, core);
   assert.equal((await reconciler().reconcile(first)).changed, true);
   const second = release2();
@@ -103,18 +86,19 @@ test('catalog first then late Root grants old permissions; repeated and concurre
   ]);
   assert.ok(results.every((r) => !r.changed));
   assert.equal(results[0]?.revision, results[1]?.revision);
-  const rows = await migration.query<{ n: number }[]>(
-    `SELECT count(*)::int n FROM policy_rule WHERE system_owner=$1`,
-    [Buffer.from('product')],
+  assert.deepEqual(
+    await migration.query(
+      `SELECT (SELECT count(*)::int FROM role_definition WHERE substring(role_key FROM 1 FOR 7)=convert_to('system.','UTF8')) roles,(SELECT count(*)::int FROM policy_rule WHERE system_owner IS NOT NULL) grants`,
+    ),
+    [{ roles: 0, grants: 0 }],
   );
-  assert.equal(rows[0]?.n, 1);
 });
 test('same release full drift fails; rollback avoids runtime seed takeover', async () => {
   const second = release2();
   await migration.query('ALTER TABLE role_definition DISABLE TRIGGER protect_product_rows');
   await migration.query(`UPDATE role_definition SET label='drift'`);
   await assert.rejects(reconciler().reconcile(second), /drift|not_ready/);
-  await migration.query(`UPDATE role_definition SET label='Root'`);
+  await migration.query(`UPDATE role_definition SET label='Reviewer'`);
   await migration.query('ALTER TABLE role_definition ENABLE TRIGGER protect_product_rows');
   assert.equal((await reconciler().reconcile(second)).changed, false);
   const id = randomUUID();
@@ -129,14 +113,14 @@ test('same release full drift fails; rollback avoids runtime seed takeover', asy
       ...base,
       sequence: '3',
       predecessor: '2',
-      roles: [{ key: 'runtime', authorityLevel: 1000, label: 'Root' }],
+      roles: [{ key: 'runtime', label: 'Root' }],
     },
     core,
   );
   await assert.rejects(reconciler().reconcile(collision), /collision/);
   void id;
 });
-test('persistent bootstrap races once, mandatory boundary, no boot reseed after assignment revoke', async () => {
+test('persistent bootstrap races once; revoke suspends Root and boot does not reinitialize it', async () => {
   const target = randomUUID() as IdentityId;
   await migration.query(
     `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'root@example.test','pending')`,
@@ -240,101 +224,10 @@ test('bootstrap credential cannot promote another Root once the marker is initia
     ),
     denied,
   );
-  // Nor can it fall back to a role assignment: the bootstrap login has no INSERT on user_role.
-  await assert.rejects(
-    runner.run('bootstrap', (tx) =>
-      tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-        second,
-        Buffer.from('system.root'),
-      ]),
-    ),
-    denied,
-  );
   assert.deepEqual(await migration.query('SELECT kind FROM app_user WHERE id=$1', [second]), [
     { kind: 'iam' },
   ]);
 });
-test('system grant explicit content change/removal requires prior exact hash', async () => {
-  const changedGrant = { ...grant, template: { key: 'limitedAccounts', version: 1 } };
-  const declarations = {
-    ...productDeclarations,
-    resources: productDeclarations.resources.map((r) =>
-      r.key === 'document'
-        ? {
-            ...r,
-            actions: {
-              ...r.actions,
-              archive: { policy: { key: 'readable', version: 1 }, boundary: 'optional' as const },
-            },
-          }
-        : r,
-    ),
-    templates: [
-      ...productDeclarations.templates,
-      {
-        key: 'limitedAccounts',
-        version: 1,
-        resource: 'account',
-        parameters: {},
-        expression: {
-          op: 'eq' as const,
-          field: 'state',
-          value: { from: 'literal' as const, value: 'active' },
-        },
-      },
-    ],
-  };
-  const thirdSource = {
-    ...base,
-    declarations,
-    sequence: '3',
-    predecessor: '2',
-    roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
-    systemGrants: [changedGrant],
-    removeSystemGrants: [],
-  };
-  await assert.rejects(
-    reconciler().reconcile(prepareProductRelease(thirdSource, core)),
-    /previousHash/,
-  );
-  const third = prepareProductRelease(
-    {
-      ...thirdSource,
-      systemGrants: [{ ...changedGrant, previousHash: systemGrantHash(grant) }],
-    },
-    core,
-  );
-  await reconciler().reconcile(third);
-  assert.equal(
-    (
-      await migration.query<{ n: number }[]>(
-        'SELECT count(*)::int n FROM policy_rule WHERE permission_key=$1',
-        [Buffer.from('document.archive')],
-      )
-    )[0]?.n,
-    0,
-  );
-
-  const fourth = prepareProductRelease(
-    {
-      ...base,
-      sequence: '4',
-      predecessor: '3',
-      roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
-      removeSystemGrants: [
-        { owner: grant.owner, key: grant.key, expectedHash: systemGrantHash(changedGrant) },
-      ],
-    },
-    core,
-  );
-  await reconciler().reconcile(fourth);
-  assert.equal(
-    (await migration.query<{ n: number }[]>('SELECT count(*)::int n FROM policy_rule'))[0]?.n,
-    0,
-  );
-  assert.equal((await reconciler().reconcile(fourth)).changed, false);
-});
-
 test('code-owned roles are runtime assignments; their grants leave only by explicit release removal', async () => {
   const reviewGrant = {
     permission: 'document.review',
@@ -356,11 +249,8 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
         : r,
     ),
   };
-  const roles = [
-    { key: 'system.root', authorityLevel: 1000, label: 'Root' },
-    { key: 'reviewer', authorityLevel: 10, label: 'Reviewer' },
-  ];
-  const fifth = { ...base, declarations, sequence: '5', predecessor: '4', roles };
+  const roles = [{ key: 'reviewer', label: 'Reviewer' }];
+  const fifth = { ...base, declarations, sequence: '3', predecessor: '2', roles };
   assert.equal(
     prepareProductRelease({ ...fifth, removeDefaultGrants: [] }, core).hash,
     prepareProductRelease(fifth, core).hash,
@@ -407,8 +297,8 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
   const sixth = prepareProductRelease(
     {
       ...fifth,
-      sequence: '6',
-      predecessor: '5',
+      sequence: '4',
+      predecessor: '3',
       removeDefaultGrants: [reviewGrant],
     },
     core,
@@ -421,8 +311,8 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
       prepareProductRelease(
         {
           ...fifth,
-          sequence: '7',
-          predecessor: '6',
+          sequence: '5',
+          predecessor: '4',
           removeDefaultGrants: [reviewGrant],
         },
         core,

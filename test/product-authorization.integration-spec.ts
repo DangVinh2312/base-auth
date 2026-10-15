@@ -131,8 +131,8 @@ const release = prepareProductRelease(
       capabilities: { validators: [], obligationHandlers: [] },
     },
     roles: [
-      { key: 'operator', label: 'Operator fixture', authorityLevel: 1 },
-      { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
+      { key: 'operator', label: 'Operator fixture' },
+      { key: 'auditor', label: 'Code role without grants' },
     ],
     defaultGrants: ['read', 'update'].map((action) => ({
       permission: `item.${action}`,
@@ -144,8 +144,6 @@ const release = prepareProductRelease(
     removeSeeds: [],
     boundaryBindings: [],
     removeBoundaryBindings: [],
-    systemGrants: [],
-    removeSystemGrants: [],
   },
   core,
 );

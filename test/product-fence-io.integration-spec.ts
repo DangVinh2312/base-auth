@@ -123,10 +123,7 @@ const release = prepareProductRelease(
       ],
       capabilities: { validators: [], obligationHandlers: ['audit@1'] },
     },
-    roles: [
-      { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
-      { key: 'reviewer', label: 'Reviewer fixture', authorityLevel: 1 },
-    ],
+    roles: [{ key: 'reviewer', label: 'Reviewer fixture' }],
     defaultGrants: actions.map((action) => ({
       permission: `item.${action}`,
       role: 'reviewer',
@@ -137,8 +134,6 @@ const release = prepareProductRelease(
     removeSeeds: [],
     boundaryBindings: [],
     removeBoundaryBindings: [],
-    systemGrants: [],
-    removeSystemGrants: [],
   },
   core,
 );

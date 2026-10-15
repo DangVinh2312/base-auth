@@ -26,8 +26,7 @@ export { type ProductStorageBindings } from './product-sql.js';
 export {
   type ProductReleaseSource,
   type ProductReleaseManifest,
-  type SystemGrant,
-  type SystemGrantRemoval,
+  type ProductRole,
 } from './product-manifest.js';
 export {
   type ProductIdentityService,

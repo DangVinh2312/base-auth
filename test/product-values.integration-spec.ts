@@ -112,14 +112,12 @@ const source: ProductReleaseSource = {
     ],
     capabilities: { validators: [], obligationHandlers: [] },
   },
-  roles: [{ key: 'system.root', label: 'Root fixture', authorityLevel: 1000 }],
+  roles: [],
   defaultGrants: [],
   seeds: [],
   removeSeeds: [],
   boundaryBindings: [],
   removeBoundaryBindings: [],
-  systemGrants: [],
-  removeSystemGrants: [],
 };
 const release = prepareProductRelease(source, core);
 const registry = { validators: {}, obligationHandlers: [] };

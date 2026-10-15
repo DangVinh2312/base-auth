@@ -4,15 +4,16 @@ import {
   canonicalJson,
   refKey,
   type IdentityId,
-  type Scalar,
 } from '@base-authorization/core';
 import { type EntityManager, QueryFailedError } from 'typeorm';
 import {
-  prepareRelease,
   ReleaseRejectedError,
-  type ReleaseSource,
-  type VerifiedReleaseManifest,
+  releaseContentHash,
+  validateReleaseContent,
+  validateRoleKeys,
   type DefaultGrant,
+  type ReleaseContentSource,
+  type ValidatedReleaseContent,
   type RelationSeed,
   type SyncResult,
   type RejectReason,
@@ -26,83 +27,39 @@ const reject = (reason: RejectReason, detail: string): never => {
   throw new ReleaseRejectedError(reason, detail);
 };
 const RUNTIME_CAPABILITY = 1;
-export interface SystemGrant extends DefaultGrant {
-  readonly owner: string;
+export interface ProductRole {
   readonly key: string;
-  /** Required for a content change; compare-and-swap against the prior exact grant hash. */
-  readonly previousHash?: string;
+  readonly label: string;
 }
-export interface SystemGrantRemoval {
-  readonly owner: string;
-  readonly key: string;
-  readonly expectedHash: string;
-}
-export interface ProductReleaseSource extends ReleaseSource {
-  readonly systemGrants: readonly SystemGrant[];
-  readonly removeSystemGrants: readonly SystemGrantRemoval[];
+export interface ProductReleaseSource extends ReleaseContentSource {
+  readonly roles: readonly ProductRole[];
   /** Exact earlier default grants to delete; default grants stay code-owned until removed here. */
   readonly removeDefaultGrants?: readonly DefaultGrant[];
 }
-export interface ProductReleaseManifest extends VerifiedReleaseManifest {
-  readonly systemGrants: readonly SystemGrant[];
-  readonly removeSystemGrants: readonly SystemGrantRemoval[];
+export interface ProductReleaseManifest extends ValidatedReleaseContent {
+  readonly roles: readonly ProductRole[];
   readonly removeDefaultGrants: readonly DefaultGrant[];
+  readonly hash: string;
 }
+
 /** Release → the authorization core that prepared it (provenance; never part of the hash). */
 const productVerified = new WeakMap<object, AuthorizationCore>();
-const ownerKey = /^[a-z][a-z0-9._-]{0,127}$/;
-const hashPattern = /^[0-9a-f]{64}$/;
 export function prepareProductRelease(
   source: ProductReleaseSource,
   core: AuthorizationCore,
 ): ProductReleaseManifest {
-  if (
-    source.systemGrants.length > 1000 ||
-    source.removeSystemGrants.length > 1000 ||
-    (source.removeDefaultGrants?.length ?? 0) > 1000
-  )
-    reject('invalid_release', 'system grants limit');
-  const base = prepareRelease(source, core);
-  // Reuse the existing exact permission/template/parameter validator for each system grant.
-  const checked = prepareRelease({ ...source, defaultGrants: source.systemGrants }, core);
-  const owners = new Set<string>();
-  const systemGrants = source.systemGrants.map((g, i) => {
-    const id = `${g.owner}/${g.key}`;
-    if (
-      !ownerKey.test(g.owner) ||
-      !ownerKey.test(g.key) ||
-      owners.has(id) ||
-      // Only system.* assignments are offline-only; other roles are runtime-assignable.
-      !g.role.startsWith('system.') ||
-      (g.previousHash !== undefined && !hashPattern.test(g.previousHash))
-    )
-      reject('invalid_release', 'system grant owner/key/change');
-    owners.add(id);
-    return Object.freeze({
-      ...checked.defaultGrants[i]!,
-      owner: g.owner,
-      key: g.key,
-      ...(g.previousHash ? { previousHash: g.previousHash } : {}),
-    });
-  });
-  const removals = new Set<string>();
-  const removeSystemGrants = source.removeSystemGrants.map((r) => {
-    const id = `${r.owner}/${r.key}`;
-    if (
-      !ownerKey.test(r.owner) ||
-      !ownerKey.test(r.key) ||
-      !hashPattern.test(r.expectedHash) ||
-      owners.has(id) ||
-      removals.has(id)
-    )
-      reject('invalid_release', 'system grant removal');
-    removals.add(id);
-    return Object.freeze({ ...r });
-  });
+  if ((source.removeDefaultGrants?.length ?? 0) > 1000)
+    reject('invalid_release', 'default grant removal limit');
+  // `system.` is reserved: Root lives outside IAM (ADR 0012), no role may look like a system role.
+  if (source.roles.some((role) => role.key.startsWith('system.')))
+    reject('invalid_release', 'role key prefix system. is reserved');
+  const roleKeys = validateRoleKeys(source.roles);
+  const base = validateReleaseContent(source, core, roleKeys);
   // Same exact permission/template/parameter validation as the grants being removed.
-  const removeDefaultGrants = prepareRelease(
+  const removeDefaultGrants = validateReleaseContent(
     { ...source, defaultGrants: source.removeDefaultGrants ?? [] },
     core,
+    roleKeys,
   ).defaultGrants;
   const removedIds = new Set(removeDefaultGrants.map(grantId));
   if (
@@ -110,32 +67,18 @@ export function prepareProductRelease(
     base.defaultGrants.some((g) => removedIds.has(grantId(g)))
   )
     reject('invalid_release', 'default grant removal');
+  const roles = source.roles.map((role) => ({ key: role.key, label: role.label }));
   const hash = sha256(
     canonicalJson({
-      base: base.hash,
-      // Omitted when empty so releases published before removals existed keep their hash.
+      base: releaseContentHash(base, roles),
+      // Omitted when empty so a release without removals keeps its hash.
       ...(removeDefaultGrants.length ? { removeDefaultGrants: [...removedIds].sort() } : {}),
-      systemGrants: [...systemGrants].sort((a, b) =>
-        `${a.owner}/${a.key}` < `${b.owner}/${b.key}`
-          ? -1
-          : `${a.owner}/${a.key}` > `${b.owner}/${b.key}`
-            ? 1
-            : 0,
-      ),
-      removeSystemGrants: [...removeSystemGrants].sort((a, b) =>
-        `${a.owner}/${a.key}` < `${b.owner}/${b.key}`
-          ? -1
-          : `${a.owner}/${a.key}` > `${b.owner}/${b.key}`
-            ? 1
-            : 0,
-      ),
     }),
   );
-  const release = Object.freeze({
+  const release: ProductReleaseManifest = Object.freeze({
     ...base,
+    roles,
     hash,
-    systemGrants: Object.freeze(systemGrants),
-    removeSystemGrants: Object.freeze(removeSystemGrants),
     removeDefaultGrants: Object.freeze(removeDefaultGrants),
   });
   freezeRelease(release);
@@ -212,7 +155,6 @@ export class ProductManifestReconciler {
         );
         if (!removed.length) reject('missing_reference', 'removed default grant is missing');
       }
-      await reconcileSystemGrants(m, release);
       const materialized = await protectedStateHash(m);
       await m.query(
         `UPDATE authz_state SET revision=revision+1,manifest_hash=decode($1,'hex'),release_sequence=$2,min_runtime_capability=$3,materialized_hash=decode($4,'hex') WHERE singleton`,
@@ -231,109 +173,6 @@ export class ProductManifestReconciler {
   }
 }
 
-export const systemGrantHash = (g: DefaultGrant): string =>
-  sha256(
-    canonicalJson({
-      permission: g.permission,
-      role: g.role,
-      template: g.template,
-      parameters: g.parameters,
-    }),
-  );
-async function reconcileSystemGrants(
-  m: EntityManager,
-  release: ProductReleaseManifest,
-): Promise<void> {
-  for (const grant of release.systemGrants) {
-    const id = stableGrantId(grant.owner, grant.key);
-    const [row] = await m.query<
-      {
-        id: string;
-        effect: string;
-        owner: string | null;
-        key: string | null;
-        permission: string;
-        role: string;
-        template: string;
-        version: number;
-        parameters: Record<string, Scalar>;
-        managed_by: string;
-      }[]
-    >(
-      `SELECT rule_id::text id,effect,convert_from(system_owner,'UTF8') owner,convert_from(system_key,'UTF8') key,convert_from(permission_key,'UTF8') permission,convert_from(role_key,'UTF8') role,convert_from(template_key,'UTF8') template,template_version version,parameters,managed_by FROM policy_rule WHERE rule_id=$1 OR (system_owner=$2 AND system_key=$3)`,
-      [id, utf8(grant.owner), utf8(grant.key)],
-    );
-    if (
-      row &&
-      (row.id !== id ||
-        row.effect !== 'allow' ||
-        row.owner !== grant.owner ||
-        row.key !== grant.key ||
-        row.managed_by !== 'code')
-    )
-      reject('collision', 'system grant cannot take over runtime ownership');
-    const previous = row
-      ? systemGrantHash({
-          permission: row.permission,
-          role: row.role,
-          template: { key: row.template, version: row.version },
-          parameters: row.parameters,
-        })
-      : undefined;
-    if (previous === systemGrantHash(grant)) continue;
-    if (row && grant.previousHash !== previous)
-      reject('immutable_definition', 'system grant change requires exact previousHash');
-    if (!row && grant.previousHash) reject('missing_reference', 'changed grant is missing');
-    const values = [
-      id,
-      utf8(grant.permission),
-      utf8(grant.role),
-      utf8(grant.template.key),
-      grant.template.version,
-      canonicalJson(grant.parameters),
-      utf8(grant.owner),
-      utf8(grant.key),
-    ];
-    await m.query(
-      row
-        ? `UPDATE policy_rule SET permission_key=$2,role_key=$3,template_key=$4,template_version=$5,parameters=$6 WHERE rule_id=$1 AND system_owner=$7 AND system_key=$8`
-        : `INSERT INTO policy_rule(rule_id,permission_key,role_key,effect,template_key,template_version,parameters,managed_by,system_owner,system_key) VALUES($1,$2,$3,'allow',$4,$5,$6,'code',$7,$8)`,
-      values,
-    );
-  }
-  for (const r of release.removeSystemGrants) {
-    const [row] = await m.query<
-      {
-        permission: string;
-        role: string;
-        template: string;
-        version: number;
-        parameters: Record<string, Scalar>;
-      }[]
-    >(
-      `SELECT convert_from(permission_key,'UTF8') permission,convert_from(role_key,'UTF8') role,convert_from(template_key,'UTF8') template,template_version version,parameters FROM policy_rule WHERE system_owner=$1 AND system_key=$2 AND managed_by='code'`,
-      [utf8(r.owner), utf8(r.key)],
-    );
-    if (!row) reject('missing_reference', 'removed system grant is missing');
-    if (
-      systemGrantHash({
-        permission: row!.permission,
-        role: row!.role,
-        template: { key: row!.template, version: row!.version },
-        parameters: row!.parameters,
-      }) !== r.expectedHash
-    )
-      reject('immutable_definition', 'system grant removal hash mismatch');
-    await m.query(
-      "DELETE FROM policy_rule WHERE system_owner=$1 AND system_key=$2 AND managed_by='code'",
-      [utf8(r.owner), utf8(r.key)],
-    );
-  }
-}
-function stableGrantId(owner: string, key: string): string {
-  const h = sha256(`${owner}/${key}`);
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
 const definitionHash = (value: unknown) => sha256(canonicalJson(value));
 
 /** Deterministic id for a code-owned default grant (UUID layout, version nibble 5). */
@@ -345,7 +184,7 @@ function grantId(grant: DefaultGrant): string {
 
 async function objectId(
   m: EntityManager,
-  release: VerifiedReleaseManifest,
+  release: ProductReleaseManifest,
   end: RelationSeed['source'],
 ) {
   const kind = release.declarations.resources[end.type]!.keyKind;
@@ -356,7 +195,7 @@ async function objectId(
   return rows[0]?.id;
 }
 
-async function apply(m: EntityManager, release: VerifiedReleaseManifest): Promise<void> {
+async function apply(m: EntityManager, release: ProductReleaseManifest): Promise<void> {
   const d = release.declarations;
 
   for (const resource of Object.values(d.resources)) {
@@ -689,7 +528,7 @@ async function apply(m: EntityManager, release: VerifiedReleaseManifest): Promis
 }
 
 /** Same release already published: confirm every code-owned fact is still present (readiness). */
-async function verifyApplied(m: EntityManager, release: VerifiedReleaseManifest): Promise<void> {
+async function verifyApplied(m: EntityManager, release: ProductReleaseManifest): Promise<void> {
   const d = release.declarations;
   const missing: string[] = [];
   for (const policy of Object.values(d.policies)) {

@@ -17,11 +17,7 @@ export {
   type ProductObligationHandler,
   type ProductObligationRegistry,
 } from './product-obligations.js';
-export {
-  ProductManifestReconciler,
-  prepareProductRelease,
-  systemGrantHash,
-} from './product-manifest.js';
+export { ProductManifestReconciler, prepareProductRelease } from './product-manifest.js';
 export {
   ProductIdentityService,
   createProductPasswordHasher,

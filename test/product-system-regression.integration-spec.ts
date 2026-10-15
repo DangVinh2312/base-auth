@@ -30,26 +30,23 @@ const passwords = Object.fromEntries(
   ]),
 ) as Record<ProductDatabasePurpose, string>;
 const actor = randomUUID() as IdentityId;
-const grant = {
-  owner: 'product',
-  key: 'root-suspend',
-  role: 'system.root',
-  permission: 'account.suspend',
-  template: { key: 'allAccounts', version: 1 },
-  parameters: {},
-};
 const base = {
   sequence: '1',
   predecessor: '0',
   declarations: productDeclarations,
-  roles: [{ key: 'system.root', authorityLevel: 1000, label: 'Root' }],
-  defaultGrants: [],
+  roles: [{ key: 'reviewer', label: 'Reviewer' }],
+  defaultGrants: [
+    {
+      permission: 'document.read',
+      role: 'reviewer',
+      template: { key: 'ownedDocuments', version: 1 },
+      parameters: {},
+    },
+  ],
   seeds: [],
   removeSeeds: [],
   boundaryBindings: [],
   removeBoundaryBindings: [],
-  systemGrants: [grant],
-  removeSystemGrants: [],
 };
 before(async () => {
   fixture = await startPostgres();
@@ -94,22 +91,15 @@ async function offlineAlter(
     await migration.query('ALTER TABLE policy_rule ENABLE TRIGGER protect_product_rows');
   }
 }
-test('new release cannot adopt drift in a persisted grant omitted from its manifest', async () => {
+test('a new release cannot adopt drift in a persisted code-owned grant omitted from it', async () => {
   await withProduct(async (reconciler, migration) => {
-    await offlineAlter(
-      migration,
-      "UPDATE policy_rule SET parameters='{}',effect='deny' WHERE system_owner=$1",
-      [Buffer.from(grant.owner)],
+    await offlineAlter(migration, "UPDATE policy_rule SET effect='deny' WHERE managed_by='code'");
+    await assert.rejects(
+      reconciler.reconcile(prepareProductRelease(base, core)),
+      /drift|not_ready|immutable_definition/,
     );
-    const prior = prepareProductRelease(base, core);
-    await assert.rejects(reconciler.reconcile(prior), /drift|not_ready|immutable_definition/);
     const next = prepareProductRelease(
-      {
-        ...base,
-        sequence: '2',
-        predecessor: '1',
-        systemGrants: [],
-      },
+      { ...base, sequence: '2', predecessor: '1', defaultGrants: [] },
       core,
     );
     await assert.rejects(reconciler.reconcile(next), /drift|not_ready|immutable_definition/);
@@ -123,34 +113,16 @@ test('new release cannot adopt drift in a persisted grant omitted from its manif
     );
   });
 });
-test('stable system owner/key with a wrong rule ID cannot silently satisfy a new release', async () => {
+test('a code-owned grant with a rewritten rule ID is drift, not a fresh grant', async () => {
   await withProduct(async (reconciler, migration) => {
-    await offlineAlter(migration, 'UPDATE policy_rule SET rule_id=$1 WHERE system_owner=$2', [
+    await offlineAlter(migration, "UPDATE policy_rule SET rule_id=$1 WHERE managed_by='code'", [
       randomUUID(),
-      Buffer.from(grant.owner),
     ]);
     const next = prepareProductRelease({ ...base, sequence: '2', predecessor: '1' }, core);
     await assert.rejects(
       reconciler.reconcile(next),
       /drift|not_ready|collision|immutable_definition/,
     );
-    assert.equal(
-      (
-        await migration.query<{ sequence: string }[]>(
-          'SELECT release_sequence::text sequence FROM authz_state',
-        )
-      )[0]!.sequence,
-      '1',
-    );
-  });
-});
-test('deny effect cannot masquerade as an unchanged explicit system allow grant', async () => {
-  await withProduct(async (reconciler, migration) => {
-    await offlineAlter(migration, "UPDATE policy_rule SET effect='deny' WHERE system_owner=$1", [
-      Buffer.from(grant.owner),
-    ]);
-    const next = prepareProductRelease({ ...base, sequence: '2', predecessor: '1' }, core);
-    await assert.rejects(reconciler.reconcile(next), /drift|not_ready|immutable_definition/);
     assert.equal(
       (
         await migration.query<{ sequence: string }[]>(
