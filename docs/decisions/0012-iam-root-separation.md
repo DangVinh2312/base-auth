@@ -2,7 +2,7 @@
 
 Ngày: 2026-10-15. Trạng thái: chấp nhận; thiết kế ở `docs/superpowers/specs/2026-10-14-iam-root-separation-design.md`, triển khai và bằng chứng ở `docs/superpowers/plans/2026-10-15-iam-root-separation.md` (ledger) và `docs/single-product-verification.md`.
 
-Supersede: ADR 0007 (phần "Root không bypass"; grants tường minh cho Root và system-grant reconciliation); ADR 0008 (Root là role `system.root`; rank và `account_rank` của migration 006; bảo vệ peer bằng rank; Root bootstrap với exact mandatory boundaries; nhánh `user_role` của guard 004, `require_root_marker` của 007 và `protect_system_activation` của 008 — migration `012` thay bằng guard Root riêng); ADR 0009 (chỉ phần nhắc "Root không bypass"; semantics audit của 0009 giữ nguyên). Các ADR đó giữ nguyên làm lịch sử.
+Supersede: ADR 0007 (phần "Root không bypass"; grants tường minh cho Root và system-grant reconciliation); ADR 0008 ("Permission boundaries và Root không có bypass" — phần Root; Root là role `system.root`; rank và `account_rank` của migration 006; bảo vệ peer bằng rank; Root bootstrap với exact mandatory boundaries; nhánh `user_role` của guard 004, `require_root_marker` của 007 và `protect_system_activation` của 008 — migration `012` thay bằng guard Root riêng); ADR 0009 (chỉ phần nhắc "Root không bypass"; semantics audit của 0009 giữ nguyên). Các ADR đó giữ nguyên làm lịch sử.
 
 ## Bối cảnh
 
