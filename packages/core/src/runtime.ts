@@ -38,10 +38,14 @@ import type {
  */
 export interface AuthorizationCore {
   readonly validate: (declarations: SystemDeclarations) => ValidationResult;
+
   /** True only for declarations this instance validated (copies and other instances' are refused). */
   readonly isValidated: (value: unknown) => value is ValidatedDeclarations;
+
   readonly planUser: (input: UserTrustedInput, snapshot: UserAuthoritySnapshot) => UserDecision;
+
   readonly evaluateUser: (plan: UserAuthorizedPlan, facts: UserCompleteFacts) => UserDecision;
+
   /**
    * planUser's checks with predicate `true` and no obligations, for a principal the adapter has
    * verified as unrestricted. Only ProductAuthorization.access may call it (ESLint, ADR 0012):
@@ -51,24 +55,34 @@ export interface AuthorizationCore {
     input: UserTrustedInput,
     snapshot: UserAuthoritySnapshot,
   ) => UserDecision;
+
   /** Legacy tenant contracts; tenant is still checked. */
   readonly plan: (input: TrustedInput, snapshot: AuthoritySnapshot) => Decision;
+
   readonly evaluate: (plan: AuthorizedPlan, facts: CompleteFacts) => Decision;
+
   /** Canonical value of a field kind, or undefined when the input is not one. */
   readonly normalizeValue: (kind: FieldKind, input: unknown) => Scalar | undefined;
+
   /** Exact comparison of two normalized values. */
   readonly compareValues: (kind: FieldKind, left: Scalar, right: Scalar) => Comparison;
+
   readonly canonicalTimestamp: (input: unknown) => string | undefined;
+
   readonly canonicalInt64: (input: unknown) => string | undefined;
+
   /** External key: int64 (bigint or canonical string), uuid (lowercased), text of 1..256 UTF-8 bytes. */
   readonly parseKey: (kind: KeyKind, input: unknown) => Key;
+
   /** Canonical lowercase UUID only (identity/tenant ids are never normalized). */
   readonly isCanonicalUuid: (input: unknown) => input is string;
+
   readonly parseTenantId: (input: unknown) => TenantId;
 }
 
 interface Codec {
   normalize(input: unknown): unknown;
+
   compare(left: Scalar, right: Scalar): unknown;
 }
 
@@ -90,6 +104,7 @@ function captureCodecs(values: unknown): Readonly<Record<FieldKind, Codec>> {
     const compare = codec.compare as (left: Scalar, right: Scalar) => unknown;
     codecs[kind] = Object.freeze({
       normalize: (input: unknown) => normalize.call(codec, input),
+
       compare: (left: Scalar, right: Scalar) => compare.call(codec, left, right),
     });
   }
@@ -112,6 +127,7 @@ export function createAuthorizationCore(options: {
     if (!fieldKinds.includes(kind)) throw new TypeError('Unknown field kind');
     return codecs[kind];
   };
+
   const normalizeValue = (kind: FieldKind, input: unknown): Scalar | undefined => {
     const value = codecOf(kind).normalize(input);
     if (value === undefined) return undefined;
@@ -119,16 +135,20 @@ export function createAuthorizationCore(options: {
       throw new TypeError(`Value codec ${kind} returned a value outside its contract`);
     return value as Scalar;
   };
+
   const compareValues = (kind: FieldKind, left: Scalar, right: Scalar): Comparison => {
     const order = codecOf(kind).compare(left, right);
     if (order !== -1 && order !== 0 && order !== 1)
       throw new TypeError(`Value codec ${kind} returned an invalid comparison`);
     return order;
   };
+
   const text = (kind: 'timestamp' | 'integer') => (input: unknown) =>
     normalizeValue(kind, input) as string | undefined;
+
   const canonicalTimestamp = text('timestamp');
   const canonicalInt64 = text('integer');
+
   // Validity is the codec's; the lowercase-only identity invariant is the core's own, so a codec
   // that keeps uppercase cannot relax identity/tenant checks.
   const isCanonicalUuid = (input: unknown): input is string =>
@@ -140,6 +160,7 @@ export function createAuthorizationCore(options: {
     if (decision.effect === 'allow') issued.add(decision.plan);
     return decision;
   };
+
   const foreign = () => ({ effect: 'deny', internalReason: 'foreign_plan' }) as const;
 
   const core: AuthorizationCore = Object.freeze({
@@ -154,22 +175,30 @@ export function createAuthorizationCore(options: {
       if (result.ok) validated.add(result.declarations);
       return result;
     },
+
     isValidated: (value: unknown): value is ValidatedDeclarations =>
       isRecord(value) && validated.has(value),
+
     planUser: (input: UserTrustedInput, snapshot: UserAuthoritySnapshot) =>
       issue(planUserWith(core, input, snapshot)),
+
     evaluateUser: (plan: UserAuthorizedPlan, facts: UserCompleteFacts) =>
       isRecord(plan) && issued.has(plan) ? evaluateUserWith(core, plan, facts) : foreign(),
+
     planUnrestricted: (input: UserTrustedInput, snapshot: UserAuthoritySnapshot) =>
       issue(planUnrestrictedWith(core, input, snapshot)),
+
     plan: (input: TrustedInput, snapshot: AuthoritySnapshot) =>
       issue(planWith(core, input, snapshot)),
+
     evaluate: (plan: AuthorizedPlan, facts: CompleteFacts) =>
       isRecord(plan) && issued.has(plan) ? evaluateWith(core, plan, facts) : foreign(),
+
     normalizeValue,
     compareValues,
     canonicalTimestamp,
     canonicalInt64,
+
     parseKey(kind: KeyKind, input: unknown): Key {
       if (kind === 'integer') {
         const value = canonicalInt64(input);
@@ -196,7 +225,9 @@ export function createAuthorizationCore(options: {
       }
       throw new TypeError('Unknown key kind');
     },
+
     isCanonicalUuid,
+
     parseTenantId(input: unknown): TenantId {
       if (!isCanonicalUuid(input))
         throw new TypeError('Tenant id must be a canonical lowercase UUID');

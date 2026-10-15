@@ -17,6 +17,7 @@ const integer: ScalarCodec<string> = {
     const value = BigInt(text);
     return value >= INT64_MIN && value <= INT64_MAX ? text : undefined;
   },
+
   compare: (left, right) => sign(BigInt(left) - BigInt(right)),
 };
 
@@ -30,6 +31,7 @@ function parseDecimal(text: string) {
 const decimal: ScalarCodec<string> = {
   normalize: (input) =>
     typeof input === 'string' && decimalPattern.test(input) ? input : undefined,
+
   compare(left, right) {
     const x = parseDecimal(left);
     const y = parseDecimal(right);
@@ -51,6 +53,7 @@ const decimal: ScalarCodec<string> = {
 const uuid: ScalarCodec<string> = {
   normalize: (input) =>
     typeof input === 'string' && anyUuid.test(input) ? input.toLowerCase() : undefined,
+
   compare: (left, right) => (left === right ? 0 : 1),
 };
 
@@ -59,6 +62,7 @@ const uuid: ScalarCodec<string> = {
 const string: ScalarCodec<string> = {
   normalize: (input) =>
     typeof input === 'string' && !loneSurrogate.test(input) ? input : undefined,
+
   compare(left, right) {
     const a = [...left];
     const b = [...right];
@@ -73,6 +77,7 @@ const string: ScalarCodec<string> = {
 // Equality only; unequal reports 1, as core does today.
 const boolean: ScalarCodec<boolean> = {
   normalize: (input) => (typeof input === 'boolean' ? input : undefined),
+
   compare: (left, right) => (left === right ? 0 : 1),
 };
 

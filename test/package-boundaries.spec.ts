@@ -150,6 +150,7 @@ describe('ESLint import boundaries', () => {
     cwd: fileURLToPath(new URL('..', import.meta.url)),
     overrideConfig: tseslint.configs.disableTypeChecked,
   });
+
   const abs = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
 
   // One existing handler file per feature folder; lintText never writes to disk.
@@ -247,6 +248,7 @@ describe('ESLint import boundaries', () => {
       assert.ok(result);
       return result.messages.filter((m) => m.ruleId === 'no-restricted-syntax');
     };
+
     const call =
       'declare const core: { planUnrestricted(a: unknown, b: unknown): unknown };\ncore.planUnrestricted({}, {});';
     const destructured =

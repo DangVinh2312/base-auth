@@ -5,6 +5,7 @@ export {
   tenantDataSourceOptions,
   type PostgresConnectionSettings,
 } from './data-source-options.js';
+
 export {
   type ConnectionPurpose,
   directoryRouteResolver,
@@ -18,19 +19,24 @@ export {
   TenantRoutingError,
   TenantUnavailableError,
 } from './datasource-registry.js';
+
 export { runMigrations } from './migrations.js';
+
 export {
   type MigrationResult,
   type ProvisionTenantInput,
   TenantProvisioner,
 } from './tenant-provisioner.js';
+
 export {
   type AuthorityFacts,
   type BoundaryBindingChange,
   readAuthorityFacts,
   writeBoundaryBinding,
 } from './authority-store.js';
+
 export { DataGateway, type ListQuery, type Page, type Row } from './data-gateway.js';
+
 export {
   BindingRegistry,
   type BoundPredicate,
@@ -40,7 +46,9 @@ export {
   type ResourceBinding,
   type StorageBindings,
 } from './sql-compiler.js';
+
 export { fulfillObligations, type ObligationHandler } from './obligations.js';
+
 export {
   type AuthorityRegistry,
   AuthorityUnavailableError,
@@ -52,6 +60,7 @@ export {
   type TransactionMode,
   type TransactionOptions,
 } from './tenant-transaction.js';
+
 export {
   type BoundaryBindingRemoval,
   type BoundaryBindingSeed,

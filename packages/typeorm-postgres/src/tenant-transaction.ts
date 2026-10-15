@@ -40,6 +40,7 @@ export interface TransactionOptions {
   readonly lockTimeoutMs?: number;
   /** Extra attempts for 40P01/40001/55P03; the reference profile allows at most 2. */
   readonly maxRetries?: number;
+
   /** Metrics hook, awaited before the next attempt. */
   readonly onRetry?: (code: string, attempt: number) => void | Promise<void>;
 }
@@ -50,6 +51,7 @@ export class TransactionConflictError extends Error {
     super(`Transaction conflict (${code}) persisted after retries`);
   }
 }
+
 /** Authority could not decide: timeout, lost connection, missing fence (maps to 503). */
 export class AuthorityUnavailableError extends Error {
   constructor(readonly code: string) {

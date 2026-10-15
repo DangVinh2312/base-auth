@@ -54,6 +54,7 @@ export const accountDeclarations: Pick<
     },
   ],
 };
+
 export const accountSystemGrants: ProductReleaseSource['systemGrants'] = [
   {
     owner: 'product',
@@ -64,6 +65,7 @@ export const accountSystemGrants: ProductReleaseSource['systemGrants'] = [
     parameters: {},
   },
 ];
+
 export const accountBinding: ProductStorageBindings['resources'][number] = {
   resource: 'account',
   // Effective rank (column or assigned roles), never the raw column alone.

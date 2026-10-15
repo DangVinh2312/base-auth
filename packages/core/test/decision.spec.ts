@@ -37,6 +37,7 @@ const read = (
   template: string,
   parameters = {},
 ) => rule('submission.read', subject, effect, template, parameters);
+
 const reviewer = { kind: 'role', role: 'reviewer' } as const;
 const personal = { kind: 'identity', identity: alice } as const;
 
@@ -379,6 +380,7 @@ describe('properties (seeded)', () => {
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+
   const templates: [string, Record<string, string>][] = [
     ['all@1', {}],
     ['statusIs@1', { status: 'pending' }],
@@ -390,7 +392,9 @@ describe('properties (seeded)', () => {
 
   test('adding a deny never enlarges the allowed set; another tenant is never allowed', () => {
     const random = prng(20261013);
+
     const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
+
     for (let round = 0; round < 300; round++) {
       const rules = Array.from({ length: 1 + Math.floor(random() * 4) }, () => {
         const [template, parameters] = pick(templates);

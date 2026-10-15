@@ -65,7 +65,9 @@ const validators = {
   'fresh@1': (_p: unknown, input: { context: { freshAuthentication?: unknown } }) =>
     input.context.freshAuthentication === true,
 };
+
 const utf8 = (value: string) => Buffer.from(value);
+
 const rootEmail = 'root@example.test';
 const rootPassword = 'a long unique root bypass password';
 const draft = randomUUID();
@@ -85,19 +87,23 @@ const service = (obligations: ProductObligationRegistry = productObligations) =>
   new ProductAuthorization(runner, bindings, { validators, obligations }, [
     { resource: 'document', action: 'update', fields: ['title'] },
   ]);
+
 /** A Root session reauthenticated just now (local password). */
 async function freshRoot(): Promise<string> {
   const clientKey = `root-${++attempt}`;
   const login = await identity.login(rootEmail, rootPassword, clientKey);
   return (await identity.reauthenticate(login.secret, rootPassword, clientKey)).secret;
 }
+
 type Event = readonly [string, string, string | null, string | null, Record<string, unknown>];
+
 const revision = () =>
   withClient(
     postgres.superuser,
     async (c) =>
       (await c.query<{ r: string }>('SELECT revision::text r FROM authz_state')).rows[0]!.r,
   );
+
 const events = () =>
   withClient(
     postgres.superuser,
@@ -115,6 +121,7 @@ const events = () =>
         )
       ).rows,
   );
+
 /** Events appended by `work` only, as [kind, actor, permission, object_id, metadata]. */
 async function appended(work: () => Promise<unknown>) {
   const seen = new Set((await events()).map((e) => e.id));
@@ -126,6 +133,7 @@ async function appended(work: () => Promise<unknown>) {
     .sort((a, b) => a[0].localeCompare(b[0]));
   return { before, after: await revision(), added };
 }
+
 const title = async (id: string) =>
   (await migration.query<{ title: string }[]>('SELECT title FROM document WHERE id=$1', [id]))[0]!
     .title;
@@ -211,6 +219,7 @@ test('fresh reauthentication is decided in SQL at microsecond precision on the D
         [age],
       )
     )[0]!.fresh;
+
   assert.equal(await fresh(null), false);
   assert.equal(await fresh('-1 second'), false);
   assert.equal(await fresh('300 seconds'), false);
@@ -333,6 +342,7 @@ test('an OIDC reauthentication is fresh as well; an OIDC session without one is 
     "INSERT INTO external_identity(issuer,subject,user_id) VALUES($1,'root-subject',$2)",
     [issuer, root.id],
   );
+
   const session = async (reauthenticated: boolean) => {
     const secret = randomBytes(32).toString('base64url');
     await pools.identity.query(
@@ -342,6 +352,7 @@ test('an OIDC reauthentication is fresh as well; an OIDC session without one is 
     );
     return secret;
   };
+
   await assert.rejects(
     service().update(await session(false), 'document', 'update', draft, { title: 'OIDC stale' }),
     ProductAccessDenied,
@@ -455,6 +466,7 @@ async function iamUser(fresh = false) {
   );
   return { id, secret };
 }
+
 const account = (id: string) =>
   migration.query<{ state: string; epoch: string }[]>(
     'SELECT state,auth_epoch::text epoch FROM app_user WHERE id=$1',

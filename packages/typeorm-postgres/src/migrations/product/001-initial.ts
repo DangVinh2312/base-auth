@@ -3,8 +3,10 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
 /** Bounded byte key, the PostgreSQL mapping of VARBINARY(n) in spec section 6. */
 const key = (column: string, max: number, nullable = false) =>
   `${column} bytea ${nullable ? '' : 'NOT NULL '}CONSTRAINT ck_${column}_length CHECK (octet_length(${column}) BETWEEN 1 AND ${max})`;
+
 const hash = (column: string) =>
   `${column} bytea NOT NULL CONSTRAINT ck_${column}_length CHECK (octet_length(${column}) = 32)`;
+
 const lifecycle = `lifecycle varchar(16) NOT NULL CONSTRAINT ck_lifecycle CHECK (lifecycle IN ('active', 'deprecated', 'retired'))`;
 const keyKind = `key_kind varchar(16) NOT NULL CONSTRAINT ck_key_kind CHECK (key_kind IN ('integer', 'uuid', 'string'))`;
 const managedBy = `managed_by varchar(16) NOT NULL CONSTRAINT ck_managed_by CHECK (managed_by IN ('code', 'runtime'))`;

@@ -29,6 +29,7 @@ export class ProductAccessDenied extends Error {
     super('Access denied');
   }
 }
+
 /** Request keys come from callers: a malformed key is invalid input, not a server fault. */
 function requestKey(core: AuthorizationCore, kind: KeyKind, key: string) {
   try {
@@ -37,6 +38,7 @@ function requestKey(core: AuthorizationCore, kind: KeyKind, key: string) {
     throw new ProductInvalidRequest('Malformed key');
   }
 }
+
 interface SessionProjection {
   user_id: UserId;
   /** From resolve_session in this fenced transaction; never from a request or a role name. */
@@ -60,6 +62,7 @@ type PrincipalKind = SessionProjection['kind'];
 export const PRODUCT_FRESH_AUTH_SQL =
   "(reauthenticated_at IS NOT NULL AND reauthenticated_at<=statement_timestamp() AND statement_timestamp()-reauthenticated_at<interval '300 seconds')";
 type Lifecycle = 'active' | 'deprecated' | 'retired';
+
 /**
  * Facts of one user for one permission, read in one statement after the fence. The planner only
  * consults the catalog row, rules and boundary bindings of the requested permission, so rows of
@@ -138,16 +141,19 @@ export async function readProductAuthority(
     })),
   };
 }
+
 export interface ProductResourceWrite {
   readonly resource: string;
   readonly action: string;
   readonly fields: readonly string[];
 }
+
 /** Public service owns session, facts, plan and effects in one transaction; callers cannot supply a plan. */
 export class ProductAuthorization {
   private readonly gateway: ProductDataGateway;
   private readonly registry: UserAuthoritySnapshot['registry'];
   private readonly obligations: ProductObligationRegistry;
+
   /** Obligation handlers are fixed at composition (frozen copy); core sees exactly their names. */
   constructor(
     private readonly transactions: ProductTransactionRunner,
@@ -165,11 +171,13 @@ export class ProductAuthorization {
       obligationHandlers: Object.freeze(Object.keys(this.obligations)),
     };
   }
+
   async checkSession(secret: string): Promise<void> {
     await this.transactions.run('read', async (tx) => {
       await this.session(tx, secret);
     });
   }
+
   private async session(tx: ProductTransaction, secret: string): Promise<SessionProjection> {
     const [session] = await tx.manager.query<SessionProjection[]>(
       `SELECT s.*,${PRODUCT_FRESH_AUTH_SQL} fresh,to_char(statement_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') now,to_char(LEAST(s.expires_at,statement_timestamp()+interval '2 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') deadline FROM public.resolve_session($1) s`,
@@ -183,6 +191,7 @@ export class ProductAuthorization {
       throw new ProductAuthenticationError();
     return session;
   }
+
   /**
    * The only Root branch (ADR 0012): `kind` comes from the verified session. Root still needs a
    * valid session, a fresh reauthentication for write/admin, a declared action, the projection
@@ -227,12 +236,15 @@ export class ProductAuthorization {
       return result;
     });
   }
+
   /** Requested key of a Root audit target (spec 6.5); parsed like the operation parsed it. */
   private requested(resource: string, key: string) {
     const keyKind = this.bindings.declarations.resources[resource]!.keyKind;
     return { resource, keyKind, key: requestKey(this.bindings.core, keyKind, key).value };
   }
+
   private static readonly ok = { principalKind: 'root', outcome: 'ok' } as const;
+
   list(secret: string, resource: string, action: string, query: ListQuery = {}) {
     return this.access(
       secret,
@@ -248,6 +260,7 @@ export class ProductAuthorization {
       }),
     );
   }
+
   detail(secret: string, resource: string, action: string, key: string) {
     return this.access(
       secret,
@@ -274,6 +287,7 @@ export class ProductAuthorization {
       }),
     );
   }
+
   count(secret: string, resource: string, action: string) {
     return this.access(
       secret,
@@ -289,6 +303,7 @@ export class ProductAuthorization {
       }),
     );
   }
+
   async update(
     secret: string,
     resource: string,
@@ -355,6 +370,7 @@ export class ProductAuthorization {
     );
     return objectId !== undefined;
   }
+
   async suspendUser(secret: string, target: string): Promise<boolean> {
     if (!this.bindings.core.isCanonicalUuid(target)) throw new ProductAccessDenied();
     return this.access(

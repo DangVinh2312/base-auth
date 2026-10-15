@@ -67,13 +67,16 @@ const actor = randomUUID();
 const target = randomUUID();
 const documentId = randomUUID();
 const secret = randomBytes(32).toString('base64url');
+
 const utf8 = (value: string) => Buffer.from(value);
+
 let postgres: TestPostgres;
 let pools: Record<'data' | 'identity' | 'authority' | 'sync' | 'bootstrap', DataSource>;
 let migration: DataSource;
 let runner: ProductTransactionRunner;
 let bindings: ProductBindingRegistry;
 let sync: Awaited<ReturnType<typeof appended>>;
+
 const service = (obligations: Readonly<Record<string, ProductObligationHandler>>) =>
   new ProductAuthorization(runner, bindings, { validators, obligations }, [
     { resource: 'document', action: 'update', fields: ['title'] },
@@ -88,6 +91,7 @@ interface Event {
   objectId: string | null;
   metadata: Record<string, unknown>;
 }
+
 const events = () =>
   withClient(
     postgres.superuser,
@@ -98,6 +102,7 @@ const events = () =>
         )
       ).rows,
   );
+
 /** Events appended by `work` only, keyed by kind; also returns the revision before/after. */
 async function appended(work: () => Promise<unknown>) {
   const seen = new Set((await events()).map((e) => e.id));
@@ -106,12 +111,14 @@ async function appended(work: () => Promise<unknown>) {
   const added = (await events()).filter((e) => !seen.has(e.id));
   return { before, after: await revision(), added };
 }
+
 const revision = () =>
   withClient(
     postgres.superuser,
     async (client) =>
       (await client.query<{ r: string }>('SELECT revision::text r FROM authz_state')).rows[0]!.r,
   );
+
 const title = async () =>
   (
     await migration.query<{ title: string }[]>('SELECT title FROM document WHERE id=$1', [

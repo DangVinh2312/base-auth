@@ -28,10 +28,13 @@ let runner: ProductTransactionRunner;
 class RecordingSink implements ProductAuditSink {
   readonly attempts: ProductAuditEnvelope[] = [];
   readonly stored = new Map<string, ProductAuditEnvelope>();
+
   readonly #behaviour: (event: ProductAuditEnvelope) => Promise<void>;
+
   constructor(behaviour: (event: ProductAuditEnvelope) => Promise<void> = () => Promise.resolve()) {
     this.#behaviour = behaviour;
   }
+
   async deliver(event: ProductAuditEnvelope): Promise<void> {
     this.attempts.push(event);
     await this.#behaviour(event);
@@ -52,13 +55,16 @@ async function appendEvents(count: number): Promise<string[]> {
   );
   return rows.rows.map((r) => r.event_id);
 }
+
 const superDb = () => ({ ...postgres.superuser, database: connections.data.database });
+
 const expireLeases = () =>
   withClient(superDb(), (client) =>
     client.query(
       "UPDATE audit_outbox SET lease_until=statement_timestamp()-interval '1 second' WHERE lease_until IS NOT NULL",
     ),
   );
+
 const row = async (eventId: string) =>
   (
     await withClient(superDb(), (client) =>
@@ -234,10 +240,12 @@ test('two workers with separate pools never claim the same event at the same tim
   ).initialize();
   try {
     const sink = new RecordingSink(() => new Promise((resolve) => setTimeout(resolve, 2)));
+
     const work = async (pool: DataSource) => {
       const outbox = new ProductAuditOutbox(pool, { batchSize: 7 });
       for (let i = 0; i < 50; i++) if ((await outbox.deliver(sink)).claimed === 0) return;
     };
+
     await Promise.all([work(outboxPool), work(secondPool)]);
     assert.equal(sink.attempts.length, 60);
     assert.deepEqual([...sink.stored.keys()].sort(), [...ids].sort());

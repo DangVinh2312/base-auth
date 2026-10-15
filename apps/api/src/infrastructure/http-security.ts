@@ -1,15 +1,19 @@
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import type { AppConfig } from '../config/app.config.js';
+
 export interface HttpRequest {
   headers: Record<string, string | undefined>;
   ip?: string;
   originalUrl: string;
 }
+
 export interface HttpResponse {
   append(name: string, value: string): void;
+
   redirect(status: number, url: string): void;
 }
+
 /**
  * Only this API's cookies are parsed. Cookies of other apps on the same site (malformed or
  * repeated) are ignored so they cannot deny service; a repeated own cookie is ambiguous (e.g.
@@ -30,10 +34,12 @@ export function cookies(
   }
   return result;
 }
+
 export const cookieName = (
   config: Pick<AppConfig, 'origin'>,
   key: 'session' | 'csrf' | 'browser',
 ) => `${config.origin.protocol === 'https:' ? '__Host-' : ''}authz_${key}`;
+
 export function setCookie(
   res: HttpResponse,
   config: Pick<AppConfig, 'origin'>,
@@ -46,9 +52,11 @@ export function setCookie(
     `${cookieName(config, key)}=${value}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly${config.origin.protocol === 'https:' ? '; Secure' : ''}`,
   );
 }
+
 export function sessionSecret(req: HttpRequest, config: Pick<AppConfig, 'origin'>): string {
   return cookies(req, config)[cookieName(config, 'session')] || '';
 }
+
 export function enforceCsrf(req: HttpRequest, config: Pick<AppConfig, 'origin'>): void {
   const token = req.headers['x-csrf-token'];
   const stored = cookies(req, config)[cookieName(config, 'csrf')];
@@ -62,9 +70,11 @@ export function enforceCsrf(req: HttpRequest, config: Pick<AppConfig, 'origin'>)
   )
     throw new ForbiddenException();
 }
+
 export function newCsrf(): string {
   return randomBytes(32).toString('base64url');
 }
+
 export function bodyFields(value: unknown, keys: readonly string[]): Record<string, string> {
   if (
     typeof value !== 'object' ||

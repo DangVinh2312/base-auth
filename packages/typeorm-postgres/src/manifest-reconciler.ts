@@ -19,6 +19,7 @@ export interface CodeRole {
   readonly authorityLevel: number;
   readonly label: string;
 }
+
 /** Default grant created only when its permission first appears in a tenant's catalog. */
 export interface DefaultGrant {
   readonly permission: string;
@@ -26,6 +27,7 @@ export interface DefaultGrant {
   readonly template: RelationRef;
   readonly parameters: Readonly<Record<string, Scalar>>;
 }
+
 /** Code-owned resource → resource tuple (spec 7.1); runtime tuples are never touched. */
 export interface RelationSeed {
   readonly owner: string;
@@ -36,10 +38,12 @@ export interface RelationSeed {
   readonly startsAt: string;
   readonly expiresAt?: string;
 }
+
 export interface SeedRemoval {
   readonly owner: string;
   readonly key: string;
 }
+
 /**
  * Code-owned permission boundary binding (e.g. a service member). Runtime bindings (no owner) are
  * never overwritten; a seed is removed only by an explicit removal from the same owner.
@@ -50,6 +54,7 @@ export interface BoundaryBindingSeed {
   readonly permission: string;
   readonly boundary: RelationRef;
 }
+
 export interface BoundaryBindingRemoval {
   readonly owner: string;
   readonly identity: IdentityId;
@@ -117,14 +122,18 @@ export class ReleaseRejectedError extends Error {
 const verified = new WeakMap<object, AuthorizationCore>();
 const identifier = /^[a-z][A-Za-z0-9_]*(\.[a-z][A-Za-z0-9_]*)*$/;
 const ownerKey = /^[a-z][a-z0-9._-]{0,127}$/;
+
 const reject = (reason: RejectReason, detail: string): never => {
   throw new ReleaseRejectedError(reason, detail);
 };
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
 
 /** Release fields without roles: shared by legacy (ranked roles) and product (key + label) releases. */
 export type ReleaseContentSource = Omit<ReleaseSource, 'roles'>;
+
 export type ValidatedReleaseContent = Omit<VerifiedReleaseManifest, 'roles' | 'hash'>;
 const contentLimits = {
   defaultGrants: 1_000,
@@ -252,10 +261,12 @@ function validateBody(
     ) {
       reject('invalid_release', `seed ${seed.key} validity window`);
     }
+
     const endpoint = (end: RelationSeed['source']) => ({
       type: end.type,
       key: core.parseKey(declarations.resources[end.type]!.keyKind, end.key.value),
     });
+
     return {
       owner: seed.owner,
       key: seed.key,
@@ -326,6 +337,7 @@ export function validateReleaseContent(
 
 const byJson = <T>(items: readonly T[]) =>
   [...items].sort((a, b) => (canonicalJson(a) < canonicalJson(b) ? -1 : 1));
+
 /** Canonical release envelope: unchanged keys and order, so legacy hashes stay byte-for-byte. */
 export function releaseContentHash(
   content: ValidatedReleaseContent,

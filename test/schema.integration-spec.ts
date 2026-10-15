@@ -22,6 +22,7 @@ const outsider = '10000000-0000-4000-8000-000000000002';
 const submissionObject = '20000000-0000-4000-8000-000000000001';
 const siteObject = '20000000-0000-4000-8000-000000000002';
 const hash = Buffer.alloc(32, 1);
+
 const bytes = (value: string) => Buffer.from(value, 'utf8');
 
 const tenantTables = [
@@ -224,6 +225,7 @@ describe('PostgreSQL authority schema', () => {
           version,
         ],
       );
+
     assert.equal(await sqlState(insertPermission('submission.approve', 'missing', 1)), '23503');
     assert.equal(
       await sqlState(insertPermission('submission.export', 'submission-read', 2)),
@@ -239,6 +241,7 @@ describe('PostgreSQL authority schema', () => {
            target_object, target_type, starts_at) VALUES ($1, $2, 1, $3, $4, $5, $6, now())`,
         [tenantA, bytes('submission.site'), source, bytes(sourceType), target, bytes(targetType)],
       );
+
     // Object types disagree with the stored object registry.
     assert.equal(
       await sqlState(insertEdge('submission', siteObject, 'site', submissionObject)),
@@ -264,6 +267,7 @@ describe('PostgreSQL authority schema', () => {
       ),
       '23514',
     );
+
     const insertException = (purpose: string, expiresAt: string | null) =>
       client.query(
         `INSERT INTO record_exception (tenant_id, exception_id, object_id, type_key, permission_key,
@@ -280,6 +284,7 @@ describe('PostgreSQL authority schema', () => {
           expiresAt,
         ],
       );
+
     assert.equal(await sqlState(insertException('manual', '2026-10-12T23:59:59.000000Z')), '23514');
     assert.equal(await sqlState(insertException('emergency', null)), '23514');
     await insertException('manual', null);
@@ -294,6 +299,7 @@ describe('PostgreSQL authority schema', () => {
       bytes('submission'),
       bytes('102'),
     ]);
+
     const insertSeed = (source: string, owner: string | null, key: string | null) =>
       client.query(
         `INSERT INTO relation_edge (tenant_id, relation_key, relation_version, source_object, source_type,
@@ -310,6 +316,7 @@ describe('PostgreSQL authority schema', () => {
           key && bytes(key),
         ],
       );
+
     await client.query('DELETE FROM relation_edge');
     await insertSeed(submissionObject, 'review-module', 'default-submission-site');
     assert.equal(
@@ -324,12 +331,14 @@ describe('PostgreSQL authority schema', () => {
     await withClient(identityDb, async (c) => {
       const identity = '30000000-0000-4000-8000-000000000001';
       await c.query(`INSERT INTO identity_record VALUES ($1, 'active', 1, now())`, [identity]);
+
       const link = () =>
         c.query('INSERT INTO federated_identity VALUES ($1, $2, $3)', [
           bytes('https://issuer.example.test'),
           bytes('subject-1'),
           identity,
         ]);
+
       await link();
       assert.equal(await sqlState(link()), '23505');
       assert.equal(
@@ -427,6 +436,7 @@ describe('migration 002: identity_relation.relation_version backfill', () => {
       migrations: (options.migrations as unknown[]).slice(0, count),
     } as typeof options;
   };
+
   const run = async (options: ReturnType<typeof tenantDataSourceOptions>) => {
     const dataSource = await new DataSource(options).initialize();
     try {
@@ -435,8 +445,10 @@ describe('migration 002: identity_relation.relation_version backfill', () => {
       await dataSource.destroy();
     }
   };
+
   const objectA = '20000000-0000-4000-8000-0000000000a1';
   const objectB = '20000000-0000-4000-8000-0000000000b1';
+
   const legacyDatabase = async (name: string) => {
     const db = await createDatabase(postgres.admin, name);
     assert.equal((await run(optionsUpTo(db, 1))).length, 1);
@@ -457,6 +469,7 @@ describe('migration 002: identity_relation.relation_version backfill', () => {
     });
     return db;
   };
+
   const insertLegacy = (c: pg.Client, key: Buffer, object: string) =>
     c.query(`INSERT INTO identity_relation VALUES ($1, $2, $3, $4, '2020-01-01Z', NULL)`, [
       tenantA,
@@ -472,8 +485,10 @@ describe('migration 002: identity_relation.relation_version backfill', () => {
       await insertLegacy(c, bytes('submission.assignee@2'), objectB);
       await insertLegacy(c, bytes('site.manager@12'), objectA);
     });
+
     const tuples = (c: pg.Client, sql: string) =>
       c.query<{ t: string }>(sql).then((r) => r.rows.map((row) => row.t).sort());
+
     const before = await withClient(db, (c) =>
       tuples(
         c,
@@ -535,6 +550,7 @@ describe('migration 003: permission boundary on existing data', () => {
   after(async () => {
     await postgres?.stop();
   });
+
   const run = async (options: ReturnType<typeof tenantDataSourceOptions>) => {
     const dataSource = await new DataSource(options).initialize();
     try {
@@ -582,6 +598,7 @@ describe('migration 003: permission boundary on existing data', () => {
         `SELECT convert_from(permission_key, 'UTF8') AS p, boundary_requirement AS r FROM permission_catalog`,
       );
       assert.deepEqual(legacy.rows, [{ p: 'submission.read', r: null }], 'no wildcard backfill');
+
       const insert = (requirement: string | null) =>
         c.query(`INSERT INTO permission_catalog VALUES ($1, $2, $3, $4, $5, 1, 'active', $6)`, [
           tenantA,
@@ -591,6 +608,7 @@ describe('migration 003: permission boundary on existing data', () => {
           bytes('submission-read'),
           requirement,
         ]);
+
       assert.equal(await sqlState(insert(null)), '23514');
       assert.equal(await sqlState(insert('sometimes')), '23514');
       assert.equal(

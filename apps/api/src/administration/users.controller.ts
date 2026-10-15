@@ -5,11 +5,13 @@ import {
   ADMINISTRATION_HTTP_PORT,
   type AdministrationHttpPort,
 } from './administration.http-port.js';
+
 @Controller('administration/users')
 export class UsersController {
   constructor(
     @Inject(ADMINISTRATION_HTTP_PORT) private readonly administration: AdministrationHttpPort,
   ) {}
+
   @HttpCode(200)
   @Post(':id/suspend')
   @ProductAuthorize('account', 'suspend')

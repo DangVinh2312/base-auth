@@ -1,5 +1,6 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import formatConfig from './eslint.format.config.js';
 
 const driverImports = [
   {
@@ -10,6 +11,7 @@ const driverImports = [
 
 export default tseslint.config(
   { ignores: ['**/dist/**', '**/node_modules/**', 'coverage/**'] },
+  ...formatConfig,
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
@@ -26,7 +28,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['eslint.config.js'],
+    files: ['eslint.config.js', 'eslint.format.config.js'],
     ...tseslint.configs.disableTypeChecked,
   },
   {

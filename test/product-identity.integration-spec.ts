@@ -66,6 +66,7 @@ const codes = new Map<
   { nonce: string; challenge: string; changes: Record<string, unknown>; badSignature: boolean }
 >();
 let tokenGate: (() => Promise<void>) | undefined;
+
 function jwt(claims: Record<string, unknown>, badSignature: boolean): string {
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'fixture-key' })).toString(
     'base64url',
@@ -77,6 +78,7 @@ function jwt(claims: Record<string, unknown>, badSignature: boolean): string {
     .toString('base64url');
   return `${header}.${payload}.${badSignature ? Buffer.alloc(256).toString('base64url') : signature}`;
 }
+
 function responseFor(url: URL, changes: Record<string, unknown> = {}, badSignature = false): URL {
   const code = randomBytes(16).toString('hex');
   codes.set(code, {
@@ -90,6 +92,7 @@ function responseFor(url: URL, changes: Record<string, unknown> = {}, badSignatu
   response.searchParams.set('code', code);
   return response;
 }
+
 before(async () => {
   postgres = await startPostgres();
   const secrets = Object.fromEntries(
@@ -302,6 +305,7 @@ test('local activation, opaque hash-only sessions, one-time reset races and stal
 test('a limited client cannot grow the limiter or lock out other clients', async () => {
   const rows = async () =>
     (await pools.identity.query<{ n: number }[]>('SELECT count(*)::int n FROM rate_limit'))[0]!.n;
+
   const before = await rows();
   let rejected = 0;
   for (let i = 0; i < 100; i++)
@@ -568,6 +572,7 @@ test('password reset committed while login verification is paused rejects the ol
   const hold = new Promise<void>((resolve) => (release = resolve));
   const delayed = new ProductIdentityService(runner, {
     ...identity.passwords,
+
     async verify(hash, password) {
       const result = await identity.passwords.verify(hash, password);
       entered();
@@ -1018,12 +1023,14 @@ test('replicas with separate pools enforce one shared limit under concurrent att
       new ProductTransactionRunner({ identity: replicaPool }),
       identity.passwords,
     );
+
     const attempt = (i: number) =>
       (i % 2 ? replica : identity).rateLimit(
         `192.0.2.${i + 1}`,
         'replica-concurrent@example.test',
         'replica-concurrent',
       );
+
     const outcomes = await Promise.allSettled(Array.from({ length: 30 }, (_, i) => attempt(i)));
     // Under a loaded host a queued attempt can exceed lock_timeout: it rolls back without counting
     // and is retried here one at a time. The shared cap must still be exactly 20.
@@ -1054,6 +1061,7 @@ test('data-only access does not touch idle activity; identity operations touch w
   const [email] = await activeLocalUsers('activity', 1, password);
   const session = await identity.login(email!, password, '198.51.100.20');
   const digest = sessionDigest(session.secret);
+
   const stamp = async () =>
     (
       await pools.identity.query<{ seen: string; expires: string }[]>(
@@ -1061,6 +1069,7 @@ test('data-only access does not touch idle activity; identity operations touch w
         [digest],
       )
     )[0]!;
+
   await runner.run('revoke', (tx) =>
     tx.manager.query(
       `UPDATE application_session SET last_seen_at=statement_timestamp()-interval '10 minutes' WHERE token_hash=$1`,
@@ -1094,6 +1103,7 @@ test('expired sessions are purged in bounded batches; live, revoked-unexpired, r
     "INSERT INTO app_user(id,email_canonical,email_verified,state) VALUES($1,'purge@example.test',true,'active')",
     [owner],
   );
+
   const insert = async (expires: string, revoked = false) => {
     const secret = newSessionSecret();
     await pools.identity.query(
@@ -1103,10 +1113,12 @@ test('expired sessions are purged in bounded batches; live, revoked-unexpired, r
     );
     return sessionDigest(secret);
   };
+
   const live = await insert('1 hour');
   const revokedLive = await insert('1 hour', true);
   const recent = await insert('-1 hour');
   for (let i = 0; i < 5; i++) await insert('-3 days');
+
   const countOwner = async () =>
     (
       await pools.identity.query<{ n: number }[]>(
@@ -1114,6 +1126,7 @@ test('expired sessions are purged in bounded batches; live, revoked-unexpired, r
         [owner],
       )
     )[0]!.n;
+
   for (const [retention, batch] of [
     [-1, 10],
     [1.5, 10],
@@ -1122,6 +1135,7 @@ test('expired sessions are purged in bounded batches; live, revoked-unexpired, r
     [1, 1001],
   ] as const)
     await assert.rejects(purgeExpiredSessions(runner, retention, batch), RangeError);
+
   const hold = () => {
     let release!: () => void;
     let entered!: () => void;
@@ -1133,6 +1147,7 @@ test('expired sessions are purged in bounded batches; live, revoked-unexpired, r
     });
     return { inside, gate, release, entered };
   };
+
   // A password reset holds the exclusive fence: purge waits for its commit, then runs.
   const reset = hold();
   const resetting = runner.run('revoke', async (tx) => {

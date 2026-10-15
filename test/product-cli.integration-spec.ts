@@ -15,6 +15,7 @@ import {
 } from '@base-authorization/typeorm-postgres/composition';
 import { productDataSourceOptions } from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient } from './setup-postgres.ts';
+
 test('offline CLI provisions, forward migrates, syncs and bootstraps once without printing activation secret', async (t) => {
   const pg = await startPostgres();
   const dir = await mkdtemp(join(tmpdir(), 'product-cli-'));
@@ -43,6 +44,7 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
     env[`PRODUCT_${p.toUpperCase()}_DATABASE_URL`] =
       `postgres://product_${p}:${password}@${c.host}:${c.port}/cli_fixture`;
   }
+
   function run(command: string, ...args: string[]) {
     const result = spawnSync(process.execPath, ['tools/product.ts', command, ...args], {
       env,
@@ -52,6 +54,7 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
     assert.equal(result.status, 0, result.stderr);
     return result.stdout + result.stderr;
   }
+
   run('provision');
   run('migrate');
   assert.match(run('migrate'), /Applied 0/);
@@ -150,12 +153,14 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   assert.notEqual(unknown.status, 0, 'reissue needs an existing pending account');
   await assert.rejects(readFile(join(dir, 'unknown-proof'), 'utf8'));
   const userId = randomUUID();
+
   const cliRevision = () =>
     withClient(
       { ...c, database: 'cli_fixture' },
       async (client) =>
         (await client.query<{ r: string }>('SELECT revision::text r FROM authz_state')).rows[0]!.r,
     );
+
   const beforeEnroll = await cliRevision();
   run('enroll', '--user', userId, '--method', 'local', '--email', 'root-cli@example.test');
   const afterEnroll = await cliRevision();
@@ -269,8 +274,10 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
     );
     await identity.activate((await readFile(reissuePath, 'utf8')).trim(), rootPassword, 'cli-root');
     const session = await identity.login('root-cli@example.test', rootPassword, 'cli-root');
+
     const revoke = (...extra: string[]) =>
       run('revoke-root', '--user', userId, '--operation', randomUUID(), ...extra);
+
     const refused = spawnSync(
       process.execPath,
       ['tools/product.ts', 'revoke-root', '--user', userId, '--operation', randomUUID()],
@@ -363,15 +370,19 @@ test('offline CLI refuses the offline actor id as a user for enroll, invite, boo
     env[`PRODUCT_${p.toUpperCase()}_DATABASE_URL`] =
       `postgres://product_${p}:${password}@${c.host}:${c.port}/cli_actor_fixture`;
   }
+
   const cli = (command: string, ...args: string[]) =>
     spawnSync(process.execPath, ['tools/product.ts', command, ...args], {
       env,
       encoding: 'utf8',
       timeout: 30000,
     });
+
   for (const setup of ['provision', 'migrate', 'sync']) assert.equal(cli(setup).status, 0, setup);
   const user = ['--user', PRODUCT_OFFLINE_ACTOR];
+
   const artifact = (name: string) => ['--activation-file', join(dir, name)];
+
   const attempts: [string, string[], RegExp][] = [
     ['enroll', [...user, '--method', 'local', '--email', 'actor@example.test'], /\(Error\)/],
     ['invite', [...user, '--method', 'local', ...artifact('invite-proof')], /\(Error\)/],

@@ -22,7 +22,9 @@ import {
 import { openClient, startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 const core = createProductAuthorizationCore();
+
 const utf8 = (value: string) => Buffer.from(value);
+
 const release = prepareProductRelease(
   {
     ...productReleaseSource,
@@ -53,30 +55,35 @@ const attachments = [
     name: 'user_role',
     login: 'authority',
     sql: 'INSERT INTO user_role(user_id,role_key) VALUES($1,$2)',
+
     params: () => [utf8('reviewer')],
   },
   {
     name: 'user_boundary',
     login: 'authority',
     sql: 'INSERT INTO user_boundary(user_id,permission_key,boundary_key,boundary_version) VALUES($1,$2,$3,1)',
+
     params: () => [utf8('document.read'), utf8('documentLimit')],
   },
   {
     name: 'policy_rule',
     login: 'authority',
     sql: "INSERT INTO policy_rule(rule_id,permission_key,user_id,effect,template_key,template_version,parameters,managed_by) VALUES($2,$3,$1,'allow',$4,1,'{}','runtime')",
+
     params: () => [randomUUID(), utf8('document.read'), utf8('ownedDocuments')],
   },
   {
     name: 'record_exception',
     login: 'authority',
     sql: "INSERT INTO record_exception(exception_id,object_id,type_key,permission_key,user_id,effect,purpose,starts_at,reason,issued_by) VALUES($2,$3,$4,$5,$1,'allow','manual',statement_timestamp(),'fixture',$1)",
+
     params: () => [randomUUID(), object, utf8('document'), utf8('document.read')],
   },
   {
     name: 'activation token',
     login: 'identity',
     sql: "INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at) VALUES($2,$1,'activation',statement_timestamp()+interval '15 minutes')",
+
     params: () => [randomBytes(32)],
   },
 ] as const;
@@ -132,8 +139,10 @@ const pendingUser = async () => {
   ]);
   return id;
 };
+
 const pidOf = async (client: pg.Client) =>
   (await client.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+
 /** Deterministic ordering: returns once the backend waits on a lock held by another one. */
 async function waitUntilBlocked(pid: number): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt++) {
@@ -146,11 +155,13 @@ async function waitUntilBlocked(pid: number): Promise<void> {
   }
   throw new Error(`backend ${pid} never waited for a lock`);
 }
+
 const outcome = (work: Promise<unknown>) =>
   work.then(
     () => 'committed',
     (error: { code?: string }) => error.code ?? 'error',
   );
+
 const factCount = async (user: string) =>
   (
     await migration.query<{ n: number }[]>(

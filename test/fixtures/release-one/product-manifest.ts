@@ -23,11 +23,15 @@ import {
   appendProductAudit,
   PRODUCT_OFFLINE_ACTOR,
 } from '@base-authorization/typeorm-postgres/operations';
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
+
 const reject = (reason: RejectReason, detail: string): never => {
   throw new ReleaseRejectedError(reason, detail);
 };
+
 const RUNTIME_CAPABILITY = 1;
 export interface SystemGrant extends DefaultGrant {
   readonly owner: string;
@@ -35,17 +39,20 @@ export interface SystemGrant extends DefaultGrant {
   /** Required for a content change; compare-and-swap against the prior exact grant hash. */
   readonly previousHash?: string;
 }
+
 export interface SystemGrantRemoval {
   readonly owner: string;
   readonly key: string;
   readonly expectedHash: string;
 }
+
 export interface ProductReleaseSource extends ReleaseSource {
   readonly systemGrants: readonly SystemGrant[];
   readonly removeSystemGrants: readonly SystemGrantRemoval[];
   /** Exact earlier default grants to delete; default grants stay code-owned until removed here. */
   readonly removeDefaultGrants?: readonly DefaultGrant[];
 }
+
 export interface ProductReleaseManifest extends VerifiedReleaseManifest {
   readonly systemGrants: readonly SystemGrant[];
   readonly removeSystemGrants: readonly SystemGrantRemoval[];
@@ -55,6 +62,7 @@ export interface ProductReleaseManifest extends VerifiedReleaseManifest {
 const productVerified = new WeakMap<object, AuthorizationCore>();
 const ownerKey = /^[a-z][a-z0-9._-]{0,127}$/;
 const hashPattern = /^[0-9a-f]{64}$/;
+
 export function prepareProductRelease(
   source: ProductReleaseSource,
   core: AuthorizationCore,
@@ -162,11 +170,13 @@ interface FrozenReconcilerOptions {
 export class ProductManifestReconciler {
   private readonly runner: ProductTransactionRunner;
   private readonly options: FrozenReconcilerOptions;
+
   constructor(runner: ProductTransactionRunner, options: FrozenReconcilerOptions) {
     this.runner = runner;
     this.options = options;
     if (!options.core.isCanonicalUuid(options.actor)) throw new TypeError('Invalid manifest actor');
   }
+
   async reconcile(release: ProductReleaseManifest): Promise<SyncResult> {
     if (productVerified.get(release) !== this.options.core)
       reject('invalid_release', 'product release was not prepared with this core');
@@ -242,6 +252,7 @@ export const systemGrantHash = (g: DefaultGrant): string =>
       parameters: g.parameters,
     }),
   );
+
 async function reconcileSystemGrants(
   m: EntityManager,
   release: ProductReleaseManifest,
@@ -332,10 +343,12 @@ async function reconcileSystemGrants(
     );
   }
 }
+
 function stableGrantId(owner: string, key: string): string {
   const h = sha256(`${owner}/${key}`);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
+
 async function protectedStateHash(m: EntityManager): Promise<string> {
   const rows: unknown[] = [];
   // Table names and predicates are registered code, never request identifiers.
@@ -359,6 +372,7 @@ async function protectedStateHash(m: EntityManager): Promise<string> {
     );
   return sha256(canonicalJson(rows));
 }
+
 const definitionHash = (value: unknown) => sha256(canonicalJson(value));
 
 /** Deterministic id for a code-owned default grant (UUID layout, version nibble 5). */
@@ -804,6 +818,7 @@ export interface RootBootstrapInput {
     boundary: { key: string; version: number };
   }[];
 }
+
 /** Offline capability only: marker persists independently of account/assignment lifecycle. */
 export async function bootstrapProductRoot(
   runner: ProductTransactionRunner,
@@ -922,6 +937,7 @@ export interface RootReissueInput {
   readonly issuer?: string;
   readonly subject?: string;
 }
+
 /**
  * Offline capability only: a fresh one-time proof for the still pending bootstrap Root (expired or
  * lost artifact). Earlier proofs are consumed in the same fenced transaction, with audit.
@@ -990,6 +1006,7 @@ export interface RootRevocationInput {
   readonly approval: string;
   readonly reason: string;
 }
+
 /**
  * Offline capability only: removes one Root assignment under the exclusive fence with audit.
  * Adding a Root holder after bootstrap is not supported here; it needs the approval authority gate.
@@ -1004,6 +1021,7 @@ export async function revokeProductRoot(
     value.trim().length > 0 &&
     value.length <= max &&
     !/\p{Cc}/u.test(value);
+
   if (
     !core.isCanonicalUuid(input.operationId) ||
     !core.isCanonicalUuid(input.userId) ||

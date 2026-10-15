@@ -40,16 +40,22 @@ const metrics: { metric: string; mode: string; value: number }[] = [];
 const statements: { sql: string; parameters: unknown[] }[] = [];
 const userId = randomUUID() as UserId;
 const secret = randomBytes(32).toString('base64url');
+
 const utf8 = (value: string) => Buffer.from(value);
 
 const counter: Logger = {
   logQuery: (sql, parameters) => {
     statements.push({ sql, parameters: Array.isArray(parameters) ? parameters : [] });
   },
+
   logQueryError: () => undefined,
+
   logQuerySlow: () => undefined,
+
   logSchemaBuild: () => undefined,
+
   logMigration: () => undefined,
+
   log: () => undefined,
 };
 
@@ -254,6 +260,7 @@ function percentile(values: readonly number[], fraction: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   return Number((sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)] ?? 0).toFixed(2));
 }
+
 function summary(values: readonly number[]) {
   return { n: values.length, p50: percentile(values, 0.5), p95: percentile(values, 0.95) };
 }
@@ -267,11 +274,13 @@ const run: Record<Operation, (index: number) => Promise<void>> = {
     });
     assert.equal(page.items.length, 20);
   },
+
   detail: async (index) => {
     // Pending, within boundary and not denied for i%3!=0, i*37%1000<=500, i%50!=0.
     const key = [1, 2, 4, 5, 7][index % 5]!;
     assert.notEqual(await authorization.detail(secret, 'item', 'read', String(key)), null);
   },
+
   update: async (index) => {
     const key = [1, 2, 4, 5, 7][index % 5]!;
     assert.equal(
@@ -279,6 +288,7 @@ const run: Record<Operation, (index: number) => Promise<void>> = {
       true,
     );
   },
+
   revoke: async () => {
     const target = await newSession();
     await identity.logout(target);
@@ -302,7 +312,9 @@ test('fence I/O per operation and mixed workload are measured on a 10k-row, 40-p
       latencies.push(performance.now() - start);
       counts.push(statements.length - before);
     }
+
     const by = (name: string) => metrics.filter((m) => m.metric === name).map((m) => m.value);
+
     perOperation[operation] = {
       statements: { min: Math.min(...counts), max: Math.max(...counts) },
       latencyMs: summary(latencies),
@@ -353,6 +365,7 @@ test('fence I/O per operation and mixed workload are measured on a 10k-row, 40-p
     }),
   );
   const elapsedMs = Number((performance.now() - started).toFixed(2));
+
   const by = (name: string) => metrics.filter((m) => m.metric === name).map((m) => m.value);
 
   // Plan of the list statement as issued (data credential, real parameters).

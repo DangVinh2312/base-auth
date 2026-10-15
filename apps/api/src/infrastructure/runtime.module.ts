@@ -23,14 +23,24 @@ export class RuntimeModule {
     return {
       module: RuntimeModule,
       providers: [
-        { provide: ProductRuntime, useFactory: () => runtime },
-        { provide: ReadinessGate, useFactory: () => runtime.readiness },
+        {
+          provide: ProductRuntime,
+
+          useFactory: () => runtime,
+        },
+        {
+          provide: ReadinessGate,
+
+          useFactory: () => runtime.readiness,
+        },
         {
           provide: METRICS_SNAPSHOT,
+
           useFactory: (): MetricsSnapshot => ({ snapshot: metrics.snapshot.bind(metrics) }),
         },
         {
           provide: AUTH_HTTP_PORT,
+
           useFactory: (): AuthHttpPort => ({
             config,
             identity: {
@@ -53,16 +63,21 @@ export class RuntimeModule {
         },
         {
           provide: DOCUMENTS_HTTP_PORT,
+
           useFactory: (): DocumentsHttpPort => ({
             config,
+
             list: (secret) => authorization.list(secret, 'document', 'read'),
+
             detail: (secret, id) => authorization.detail(secret, 'document', 'read', id),
+
             update: (secret, id, changes) =>
               authorization.update(secret, 'document', 'update', id, changes),
           }),
         },
         {
           provide: ADMINISTRATION_HTTP_PORT,
+
           useFactory: (): AdministrationHttpPort => ({
             config,
             suspendUser: authorization.suspendUser.bind(authorization),

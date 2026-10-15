@@ -10,6 +10,7 @@ import { ProductErrorFilter } from './infrastructure/product-error.filter.js';
 import type { ProductRuntime } from './infrastructure/product-runtime.js';
 import { RuntimeModule } from './infrastructure/runtime.module.js';
 import { OpenApiController } from './openapi/openapi.controller.js';
+
 @Module({})
 export class AppModule {
   /** Composition root; `runtime` may be a fixture (tests). No DB access here. */

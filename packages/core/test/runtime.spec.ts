@@ -17,6 +17,7 @@ import {
 import { alice, declarations, input, rule, snapshot, submission } from './fixtures.ts';
 
 const standard = () => createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() });
+
 const reviewer = { kind: 'role', role: 'reviewer' } as const;
 
 function userInput(overrides: Partial<UserTrustedInput> = {}): UserTrustedInput {
@@ -63,11 +64,15 @@ function allowedPlan(core: AuthorizationCore) {
 /** Wraps every codec method with a call counter; semantics stay those of `values`. */
 function spy(values: ValueCodecs) {
   const calls: Record<string, number> = {};
+
   const count = (name: string) => (calls[name] = (calls[name] ?? 0) + 1);
+
   const wrap = <T extends string | boolean>(kind: string, codec: ScalarCodec<T>) => ({
     normalize: (value: unknown) => (count(`${kind}.normalize`), codec.normalize(value)),
+
     compare: (l: T, r: T) => (count(`${kind}.compare`), codec.compare(l, r)),
   });
+
   return {
     calls,
     values: {
@@ -143,7 +148,14 @@ test('a plan issued by A is refused by B evaluation (fail closed)', () => {
 test('each instance keeps its own value semantics', () => {
   const strict = createAuthorizationCore({ values: standard() });
   const refuseTimes = createAuthorizationCore({
-    values: { ...standard(), timestamp: { normalize: () => undefined, compare: () => 0 } },
+    values: {
+      ...standard(),
+      timestamp: {
+        normalize: () => undefined,
+
+        compare: () => 0,
+      },
+    },
   });
   assert.equal(strict.planUser(userInput(), userSnapshot(strict)).effect, 'allow');
   assert.deepEqual(refuseTimes.planUser(userInput(), userSnapshot(refuseTimes)), {
@@ -177,7 +189,11 @@ test('a missing or malformed codec fails at construction', () => {
 test('the codec table is captured at construction (no later mutation, no shared default)', () => {
   const values: { -readonly [K in keyof ValueCodecs]: ValueCodecs[K] } = { ...standard() };
   const core = createAuthorizationCore({ values });
-  values.timestamp = { normalize: () => undefined, compare: () => 0 };
+  values.timestamp = {
+    normalize: () => undefined,
+
+    compare: () => 0,
+  };
   assert.equal(core.planUser(userInput(), userSnapshot(core)).effect, 'allow');
   assert.ok(Object.isFrozen(core));
 });
@@ -186,6 +202,7 @@ test('a throwing codec never allows', () => {
   const boom = () => {
     throw new Error('codec failure');
   };
+
   const throwsOnNormalize = createAuthorizationCore({
     values: { ...standard(), timestamp: { normalize: boom, compare: boom } },
   });
@@ -199,6 +216,7 @@ test('a throwing codec never allows', () => {
       ...strictValues,
       decimal: {
         normalize: (value: unknown) => strictValues.decimal.normalize(value),
+
         compare: boom,
       },
     },
@@ -218,7 +236,11 @@ test('a throwing codec never allows', () => {
   const outOfContract = createAuthorizationCore({
     values: {
       ...standard(),
-      string: { normalize: () => 7 as unknown as string, compare: () => 0 },
+      string: {
+        normalize: () => 7 as unknown as string,
+
+        compare: () => 0,
+      },
     },
   });
   assert.equal(outOfContract.validate(declarations()).ok, false);
@@ -232,6 +254,7 @@ test('canonical identity checks stay lowercase-only even if the uuid codec does 
       uuid: {
         normalize: (value: unknown) =>
           typeof value === 'string' && anyCase.test(value) ? value : undefined,
+
         compare: (left: string, right: string) => (left === right ? 0 : 1),
       },
     },
@@ -254,7 +277,11 @@ test('an out-of-contract codec result never allows', () => {
   const badNormalize = createAuthorizationCore({
     values: {
       ...standard(),
-      timestamp: { normalize: () => 42 as unknown as string, compare: () => 0 },
+      timestamp: {
+        normalize: () => 42 as unknown as string,
+
+        compare: () => 0,
+      },
     },
   });
   assert.equal(badNormalize.planUser(userInput(), userSnapshot(badNormalize)).effect, 'deny');
@@ -264,6 +291,7 @@ test('an out-of-contract codec result never allows', () => {
       ...strictValues,
       decimal: {
         normalize: (value: unknown) => strictValues.decimal.normalize(value),
+
         compare: () => 2 as unknown as 0,
       },
     },
@@ -301,6 +329,7 @@ test('timestamp validity is the codec’s: core has no regex/Date.parse fallback
       if (typeof value !== 'string' || Number.isNaN(Date.parse(value))) return undefined;
       return value;
     },
+
     compare: (l, r) => (l === r ? 0 : l < r ? -1 : 1),
   };
   const permissive = createAuthorizationCore({ values: { ...standard(), timestamp: lenient } });

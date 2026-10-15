@@ -3,6 +3,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
 /** Existing unversioned tuples need explicit declaration mapping before upgrading. */
 export class ProductUserRelationVersion1792108800003 implements MigrationInterface {
   name = 'ProductUserRelationVersion1792108800003';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       DO $guard$ BEGIN
@@ -16,6 +17,7 @@ export class ProductUserRelationVersion1792108800003 implements MigrationInterfa
       CREATE INDEX ix_user_relation_version ON public.user_relation(relation_key,relation_version,user_id,object_id);
     `);
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('Relation versions require explicit restore'));
   }

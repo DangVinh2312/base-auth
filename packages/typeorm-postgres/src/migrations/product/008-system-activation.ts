@@ -28,6 +28,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END`;
+
 export const tokenConsumptionBody = `
 BEGIN
   IF OLD.consumed_at IS NOT NULL OR NEW.consumed_at IS DISTINCT FROM statement_timestamp()
@@ -37,8 +38,10 @@ BEGIN
   END IF;
   RETURN NEW;
 END`;
+
 export class ProductSystemActivation1792108800008 implements MigrationInterface {
   name = 'ProductSystemActivation1792108800008';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       REVOKE UPDATE,DELETE ON public.one_time_token FROM product_identity;
@@ -62,6 +65,7 @@ export class ProductSystemActivation1792108800008 implements MigrationInterface 
       ALTER FUNCTION public.protect_system_activation() OWNER TO product_session_owner;
     `);
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('System activation guard requires explicit restore'));
   }

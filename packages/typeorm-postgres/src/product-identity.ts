@@ -13,6 +13,7 @@ export class ProductAuthenticationError extends Error {
     super('Authentication failed');
   }
 }
+
 export class ProductAuthenticationUnavailable extends Error {
   constructor() {
     super('Authentication unavailable');
@@ -20,6 +21,7 @@ export class ProductAuthenticationUnavailable extends Error {
 }
 const RATE_LIMIT_ROWS = 10_000;
 const RATE_LIMIT_LOCK = 1379171467;
+
 /**
  * Limiter client key. One IPv6 /64 is one client (a host usually owns the whole prefix); IPv6
  * forms that carry an IPv4 client (mapped ::ffff:0:0/96, compatible ::/96, NAT64 64:ff9b::/96)
@@ -33,6 +35,7 @@ export function rateLimitClient(address: string): string {
   const ip = bare.split('%')[0]!;
   if (isIPv4(ip)) return ip;
   if (!isIPv6(ip)) return address;
+
   const words = (part: string): number[] =>
     part
       ? part.split(':').flatMap((g) => {
@@ -41,11 +44,14 @@ export function rateLimitClient(address: string): string {
           return [a * 256 + b, c * 256 + d];
         })
       : [];
+
   const [head = '', tail] = ip.split('::');
   const left = words(head);
   const right = tail === undefined ? [] : words(tail);
   const w = [...left, ...Array<number>(8 - left.length - right.length).fill(0), ...right];
+
   const zero = (from: number, to: number) => w.slice(from, to).every((x) => x === 0);
+
   if (
     (zero(0, 5) && (w[5] === 0xffff || (w[5] === 0 && w[6] !== 0))) ||
     (w[0] === 0x64 && w[1] === 0xff9b && zero(2, 6))
@@ -56,15 +62,20 @@ export function rateLimitClient(address: string): string {
     .map((x) => x.toString(16))
     .join(':')}::/64`;
 }
+
 export interface ProductPasswordHasher {
   hash(password: string): Promise<string>;
+
   verify(hash: string, password: string): Promise<boolean>;
+
   dummyHash: string;
 }
+
 export interface ProductSession {
   secret: string;
   expiresAt: Date;
 }
+
 export interface ProductSessionIdentity {
   userId: string;
   authEpoch: string;
@@ -73,17 +84,21 @@ export interface ProductSessionIdentity {
   authenticatedAt: Date;
   reauthenticatedAt: Date | null;
 }
+
 export function canonicalLoginEmail(email: string): string {
   if (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email))
     throw new ProductAuthenticationError();
   return email.toLowerCase();
 }
+
 export function newSessionSecret(): string {
   return randomBytes(32).toString('base64url');
 }
+
 export function secretDigest(secret: string): Buffer {
   return createHash('sha256').update(secret).digest();
 }
+
 export function sessionDigest(secret: string): Buffer {
   if (
     typeof secret !== 'string' ||
@@ -98,6 +113,7 @@ export async function createProductPasswordHasher(
   blockedPasswords: ReadonlySet<string>,
 ): Promise<ProductPasswordHasher> {
   let active = 0;
+
   async function bounded<T>(work: () => Promise<T>): Promise<T> {
     if (active >= 4) throw new ProductAuthenticationUnavailable();
     active++;
@@ -107,6 +123,7 @@ export async function createProductPasswordHasher(
       active--;
     }
   }
+
   function valid(password: string): boolean {
     return (
       typeof password === 'string' &&
@@ -116,6 +133,7 @@ export async function createProductPasswordHasher(
       [...password].length <= 128
     );
   }
+
   const options = {
     type: argon2.argon2id,
     memoryCost: 19456,
@@ -126,11 +144,13 @@ export async function createProductPasswordHasher(
   const dummyHash = await argon2.hash(randomBytes(32), options);
   return {
     dummyHash,
+
     async hash(password) {
       if (!valid(password) || blockedPasswords.has(password))
         throw new ProductAuthenticationError();
       return bounded(() => argon2.hash(password, options));
     },
+
     async verify(hash, password) {
       // Bound persisted parameters too: a corrupt hash must not exhaust the process.
       const match =
@@ -496,6 +516,7 @@ export class ProductIdentityService {
     if (!rows[0]) throw new ProductAuthenticationError();
     return rows[0];
   }
+
   async invalidate(tx: ProductTransaction, userId: string): Promise<void> {
     await tx.manager.query(
       `UPDATE one_time_token SET consumed_at=statement_timestamp() WHERE user_id=$1 AND consumed_at IS NULL`,
@@ -506,6 +527,7 @@ export class ProductIdentityService {
       [userId],
     );
   }
+
   async resetPassword(token: string, password: string, clientKey: string): Promise<void> {
     await this.rateLimit(clientKey, secretDigest(token).toString('hex'), 'reset');
     const hash = await this.passwords.hash(password);

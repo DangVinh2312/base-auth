@@ -17,17 +17,20 @@ function userInput(overrides: Partial<UserTrustedInput> = {}): UserTrustedInput 
   void _tenant;
   return { ...value, ...overrides };
 }
+
 function userSnapshot(overrides: Partial<UserAuthoritySnapshot> = {}): UserAuthoritySnapshot {
   const { tenant: _tenant, membership: _membership, ...value } = snapshot();
   void _tenant;
   void _membership;
   return { ...value, user: { id: alice, state: 'active' }, ...overrides };
 }
+
 function allowed(decision: UserDecision) {
   assert.equal(decision.effect, 'allow');
   if (decision.effect !== 'allow') throw new Error('unreachable');
   return decision.plan;
 }
+
 const record = submission('record', '1', { amount: '999.00', status: 'closed' });
 const facts = {
   now: '2026-10-13T10:00:01.000000Z',

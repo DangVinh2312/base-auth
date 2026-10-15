@@ -4,6 +4,7 @@ export type Comparison = -1 | 0 | 1;
 export interface ScalarCodec<T extends string | boolean> {
   /** Canonical value, or undefined when the input is not a valid value of this kind. */
   normalize(input: unknown): T | undefined;
+
   /** Compares two already-normalized values. */
   compare(left: T, right: T): Comparison;
 }

@@ -77,6 +77,7 @@ describe('obligations and the audit outbox', () => {
       validUntil: new Date(now.getTime() + 60_000).toISOString(),
     };
   };
+
   const auditRows = async (kind: string) =>
     (
       await admin.query<{ r: string }>(
@@ -104,6 +105,7 @@ describe('obligations and the audit outbox', () => {
       await fulfillObligations(decision.plan, tx, handlers);
       return row;
     });
+
   const audit =
     (kind: string, eventId: () => string = randomUUID) =>
     (tx: TenantTransaction, authorized: AuthorizedPlan) =>

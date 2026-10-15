@@ -231,8 +231,10 @@ test('startup rejects any privilege drift, not only sampled grants', async () =>
   }
 });
 const runtimeLogins = ['data', 'identity', 'authority', 'sync', 'bootstrap'] as const;
+
 const onDatabase = (statement: string) =>
   `DO $$BEGIN EXECUTE format('${statement.replace('%DB', '%I')}',current_database()); END$$`;
+
 async function rejectsDrift(purposes: readonly (typeof runtimeLogins)[number][], label: string) {
   for (const purpose of purposes) {
     const probe = verifyProductPrivileges({ [purpose]: pools[purpose] }).then(() => {
@@ -251,6 +253,7 @@ async function rejectsDrift(purposes: readonly (typeof runtimeLogins)[number][],
     });
   }
 }
+
 test('every runtime login rejects CREATE, TEMP, grant option and role membership drift individually', async () => {
   await verifyProductPrivileges(pools);
   for (const purpose of runtimeLogins) {
@@ -331,10 +334,13 @@ test('startup rejects missing, miswired or inventory-diverging protection trigge
     'CREATE TRIGGER guard_root_lifecycle BEFORE UPDATE OF state,auth_epoch ON app_user FOR EACH ROW EXECUTE FUNCTION public.guard_root_lifecycle()';
   const activation =
     'CREATE TRIGGER guard_root_activation BEFORE INSERT ON one_time_token FOR EACH ROW EXECUTE FUNCTION public.guard_root_activation()';
+
   const subject = (table: string) =>
     `CREATE TRIGGER guard_root_not_iam_subject BEFORE INSERT OR UPDATE ON ${table} FOR EACH ROW EXECUTE FUNCTION public.guard_root_not_iam_subject()`;
+
   const fn = (name: string, body: string, definer = '') =>
     `CREATE OR REPLACE FUNCTION public.${name}() RETURNS trigger LANGUAGE plpgsql ${definer} SET search_path=pg_catalog,pg_temp AS $fn$${body}$fn$`;
+
   const guardBodies = [
     ['guard_root_kind', guardRootKindBody, 'BEGIN RETURN NEW; END'],
     ['require_root_marker_kind', requireRootMarkerKindBody, 'BEGIN RETURN NULL; END'],
@@ -691,10 +697,12 @@ test('session projection exposes no credential and checks expiry, epoch and cred
     "INSERT INTO application_session(token_hash,user_id,auth_epoch,credential_version,method,assurance,authenticated_at,expires_at) VALUES($1,$2,1,1,'local','password',statement_timestamp(),statement_timestamp()+interval '1 hour')",
     [digest, id],
   );
+
   const read = () =>
     pools.data.query<Record<string, unknown>[]>('SELECT * FROM public.resolve_session($1)', [
       digest,
     ]);
+
   const rows = await read();
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.user_id, id);
@@ -770,6 +778,7 @@ test('real lock timeout retries are bounded and diagnostic failures do not chang
   const runner = new ProductTransactionRunner(pools, {
     lockTimeoutMs: 20,
     maxRetries: 2,
+
     onMetric: (metric) => {
       if (metric === 'retry') retryCount++;
     },
@@ -836,10 +845,12 @@ test('OIDC provider version change prevents re-enabled provider reviving session
     "INSERT INTO application_session(token_hash,user_id,auth_epoch,method,assurance,authenticated_at,expires_at,external_issuer,external_subject,binding_version,provider_version) VALUES($1,$2,1,'oidc','oidc',statement_timestamp(),statement_timestamp()+interval '1 hour',$3,'subject',1,1)",
     [digest, id, issuer],
   );
+
   const read = () =>
     pools.data.query<Record<string, unknown>[]>('SELECT * FROM public.resolve_session($1)', [
       digest,
     ]);
+
   assert.equal((await read()).length, 1);
   await pools.sync.query('UPDATE oidc_provider SET enabled=false,version=2 WHERE issuer=$1', [
     issuer,
@@ -960,6 +971,7 @@ test('product runner retries injected 40P01 and 40001 with rollback and one comm
     let retries = 0;
     const runner = new ProductTransactionRunner(pools, {
       maxRetries: 2,
+
       onMetric: (metric) => {
         if (metric === 'retry') retries++;
       },

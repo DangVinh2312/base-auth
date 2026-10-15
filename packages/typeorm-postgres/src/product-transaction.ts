@@ -11,17 +11,21 @@ import {
 } from './tenant-transaction.js';
 
 export type ProductConnectionPurpose = 'data' | 'identity' | 'authority' | 'sync' | 'bootstrap';
+
 export type ProductTransactionMode =
   'read' | 'write' | 'identity' | 'revoke' | 'admin' | 'sync' | 'bootstrap';
+
 export interface ProductTransaction {
   readonly mode: ProductTransactionMode;
   readonly revision: string;
   readonly manager: EntityManager;
 }
+
 export interface ProductTransactionOptions {
   readonly deadlineMs?: number;
   readonly lockTimeoutMs?: number;
   readonly maxRetries?: number;
+
   readonly onMetric?: (
     metric:
       | 'pool_wait'
@@ -53,6 +57,7 @@ export class ProductTransactionRunner {
   readonly #deadline: number;
   readonly #lock: number;
   readonly #retries: number;
+
   constructor(
     pools: Readonly<Partial<Record<ProductConnectionPurpose, DataSource>>>,
     options: ProductTransactionOptions = {},
@@ -68,6 +73,7 @@ export class ProductTransactionRunner {
     if (!Number.isInteger(this.#retries) || this.#retries < 0)
       throw new TypeError('Invalid retry count');
   }
+
   #metric(
     metric: Parameters<NonNullable<ProductTransactionOptions['onMetric']>>[0],
     mode: ProductTransactionMode,
@@ -79,6 +85,7 @@ export class ProductTransactionRunner {
       /* Diagnostics must not change commit semantics. */
     }
   }
+
   /**
    * `serialize` joins a transaction-scoped advisory queue before the fence: waiters hold no fence
    * share, so queued work cannot keep an exclusive revoke off the fence. Waiters still hold a pool

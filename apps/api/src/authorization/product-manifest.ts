@@ -29,6 +29,7 @@ export function createProductAuthorizationCore(): AuthorizationCore {
     values: createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() }),
   });
 }
+
 // Fragment order is part of the declarations; keep it stable.
 const fragments = [documentDeclarations, accountDeclarations];
 export const productDeclarations: SystemDeclarations = {
@@ -39,6 +40,7 @@ export const productDeclarations: SystemDeclarations = {
   boundaries: fragments.flatMap((f) => f.boundaries),
   relations: [],
 };
+
 /** Release content is data only; codecs are provenance and never enter the manifest hash. */
 export const productReleaseSource: ProductReleaseSource = {
   // Release 2 (ADR 0012): Root left IAM; no system role, system grant or rank boundary remains.
@@ -52,9 +54,11 @@ export const productReleaseSource: ProductReleaseSource = {
   boundaryBindings: [],
   removeBoundaryBindings: [],
 };
+
 export function createProductRelease(core: AuthorizationCore): ProductReleaseManifest {
   return prepareProductRelease(productReleaseSource, core);
 }
+
 export const productBindings: ProductStorageBindings = {
   resources: [documentBinding, accountBinding],
   domains: {},

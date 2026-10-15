@@ -11,6 +11,7 @@ import {
 // Moment adapter imports nothing here — copy the cases or promote them when a second adapter exists.
 interface Case {
   readonly name: string;
+
   readonly holds: (codec: ScalarCodec<string>) => boolean;
 }
 
@@ -49,36 +50,44 @@ const invalidTimestamps: readonly [string, unknown][] = [
 const timestampCases: readonly Case[] = [
   {
     name: 'pads fractional digits to six places',
+
     holds: (c) => c.normalize('2026-10-14T00:00:00.1Z') === '2026-10-14T00:00:00.100000Z',
   },
   {
     name: 'adds a six-digit fraction to whole seconds',
+
     holds: (c) => c.normalize('2026-10-14T00:00:00Z') === '2026-10-14T00:00:00.000000Z',
   },
   {
     name: 'keeps full microsecond precision',
+
     holds: (c) => c.normalize('2026-10-14T00:00:00.123456Z') === '2026-10-14T00:00:00.123456Z',
   },
   {
     name: 'accepts valid leap day 2024-02-29',
+
     holds: (c) => c.normalize('2024-02-29T12:00:00Z') === '2024-02-29T12:00:00.000000Z',
   },
   {
     name: 'accepts 2000-02-29 (400-year leap)',
+
     holds: (c) => c.normalize('2000-02-29T12:00:00Z') === '2000-02-29T12:00:00.000000Z',
   },
   {
     name: 'accepts 23:59:59.999999',
+
     holds: (c) => c.normalize('2026-10-14T23:59:59.999999Z') === '2026-10-14T23:59:59.999999Z',
   },
   ...['0001', '0099', '0100', '9999'].map((year): Case => ({
     name: `year ${year} round-trips`,
+
     holds: (c) =>
       c.normalize(`${year}-12-31T23:59:59.000001Z`) === `${year}-12-31T23:59:59.000001Z` &&
       c.normalize(`${year}-01-01T00:00:00Z`) === `${year}-01-01T00:00:00.000000Z`,
   })),
   {
     name: 'years 0004 and 0096 keep leap day (proleptic Gregorian)',
+
     holds: (c) =>
       c.normalize('0004-02-29T00:00:00Z') === '0004-02-29T00:00:00.000000Z' &&
       c.normalize('0096-02-29T00:00:00Z') === '0096-02-29T00:00:00.000000Z' &&
@@ -87,6 +96,7 @@ const timestampCases: readonly Case[] = [
   },
   {
     name: '.000001 sorts before .000002 and not equal',
+
     holds: (c) => {
       const a = c.normalize('2026-10-14T00:00:00.000001Z');
       const b = c.normalize('2026-10-14T00:00:00.000002Z');
@@ -102,6 +112,7 @@ const timestampCases: readonly Case[] = [
   },
   {
     name: 'compare orders across seconds, days and years',
+
     holds: (c) => {
       const lo = c.normalize('0099-12-31T23:59:59.999999Z')!;
       const hi = c.normalize('0100-01-01T00:00:00Z')!;
@@ -110,6 +121,7 @@ const timestampCases: readonly Case[] = [
   },
   {
     name: 'normalize is idempotent',
+
     holds: (c) => {
       const once = c.normalize('2026-10-14T00:00:00.5Z')!;
       return c.normalize(once) === once;
@@ -117,6 +129,7 @@ const timestampCases: readonly Case[] = [
   },
   ...invalidTimestamps.map(([name, input]): Case => ({
     name: `rejects ${name}`,
+
     holds: (c) => c.normalize(input) === undefined,
   })),
 ];
@@ -138,6 +151,7 @@ const permissive: ScalarCodec<string> = {
     const ms = Date.parse(input);
     return Number.isNaN(ms) ? undefined : new Date(ms).toISOString().replace('Z', '000Z');
   },
+
   compare: (l, r) => (l === r ? 0 : l < r ? -1 : 1),
 };
 
@@ -247,9 +261,12 @@ describe('uuid codec', () => {
   });
   test('negative control: an uppercase-preserving codec fails the lowercase case', () => {
     const upper = lower.toUpperCase();
+
     const lowercases = (codec: ScalarCodec<string>) => codec.normalize(upper) === lower;
+
     const passThrough: ScalarCodec<string> = {
       normalize: (value) => (typeof value === 'string' ? value : undefined),
+
       compare: (l, r) => (l === r ? 0 : 1),
     };
     assert.equal(lowercases(uuid), true);
@@ -324,7 +341,11 @@ describe('boolean codec', () => {
 test('createStandardValueCodecs wires the supplied timestamp codec and freezes the table', () => {
   assert.equal(values.timestamp.normalize('2026-10-14T00:00:00.1Z'), '2026-10-14T00:00:00.100000Z');
   assert.ok(Object.isFrozen(values));
-  const marker: ScalarCodec<string> = { normalize: () => 'x', compare: () => 0 };
+  const marker: ScalarCodec<string> = {
+    normalize: () => 'x',
+
+    compare: () => 0,
+  };
   assert.equal(createStandardValueCodecs({ timestamp: marker }).timestamp, marker);
 });
 
@@ -350,6 +371,7 @@ test('timestamp codec ignores a host global locale with postformat', () => {
     name: 'x-postformat',
     months: dayjs.Ls.en!.months as string[],
     weekdays: dayjs.Ls.en!.weekdays as string[],
+
     postformat: (text: string) => text.replace(/\d/g, 'x'),
   };
   dayjs.locale('x-postformat', hostLocale);

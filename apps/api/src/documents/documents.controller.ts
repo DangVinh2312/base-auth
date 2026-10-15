@@ -17,14 +17,17 @@ import {
   sessionSecret,
 } from '../infrastructure/http-security.js';
 import { DOCUMENTS_HTTP_PORT, type DocumentsHttpPort } from './documents.http-port.js';
+
 @Controller('documents')
 export class DocumentsController {
   constructor(@Inject(DOCUMENTS_HTTP_PORT) private readonly documents: DocumentsHttpPort) {}
+
   @Get()
   @ProductAuthorize('document', 'read')
   list(@Req() req: HttpRequest): Promise<ProductPage> {
     return this.documents.list(sessionSecret(req, this.documents.config));
   }
+
   @Get(':id')
   @ProductAuthorize('document', 'read')
   async detail(@Req() req: HttpRequest, @Param('id') id: string): Promise<ProductRow> {
@@ -32,6 +35,7 @@ export class DocumentsController {
     if (!result) throw new NotFoundException();
     return result;
   }
+
   @Patch(':id')
   @ProductAuthorize('document', 'update')
   async update(@Req() req: HttpRequest, @Param('id') id: string, @Body() body: unknown) {

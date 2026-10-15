@@ -32,6 +32,7 @@ describe('data gateway', () => {
   let env: GatewayEnvironment;
   let gateway: DataGateway;
   let runner: TenantTransactionRunner;
+
   // Each test runs inside real tenant transactions holding the shared fence (Task 7).
   const inTx = (body: (txA: TenantTransaction, txB: TenantTransaction) => Promise<void>) => () =>
     runner.run(tenantA, 'read', (a) => runner.run(tenantB, 'read', (b) => body(a, b)));
@@ -53,6 +54,7 @@ describe('data gateway', () => {
       if (page.items.length < 2) return { ids, total: page.total };
     }
   };
+
   const authorizedIds = (plan: AuthorizedPlan) => {
     const now = canonicalTimestamp(new Date().toISOString())!;
     return env.fixtures.A.submissions

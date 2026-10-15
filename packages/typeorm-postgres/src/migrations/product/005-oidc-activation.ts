@@ -6,6 +6,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  */
 export class ProductOidcActivation1792108800005 implements MigrationInterface {
   name = 'ProductOidcActivation1792108800005';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       ALTER TABLE public.one_time_token DROP CONSTRAINT one_time_token_purpose_check;
@@ -14,6 +15,7 @@ export class ProductOidcActivation1792108800005 implements MigrationInterface {
       REVOKE SELECT ON public.security_bootstrap_state FROM product_identity;
     `);
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('OIDC activation purpose requires explicit restore'));
   }

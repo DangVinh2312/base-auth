@@ -8,6 +8,7 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  */
 export class ProductAccountRank1792108800006 implements MigrationInterface {
   name = 'ProductAccountRank1792108800006';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       CREATE VIEW public.account_rank WITH (security_invoker=true) AS
@@ -19,6 +20,7 @@ export class ProductAccountRank1792108800006 implements MigrationInterface {
       GRANT SELECT ON public.account_rank TO product_authority;
     `);
   }
+
   async down(runner: QueryRunner): Promise<void> {
     await runner.query('DROP VIEW public.account_rank');
   }

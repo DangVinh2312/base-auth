@@ -7,6 +7,7 @@ const errors = {
   409: { description: 'Bounded concurrency conflict' },
   503: { description: 'Authority or required capability unavailable' },
 };
+
 const fields = (names: readonly string[]) => ({
   type: 'object',
   additionalProperties: false,
@@ -33,6 +34,7 @@ const fields = (names: readonly string[]) => ({
     ]),
   ),
 });
+
 const operation = (
   description: string,
   example: unknown,
@@ -49,9 +51,11 @@ const operation = (
     ...errors,
   },
 });
+
 const post = (summary: string, example: unknown, body: readonly string[], auth = false) => ({
   post: operation(summary, example, body, auth),
 });
+
 export const productOpenApi = {
   openapi: '3.1.0',
   info: { title: 'Single product authorization API', version: '1' },

@@ -18,6 +18,7 @@ import type {
 } from './types.js';
 
 class Denied extends Error {}
+
 const deny = (reason: string): never => {
   throw new Denied(reason);
 };
@@ -145,6 +146,7 @@ function buildPlan(
       if (result !== true) deny('context_requirement_failed');
     }
   };
+
   requireContext(policy.contextRequirements);
 
   // Permission boundary: the stored requirement must equal the code's; exactly the user's
@@ -188,6 +190,7 @@ function buildPlan(
       return core.normalizeValue(kind, input.context[ref.name]);
     return undefined;
   };
+
   const bind =
     (parameters: RuleFact['parameters'] | undefined) =>
     (ref: ValueRef, kind: FieldKind): Scalar => {
@@ -199,6 +202,7 @@ function buildPlan(
           : resolveCommon(ref, kind);
       return value ?? deny(`unresolved_value:${ref.from}`);
     };
+
   const tables = { resources: declarations.resources, relations: declarations.relations };
 
   // Applicable rules: this permission, an assigned role or this identity.
@@ -235,6 +239,7 @@ function buildPlan(
     );
     (rule.effect === 'allow' ? allow : denies).push(lowered);
   }
+
   const exception = (effect: 'allow' | 'deny'): PlanExpr => ({
     op: 'exception',
     effect,
@@ -242,6 +247,7 @@ function buildPlan(
     identity: principal.id,
     roles,
   });
+
   const required = lowerExpr(
     policy.requiredScope,
     resource.key,

@@ -34,6 +34,7 @@ import {
 
 export type ProductDatabasePurpose =
   'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox';
+
 export const productMigrations = [
   ProductInitial1792108800000,
   ProductProtection1792108800001,
@@ -48,6 +49,7 @@ export const productMigrations = [
   ProductAuditOutboxPendingIndex1792108800011,
   ProductIamRoot1792108800012,
 ];
+
 export function productDataSourceOptions(
   connection: PostgresConnectionSettings,
 ): DataSourceOptions {
@@ -63,6 +65,7 @@ export function productDataSourceOptions(
     migrations: productMigrations,
   };
 }
+
 /**
  * Offline provisioning only; this credential must never be wired into the API. `migrations` is
  * the forward list to run (default: all). Upgrade rehearsals pass a prefix, e.g. up to 011.
@@ -190,10 +193,13 @@ const authorityTables = [
   'permission_boundary_entry',
   'user_boundary',
 ];
+
 const tables = (privileges: readonly string[], names: readonly string[]) =>
   names.flatMap((name) => privileges.map((p) => `table:${name}:${p}`));
+
 const columns = (privilege: string, table: string, names: readonly string[]) =>
   names.map((name) => `column:${table}.${name}:${privilege}`);
+
 const sharedFence = 'function:authz_acquire_shared_fence(integer):EXECUTE';
 const resolveSession = 'function:resolve_session(bytea):EXECUTE';
 const audit = 'table:audit_outbox:INSERT';
@@ -399,6 +405,7 @@ const sessionOwnerAcl: readonly string[] = [
     'guard_root_lifecycle()',
   ].map((fn) => `function:${fn}:EXECUTE`),
 ];
+
 /**
  * `grantee`-filtered grants on every table, column and function in a non-system schema (objects
  * outside public are reported schema-qualified), plus schema grants when `withSchemas`.

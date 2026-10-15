@@ -10,12 +10,18 @@ type KeyKind = 'integer' | 'uuid' | 'string';
 type Effect = 'allow' | 'deny';
 
 const tenantId = () => PrimaryColumn({ name: 'tenant_id', type: 'uuid' });
+
 const pkUuid = (name: string) => PrimaryColumn({ name, type: 'uuid' });
+
 const pkBytes = (name: string) => PrimaryColumn({ name, type: 'bytea' });
+
 const uuid = (name: string, nullable = false) => Column({ name, type: 'uuid', nullable });
+
 const bytes = (name: string, nullable = false) => Column({ name, type: 'bytea', nullable });
+
 const text = (name: string, length: number, nullable = false) =>
   Column({ name, type: 'varchar', length, nullable });
+
 const time = (name: string, nullable = false) =>
   Column({ name, type: 'timestamptz', precision: 6, nullable });
 

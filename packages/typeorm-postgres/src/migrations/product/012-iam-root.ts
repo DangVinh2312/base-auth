@@ -22,6 +22,7 @@ export const resolveSessionKindBody = `
           AND ((s.method='local' AND u.email_verified AND c.version=s.credential_version)
             OR (s.method='oidc' AND e.enabled AND e.binding_version=s.binding_version AND EXISTS (SELECT FROM public.oidc_provider p WHERE p.issuer=e.issuer AND p.enabled AND p.version=s.provider_version)))
         `;
+
 /** 004 guard without its user_role branch; every other branch keeps its semantics. */
 export const productRowsIamBody = `
       DECLARE old_code boolean:=false; new_code boolean:=false; old_role bytea; new_role bytea;
@@ -50,6 +51,7 @@ export const productRowsIamBody = `
         END IF;
         IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
       END `;
+
 /**
  * iam→root once: bootstrap login, READ COMMITTED (each EXISTS below sees facts committed after the
  * caller locked the target), pending, unmarked, Rootless, fact-free and without a live invitation.
@@ -91,6 +93,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END`;
+
 /** Deferred: a promotion commits only with the marker naming that account. */
 export const requireRootMarkerKindBody = `
 BEGIN
@@ -102,6 +105,7 @@ BEGIN
   END IF;
   RETURN NULL;
 END`;
+
 /** FOR SHARE conflicts with the promotion's FOR NO KEY UPDATE (spec 3.3); FK KEY SHARE does not. */
 export const guardRootNotIamSubjectBody = `
 DECLARE v_kind text;
@@ -113,6 +117,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END`;
+
 export const guardRootActivationBody = `
 DECLARE v_kind text;
 BEGIN
@@ -124,6 +129,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END`;
+
 /** OLD.kind decides; 004 (protect_account_lifecycle) still bounds identity and authority. */
 export const guardRootLifecycleBody = `
 BEGIN
@@ -164,6 +170,7 @@ const disabledDuringConversion = ['role_definition', 'policy_rule', 'user_role',
 
 export class ProductIamRoot1792108800012 implements MigrationInterface {
   name = 'ProductIamRoot1792108800012';
+
   async up(runner: QueryRunner): Promise<void> {
     const m = runner.manager;
     // 1. Lock and read the application state and the marker.
@@ -293,6 +300,7 @@ export class ProductIamRoot1792108800012 implements MigrationInterface {
         [await protectedStateHash(m)],
       );
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('irreversible; restore from backup'));
   }

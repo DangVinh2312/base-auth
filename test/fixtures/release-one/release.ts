@@ -33,6 +33,7 @@ export const releaseOneSource: ProductReleaseSource = {
   boundaryBindings: [],
   removeBoundaryBindings: [],
 };
+
 export function prepareReleaseOne(
   core: AuthorizationCore,
   source: ProductReleaseSource = releaseOneSource,

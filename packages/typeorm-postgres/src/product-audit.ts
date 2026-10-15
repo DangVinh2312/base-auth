@@ -29,6 +29,7 @@ export type ProductIdentityAuditKind =
   | 'identity.oidc-login'
   | 'identity.oidc-reauth'
   | 'identity.oidc-unlink';
+
 /**
  * Typed audit events (ADR 0009). `access.*` records an authorization decision (obligation audit@1);
  * every other kind records an effect. No free-form metadata: only the fields below are written.

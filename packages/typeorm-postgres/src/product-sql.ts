@@ -43,6 +43,7 @@ export interface BoundPredicate {
 }
 
 const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
+
 export const quoteIdentifier = (name: string): string => {
   if (!identifier.test(name)) throw new TypeError(`Unsafe SQL identifier: ${JSON.stringify(name)}`);
   return `"${name}"`;
@@ -56,6 +57,7 @@ export const fieldPgTypes: Readonly<Record<FieldKind, string>> = {
   boolean: 'boolean',
   timestamp: 'timestamptz',
 };
+
 export const keyPgTypes: Readonly<Record<KeyKind, string>> = {
   integer: 'int8',
   uuid: 'uuid',
@@ -153,6 +155,7 @@ type Scope =
   | { readonly kind: 'identity'; readonly column: string };
 
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
+
 const comparison = { eq: '=', lt: '<', lte: '<=' } as const;
 
 /** Compiles a plan expression in the scope of `alias` (allow-listed aliases only: r, e<n>, t<n>, x<n>). */
@@ -294,7 +297,9 @@ export function compileWith(
   if (!/^[a-z]$/.test(alias)) throw new TypeError('Predicate alias must be a single letter');
   const binding = registry.resource(plan.resource);
   const counters = { e: 0, t: 0, x: 0 };
+
   const nextAlias = (prefix: 'e' | 't' | 'x') => `${alias}_${prefix}${++counters[prefix]}`;
+
   const predicate = compileExpression(
     plan.predicate,
     registry,
@@ -321,6 +326,7 @@ export function compilePlan(
 }
 
 let namedSequence = 0;
+
 /** QueryBuilder form: process-unique named parameters so several predicates can share one query. */
 export function compileNamed(
   plan: UserAuthorizedPlan,

@@ -17,6 +17,7 @@ export interface TestPostgres {
   /** Non-superuser provisioning principal (LOGIN CREATEDB CREATEROLE), like production. */
   admin: Connection;
   superuser: Connection;
+
   stop(): Promise<void>;
 }
 
@@ -44,6 +45,7 @@ export async function startPostgres(): Promise<TestPostgres> {
   return {
     superuser,
     admin: { ...superuser, username: 'authz_provisioner', password: adminPassword },
+
     stop: async () => {
       await container.stop();
     },

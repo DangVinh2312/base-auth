@@ -22,10 +22,12 @@ import {
   setCookie,
 } from '../infrastructure/http-security.js';
 import { AUTH_HTTP_PORT, type AuthHttpPort } from './auth.http-port.js';
+
 const recoveryLogger = new Logger('ProductRecovery');
 @Controller('auth')
 export class AuthController {
   constructor(@Inject(AUTH_HTTP_PORT) private readonly auth: AuthHttpPort) {}
+
   @Get('csrf')
   @ProductPublic()
   csrf(@Res({ passthrough: true }) res: HttpResponse) {
@@ -33,6 +35,7 @@ export class AuthController {
     setCookie(res, this.auth.config, 'csrf', csrfToken, 3600);
     return { csrfToken };
   }
+
   @HttpCode(200)
   @Post('login')
   @ProductPublic()
@@ -48,6 +51,7 @@ export class AuthController {
     setCookie(res, this.auth.config, 'session', session.secret, 43200);
     return { expiresAt: session.expiresAt.toISOString() };
   }
+
   @HttpCode(200)
   @Post('activate')
   @ProductPublic()
@@ -58,6 +62,7 @@ export class AuthController {
     await this.auth.identity.activate(dto.token!, dto.password!, req.ip || 'unknown');
     return { status: 'activated' };
   }
+
   @HttpCode(200)
   @Post('reauthenticate')
   @ProductAuthenticated()
@@ -83,12 +88,14 @@ export class AuthController {
     );
     return { expiresAt: session.expiresAt.toISOString() };
   }
+
   @Get('session')
   @ProductAuthenticated()
   async current(@Req() req: HttpRequest) {
     const session = await this.auth.currentSession(sessionSecret(req, this.auth.config));
     return { userId: session.userId, method: session.method, assurance: session.assurance };
   }
+
   @HttpCode(200)
   @Post('logout')
   @ProductAuthenticated()
@@ -98,6 +105,7 @@ export class AuthController {
     setCookie(res, this.auth.config, 'session', '', 0);
     return { status: 'revoked' };
   }
+
   @HttpCode(200)
   @Post('recovery/request')
   @ProductPublic()
@@ -114,6 +122,7 @@ export class AuthController {
         .catch(() => recoveryLogger.warn('Recovery delivery failed'));
     return { status: 'accepted' };
   }
+
   @HttpCode(200)
   @Post('recovery/reset')
   @ProductPublic()
@@ -124,6 +133,7 @@ export class AuthController {
     await this.auth.identity.resetPassword(dto.token!, dto.password!, req.ip || 'unknown');
     return { status: 'reset' };
   }
+
   @HttpCode(200)
   @Post('password')
   @ProductAuthenticated()
@@ -139,6 +149,7 @@ export class AuthController {
     );
     return { status: 'changed' };
   }
+
   @HttpCode(200)
   @Post('logout-all')
   @ProductAuthenticated()

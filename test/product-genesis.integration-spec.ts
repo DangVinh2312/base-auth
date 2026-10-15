@@ -47,10 +47,13 @@ async function freshDatabase(name: string) {
     actor: randomUUID() as IdentityId,
     capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
   });
+
   const sequence = async () =>
     (await sync.query<{ s: string }[]>('SELECT release_sequence::text s FROM authz_state'))[0]!.s;
+
   return { sync, reconciler, sequence };
 }
+
 const release = (sequence: string, predecessor: string) =>
   prepareProductRelease({ ...productReleaseSource, sequence, predecessor }, core);
 

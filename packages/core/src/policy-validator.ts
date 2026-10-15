@@ -27,8 +27,10 @@ const boundaryRequirements = ['required', 'optional'];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
 const isVersion = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+
 const isScalar = (value: unknown) => typeof value === 'string' || typeof value === 'boolean';
 
 /** JSON with sorted object keys; the canonical form used for manifest hashing. */
@@ -124,6 +126,7 @@ export function validateDeclarations(
   };
   const validators = new Set(declarations.capabilities.validators);
   const handlers = new Set(declarations.capabilities.obligationHandlers);
+
   const checkContextRequirements = (requirements: unknown, at: string) => {
     if (!Array.isArray(requirements))
       return void errors.push(`${at}: contextRequirements must be an array`);
@@ -396,9 +399,12 @@ export function validateDeclarations(
 
   const sortByRef = <T extends { key: string; version: number }>(items: T[]) =>
     items.sort((a, b) => (refKey(a) < refKey(b) ? -1 : refKey(a) > refKey(b) ? 1 : 0));
+
   const unique = (items: readonly string[]) => [...new Set(items)].sort();
+
   const byJson = <T>(items: readonly T[]) =>
     [...items].sort((a, b) => (canonicalJson(a) < canonicalJson(b) ? -1 : 1));
+
   const normalizedPolicies = sortByRef(
     Object.values(policies).map((policy) => ({
       ...policy,
@@ -428,10 +434,12 @@ export function validateDeclarations(
   };
   const canonical = canonicalJson(manifest);
   const copy = JSON.parse(canonical) as typeof manifest;
+
   const index = <T extends { key: string; version?: number }>(
     items: T[],
     key: (item: T) => string,
   ) => Object.fromEntries(items.map((item) => [key(item), item]));
+
   const result: ValidatedDeclarations = deepFreeze({
     resources: index(copy.resources, (r) => r.key),
     relations: index(copy.relations, refKey),

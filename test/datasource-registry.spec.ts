@@ -50,10 +50,12 @@ function harness(overrides: Partial<TenantDataSourceRegistryOptions> = {}) {
     poolSize: { data: 5, authority: 2, sync: 2 },
     maxConnections: 14,
     idleTimeoutMs,
+
     resolveRoute: (tenant: TenantId, purpose: ConnectionPurpose) => {
       resolved.push(`${tenant}/${purpose}`);
       return Promise.resolve(routes.get(`${tenant}/${purpose}`));
     },
+
     createDataSource: (options) => {
       const fake: FakeDataSource = {
         database: String(options.database),
@@ -71,14 +73,18 @@ function harness(overrides: Partial<TenantDataSourceRegistryOptions> = {}) {
           }
           fake.initialized++;
         },
+
         destroy: () => {
           fake.destroyed++;
           return Promise.resolve();
         },
+
         query: () => Promise.resolve([{ tenant_id: anchors.get(fake.database) }]),
+
         fake,
       } as never;
     },
+
     ...overrides,
   });
   return {
@@ -87,6 +93,7 @@ function harness(overrides: Partial<TenantDataSourceRegistryOptions> = {}) {
     anchors,
     routes,
     resolved,
+
     failInit: () => (failNextInit = true),
   };
 }

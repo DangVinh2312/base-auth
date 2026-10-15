@@ -56,6 +56,7 @@ export const productRowsBody = `
         END IF;
         IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
       END `;
+
 export const accountLifecycleBody = `
       BEGIN
         IF current_user='product_identity' AND NEW.state IS DISTINCT FROM OLD.state
@@ -67,8 +68,10 @@ export const accountLifecycleBody = `
         END IF;
         RETURN NEW;
       END `;
+
 export class ProductProtectionGuards1792108800004 implements MigrationInterface {
   name = 'ProductProtectionGuards1792108800004';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       CREATE OR REPLACE FUNCTION public.protect_product_rows() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$${productRowsBody}$fn$;
@@ -81,6 +84,7 @@ export class ProductProtectionGuards1792108800004 implements MigrationInterface 
       CREATE TRIGGER protect_account_lifecycle BEFORE UPDATE ON public.app_user FOR EACH ROW EXECUTE FUNCTION public.protect_account_lifecycle();
     `);
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('Protection guards require explicit restore'));
   }

@@ -47,7 +47,9 @@ function classify(value: Classification): MethodDecorator {
 }
 
 export const ProductPublic = (): MethodDecorator => classify({ kind: 'public' });
+
 export const ProductAuthenticated = (): MethodDecorator => classify({ kind: 'authenticated' });
+
 export const ProductAuthorize = (resource: string, action: string): MethodDecorator =>
   classify({ kind: 'authorize', resource, action });
 

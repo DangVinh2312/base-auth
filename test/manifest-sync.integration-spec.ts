@@ -33,7 +33,9 @@ const { parseTenantId } = core;
 const tenantA = parseTenantId('00000000-0000-4000-8000-0000000000a8');
 const tenantB = parseTenantId('00000000-0000-4000-8000-0000000000b8');
 const deployer = 'd0000000-0000-4000-8000-00000000000d' as IdentityId;
+
 const bytes = (value: string) => Buffer.from(value, 'utf8');
+
 const capabilities = { validators: [], obligationHandlers: [] };
 const submissionKey = '9007199254740993';
 const siteKey = 'd97eecc9-8f23-4a76-a9aa-82b9d4ef33ac';
@@ -74,6 +76,7 @@ function release(
     ...changes,
   };
 }
+
 const seed = (owner: string, key: string, target = siteKey) => ({
   owner,
   key,
@@ -82,6 +85,7 @@ const seed = (owner: string, key: string, target = siteKey) => ({
   target: { type: 'site', key: { kind: 'uuid' as const, value: target } },
   startsAt: '2026-10-12T00:00:00.000000Z',
 });
+
 // Release 2: approval@2 replaces approval@1 for approve, new export action with a default grant.
 const v2Source = {
   ...declarationsSource,
@@ -138,11 +142,13 @@ describe('manifest reconciliation (boot sync)', () => {
   let runner: TenantTransactionRunner;
   let admin: pg.Client;
   const passwords = new Map<string, string>();
+
   const password = (tenant: TenantId, purpose: ConnectionPurpose) => {
     const key = `${tenant}/${purpose}`;
     if (!passwords.has(key)) passwords.set(key, randomBytes(24).toString('base64url'));
     return passwords.get(key)!;
   };
+
   const as = (
     tenant: TenantId,
     purpose: ConnectionPurpose,
@@ -153,6 +159,7 @@ describe('manifest reconciliation (boot sync)', () => {
     password: password(tenant, purpose),
     database,
   });
+
   const fence = async () =>
     (
       await admin.query<{ revision: string; sequence: string; hash: string }>(
@@ -160,11 +167,13 @@ describe('manifest reconciliation (boot sync)', () => {
          FROM authz_fence`,
       )
     ).rows[0]!;
+
   const count = async (sql: string, params: unknown[] = []) =>
     Number(
       (await admin.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${sql}`, params)).rows[0]!
         .n,
     );
+
   const rejected = async (attempt: () => Promise<unknown>, reason: string) => {
     const before = await fence();
     await assert.rejects(

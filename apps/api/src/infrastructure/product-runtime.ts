@@ -26,13 +26,16 @@ import {
   productBindings,
 } from '../authorization/product-manifest.js';
 import type { AppConfig } from '../config/app.config.js';
+
 export type RecoveryDelivery = (userId: string, secret: string) => Promise<void>;
+
 export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShutdown {
   readonly readiness = new ReadinessGate();
   readonly authorization: ProductAuthorization;
   readonly identity: ProductIdentityService;
   readonly oidc: ProductOidcService;
   readonly release: ProductReleaseManifest;
+
   private constructor(
     readonly config: AppConfig,
     private readonly core: AuthorizationCore,
@@ -56,6 +59,7 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
       [{ resource: 'document', action: 'update', fields: ['title'] }],
     );
   }
+
   static async create(
     config: AppConfig,
     recoveryDelivery?: RecoveryDelivery,
@@ -108,6 +112,7 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
       throw error;
     }
   }
+
   async onApplicationBootstrap(): Promise<void> {
     // Exact grants, including those of the application document migration.
     await verifyProductPrivileges(this.pools, {
@@ -146,13 +151,16 @@ export class ProductRuntime implements OnApplicationBootstrap, OnApplicationShut
     await this.pools.data.query('SELECT id,title,owner_id,state,object_id FROM document LIMIT 0');
     this.readiness.markReady();
   }
+
   #closed: Promise<unknown> | undefined;
+
   /** Idempotent (TypeORM destroy() throws when repeated): main.ts and Nest's shutdown hook may both call it. */
   async onApplicationShutdown(): Promise<void> {
     // A rejection is memoized too: retrying destroy() on half-closed pools would only throw again.
     this.#closed ??= Promise.all(Object.values(this.pools).map((p) => p.destroy()));
     await this.#closed;
   }
+
   async currentSession(secret: string): Promise<ProductSessionIdentity> {
     return this.runner.run('identity', (tx) => this.identity.authenticate(tx, secret));
   }

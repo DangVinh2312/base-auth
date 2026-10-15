@@ -31,8 +31,11 @@ import { startPostgres, withClient, type TestPostgres } from './setup-postgres.t
 // The codec composition the API runtime and the CLI use.
 const core = createProductAuthorizationCore();
 const fmt = `'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'`;
+
 const utc = (column: string) => `to_char((${column}) AT TIME ZONE 'UTC', ${fmt})`;
+
 const utf8 = (value: string) => Buffer.from(value);
+
 const cutoff = '2026-10-14T12:00:00.123456Z';
 const denyBefore = '2026-10-14T12:00:00.000002Z';
 const rows = [
@@ -44,7 +47,9 @@ const rows = [
   { key: '6', occurredAt: '2026-10-14T12:00:00.1Z', edge: 'expired' }, // allow edge expired
   { key: '7', occurredAt: '2026-10-14T12:00:00.05Z', edge: 'live' }, // visible
 ].map((row) => ({ ...row, objectId: randomUUID() }));
+
 const literal = (value: string) => ({ from: 'literal' as const, value });
+
 const window = { key: 'window', version: 1 };
 const boundary = { key: 'cutoff', version: 1 };
 const cutoffScope: Expr = { op: 'lt', field: 'occurredAt', value: literal(cutoff) };

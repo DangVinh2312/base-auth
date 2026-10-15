@@ -31,7 +31,9 @@ import { startPostgres, withClient, type TestPostgres } from './setup-postgres.t
 
 const core = createProductAuthorizationCore();
 const releaseTwo = createProductRelease(core);
+
 const utf8 = (value: string) => Buffer.from(value);
+
 const password = 'a long unique upgrade fixture password';
 const capabilities = { validators: ['fresh@1'], obligationHandlers: ['audit@1'] };
 const rootBoundary = [
@@ -58,10 +60,13 @@ interface ReleaseOne {
   readonly migration: DataSource;
   readonly runner: ProductTransactionRunner;
   readonly release: one.ProductReleaseManifest;
+
   /** Real provisioning with every migration: 012 runs as product_migration (spec 4.1). */
   readonly upgrade: () => Promise<unknown>;
+
   readonly close: () => Promise<void>;
 }
+
 /** A database migrated to 011 by real provisioning and synced with release 1 by 50d6053 code. */
 async function releaseOneDatabase(name: string, source = releaseOneSource): Promise<ReleaseOne> {
   await withClient(fixture.superuser, (c) => c.query(`CREATE DATABASE ${name}`));
@@ -83,13 +88,16 @@ async function releaseOneDatabase(name: string, source = releaseOneSource): Prom
     migration,
     runner,
     release,
+
     upgrade: () => provisionProductDatabase(admin, passwords),
+
     close: async () => {
       for (const pool of Object.values(pools)) await pool.destroy();
       await migration.destroy();
     },
   };
 }
+
 const pending = async (db: ReleaseOne, email: string): Promise<IdentityId> => {
   const id = randomUUID() as IdentityId;
   await db.migration.query(
@@ -98,6 +106,7 @@ const pending = async (db: ReleaseOne, email: string): Promise<IdentityId> => {
   );
   return id;
 };
+
 /** Table-owner tampering for states no command can reach (guards off for one statement). */
 async function asOwner(db: ReleaseOne, sql: string, params: unknown[]): Promise<void> {
   await db.migration.transaction(async (m) => {
@@ -106,6 +115,7 @@ async function asOwner(db: ReleaseOne, sql: string, params: unknown[]): Promise<
     for (const t of userRoleGuards) await m.query(`ALTER TABLE user_role ENABLE TRIGGER ${t}`);
   });
 }
+
 /** 012 refused: everything rolled back, the database is still at release 1 without `kind`. */
 async function refusedUpgrade(db: ReleaseOne, message: RegExp, label = String(message)) {
   await assert.rejects(db.upgrade(), message, label);
@@ -119,6 +129,7 @@ async function refusedUpgrade(db: ReleaseOne, message: RegExp, label = String(me
     label,
   );
 }
+
 const syncReleaseTwo = (db: ReleaseOne) =>
   new ProductManifestReconciler(db.runner, {
     core,
@@ -142,6 +153,7 @@ test('unmarked release 1: drift and a stray holder roll back; then 012 upgrades 
   try {
     // Binary of release 2 on the 011 schema: the startup probe refuses it.
     await assert.rejects(verifyProductPrivileges(db.pools), /privilege drift|protection drift/);
+
     const relabel = (label: string) =>
       db.migration.transaction(async (m) => {
         await m.query('ALTER TABLE role_definition DISABLE TRIGGER protect_product_rows');
@@ -151,6 +163,7 @@ test('unmarked release 1: drift and a stray holder roll back; then 012 upgrades 
         ]);
         await m.query('ALTER TABLE role_definition ENABLE TRIGGER protect_product_rows');
       });
+
     await relabel('drift');
     await refusedUpgrade(db, /code-owned facts drifted; repair before migration/);
     await relabel('Reviewer');
@@ -228,7 +241,9 @@ test('a Root holder keeps state and credential and loses every IAM fact; other h
       ]);
     });
     const other = await pending(db, 'other@example.test');
+
     const holder = (sql: string, user: string) => asOwner(db, sql, [user, utf8('system.root')]);
+
     await holder('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', other);
     await refusedUpgrade(db, /more than one Root holder/);
     await holder('DELETE FROM user_role WHERE user_id=$1 AND role_key=$2', target);
@@ -264,6 +279,7 @@ test('a Root holder keeps state and credential and loses every IAM fact; other h
 test('a pending or suspended Root holder keeps its state and credential through 012 (spec 4.3)', async () => {
   const kindAndState = (db: ReleaseOne, id: string) =>
     db.migration.query('SELECT kind,state FROM app_user WHERE id=$1', [id]);
+
   const pendingDb = await releaseOneDatabase('upgrade_holder_pending');
   try {
     const target = await pending(pendingDb, 'pending-holder@example.test');
@@ -363,6 +379,7 @@ test('a revoked Root (real bootstrap → revoke-root) stays IAM; any allow sourc
       );
     });
     type Fact = readonly [string, readonly unknown[]];
+
     const rule = (subject: 'user_id' | 'role_key', effect: 'allow' | 'deny'): Fact => [
       `INSERT INTO policy_rule(rule_id,permission_key,${subject},effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'${effect}',$4,1,'{}','runtime')`,
       [
@@ -372,6 +389,7 @@ test('a revoked Root (real bootstrap → revoke-root) stays IAM; any allow sourc
         utf8('allAccounts'),
       ],
     ];
+
     const exception = (subject: 'user_id' | 'role_key'): Fact => [
       `INSERT INTO record_exception(exception_id,object_id,type_key,permission_key,${subject},effect,purpose,starts_at,reason,issued_by) VALUES($1,$2,$3,$4,$5,'allow','manual',statement_timestamp(),'fixture',$6)`,
       [
@@ -383,14 +401,17 @@ test('a revoked Root (real bootstrap → revoke-root) stays IAM; any allow sourc
         former,
       ],
     ];
+
     const assigned: Fact = [
       'INSERT INTO user_role(user_id,role_key) VALUES($1,$2)',
       [former, utf8('operator')],
     ];
+
     const write = (facts: readonly Fact[]) =>
       db.runner.run('admin', async (tx) => {
         for (const [sql, params] of facts) await tx.manager.query(sql, [...params]);
       });
+
     const clear = () =>
       db.runner.run('admin', async (tx) => {
         await tx.manager.query('DELETE FROM record_exception WHERE permission_key=$1', [
@@ -402,6 +423,7 @@ test('a revoked Root (real bootstrap → revoke-root) stays IAM; any allow sourc
         );
         await tx.manager.query('DELETE FROM user_role WHERE user_id=$1', [former]);
       });
+
     for (const [label, facts] of [
       ['direct allow rule', [rule('user_id', 'allow')]],
       ['allow rule through a role', [assigned, rule('role_key', 'allow')]],

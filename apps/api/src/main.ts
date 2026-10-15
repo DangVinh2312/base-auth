@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { ConfigError, loadConfig } from './config/app.config.js';
 import { ProductRuntime } from './infrastructure/product-runtime.js';
+
 let runtime: ProductRuntime | undefined;
 try {
   const config = loadConfig(process.env);

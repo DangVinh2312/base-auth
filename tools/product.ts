@@ -30,6 +30,7 @@ import {
 } from '../apps/api/dist/authorization/product-manifest.js';
 import { ProductDocument1792108800002 } from '../apps/api/dist/documents/migrations/product-document.js';
 import { adminConnection, requireEnv } from './env.ts';
+
 function connection(variable: string): PostgresConnectionSettings {
   try {
     const u = new URL(requireEnv(variable));
@@ -51,6 +52,7 @@ function connection(variable: string): PostgresConnectionSettings {
     throw new Error(`${variable} must be a PostgreSQL URL`);
   }
 }
+
 // Same codec composition as the API runtime (apps/api authorization/product-manifest).
 const core = createProductAuthorizationCore();
 const { isCanonicalUuid } = core;
@@ -64,6 +66,7 @@ for (let i = 0; i < args.length; i += 2) {
   flags[key] = value;
 }
 const sources: DataSource[] = [];
+
 async function source(purpose: string): Promise<DataSource> {
   const ds = await new DataSource(
     productDataSourceOptions(connection(`PRODUCT_${purpose.toUpperCase()}_DATABASE_URL`)),
@@ -71,6 +74,7 @@ async function source(purpose: string): Promise<DataSource> {
   sources.push(ds);
   return ds;
 }
+
 try {
   if (command === 'provision') {
     const admin = adminConnection();

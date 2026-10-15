@@ -7,6 +7,7 @@ export type ProductObligationHandler = (
   tx: ProductTransaction,
   plan: UserAuthorizedPlan,
 ) => Promise<void>;
+
 export type ProductObligationRegistry = Readonly<Record<string, ProductObligationHandler>>;
 
 /** Default handlers chosen at composition; `audit@1` appends the access event. */

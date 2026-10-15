@@ -48,12 +48,15 @@ function fixtureRuntime(options: { bootstrap?: 'real' } = {}) {
       p,
       {
         isInitialized: true,
+
         destroy(this: { isInitialized: boolean }) {
           if (!this.isInitialized) return Promise.reject(new Error('Pool already closed'));
           this.isInitialized = false;
           return Promise.resolve();
         },
+
         query: () => (log.push(`${p}.query`), Promise.reject(new Error('No database'))),
+
         // Transactions (manifest sync, provider rows) go through query runners.
         createQueryRunner: () => {
           log.push(`${p}.createQueryRunner`);
@@ -124,6 +127,7 @@ function exposure(app: INestApplication) {
   const operations = new Set<string>();
   const urls: string[] = [];
   const seen = new Set<object>();
+
   const walk = (value: unknown, depth: number) => {
     if (typeof value === 'string' && /postgres(ql)?:/i.test(value)) urls.push(value);
     if (value instanceof URL) return void urls.push(value.href);
@@ -142,6 +146,7 @@ function exposure(app: INestApplication) {
         else if ('value' in descriptor) walk(descriptor.value, depth + 1);
       }
   };
+
   for (const { instance } of app.get(DiscoveryService, { strict: false }).getControllers())
     for (const injected of Object.values(instance as object)) walk(injected, 0);
   return { keys, operations: [...operations].sort(), urls };
@@ -247,12 +252,14 @@ test('route inventory, OpenAPI, cookie/CSRF and handler exposure are pinned', as
   assert.deepEqual(csrf.headers.getSetCookie(), [
     `authz_csrf=${csrfToken}; Path=/; Max-Age=3600; SameSite=Lax; HttpOnly`,
   ]);
+
   const login = (headers: Record<string, string>) =>
     fetch(`${base}/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify({ email: 'person@example.test', password: 'x'.repeat(20) }),
     });
+
   const cookie = `authz_csrf=${csrfToken}`;
   const attempts: Record<string, string>[] = [
     { cookie, origin: config.origin.origin },
@@ -282,6 +289,7 @@ function unclassifiedController() {
   );
   return Unclassified;
 }
+
 /** Records runtime bootstrap calls instead of touching a database. */
 function spiedRuntime() {
   const { runtime } = fixtureRuntime();
@@ -330,12 +338,15 @@ test('the composed release and storage bindings are unchanged', () => {
 });
 
 type ModuleNode = DynamicModule | (abstract new (...args: never[]) => unknown);
+
 const moduleOf = (node: ModuleNode) => ('module' in node ? node.module : node);
+
 const declaresControllers = (node: ModuleNode) =>
   Boolean(
     ('module' in node && node.controllers?.length) ||
     (Reflect.getMetadata('controllers', moduleOf(node)) as unknown[] | undefined)?.length,
   );
+
 /** Same composition with `probe` added to the one module `target`. */
 function withProvider(node: ModuleNode, target: unknown, probe: object): ModuleNode {
   const dynamic: DynamicModule = 'module' in node ? node : { module: node as never };
@@ -345,6 +356,7 @@ function withProvider(node: ModuleNode, target: unknown, probe: object): ModuleN
     providers: [...(dynamic.providers ?? []), ...(dynamic.module === target ? [probe] : [])],
   } as DynamicModule;
 }
+
 function controllerModules(node: ModuleNode, found = new Set<unknown>()): Set<unknown> {
   if (declaresControllers(node)) found.add(moduleOf(node));
   for (const child of ('module' in node ? node.imports : undefined) ?? [])
@@ -355,6 +367,7 @@ function controllerModules(node: ModuleNode, found = new Set<unknown>()): Set<un
 test('no module that declares controllers can resolve the raw runtime', async () => {
   class RawRuntimeProbe {
     runtime: unknown;
+
     constructor(runtime: unknown) {
       this.runtime = runtime;
     }

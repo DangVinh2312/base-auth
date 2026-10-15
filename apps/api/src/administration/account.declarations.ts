@@ -37,6 +37,7 @@ export const accountDeclarations: Pick<
   ],
   boundaries: [],
 };
+
 export const accountBinding: ProductStorageBindings['resources'][number] = {
   resource: 'account',
   // IAM accounts only: Root and absent ids look the same to every account action.

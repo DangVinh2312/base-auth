@@ -67,6 +67,7 @@ export interface PermissionBoundary {
     readonly requiredScope: Expr;
   }[];
 }
+
 export type BoundaryRef = RelationRef;
 
 /** Reviewed scope template. Parameters are typed values bound per rule; no code, no SQL. */

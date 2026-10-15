@@ -18,6 +18,7 @@ const { evaluate, plan, validate } = core;
 
 const pending = submission('53000000-0000-4000-8000-000000000001', '1', { status: 'pending' });
 const approved = submission('53000000-0000-4000-8000-000000000002', '2', { status: 'approved' });
+
 const approveAllowException = (objectId: string): ExceptionFact => ({
   tenant: tenantA,
   objectId,
@@ -29,6 +30,7 @@ const approveAllowException = (objectId: string): ExceptionFact => ({
   expiresAt: null,
   revokedAt: null,
 });
+
 const approveInput = (assurance: number) =>
   input({ action: 'approve', principal: { id: alice, assurance } });
 
@@ -172,6 +174,7 @@ test('missing validator or obligation handler fails readiness and runtime', () =
 
 test('no arbitrary JS, SQL strings, admin-supplied not, or unknown value sources', () => {
   const base = declarations();
+
   const withTemplate = (expression: unknown) =>
     validate(
       declarations({
@@ -187,6 +190,7 @@ test('no arbitrary JS, SQL strings, admin-supplied not, or unknown value sources
         ],
       }),
     );
+
   assert.equal(withTemplate({ op: 'sql', sql: '1=1' }).ok, false);
   assert.equal(withTemplate(() => true).ok, false);
   assert.equal(withTemplate({ op: 'eq', field: 'status', value: '1 OR 1=1' }).ok, false);

@@ -17,6 +17,7 @@ export const MANIFEST_SYNC = Symbol('MANIFEST_SYNC');
  */
 export interface ManifestSyncPort {
   tenants(): readonly string[] | Promise<readonly string[]>;
+
   reconcile(tenant: string): Promise<unknown>;
 }
 

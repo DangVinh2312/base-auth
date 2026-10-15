@@ -20,8 +20,10 @@ BEGIN
   END IF;
   RETURN NULL;
 END`;
+
 export class ProductRootMarker1792108800007 implements MigrationInterface {
   name = 'ProductRootMarker1792108800007';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       CREATE FUNCTION public.require_root_marker() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$${requireRootMarkerBody}$fn$;
@@ -30,6 +32,7 @@ export class ProductRootMarker1792108800007 implements MigrationInterface {
         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.require_root_marker();
     `);
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('Root marker guard requires explicit restore'));
   }

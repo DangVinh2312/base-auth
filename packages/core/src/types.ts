@@ -2,10 +2,12 @@ import type { ValidatedDeclarations } from './declarations.js';
 
 /** Branded tenant id. The brand prevents programming mistakes only; it is not a security boundary. */
 export type TenantId = string & { readonly tenantId: unique symbol };
+
 /** Branded global identity id (canonical lowercase UUID). Not a security boundary either. */
 export type IdentityId = string & { readonly identityId: unique symbol };
 
 export type KeyKind = 'integer' | 'uuid' | 'string';
+
 /** Typed object key. Integers stay canonical decimal strings, never JS numbers. */
 export interface Key {
   readonly kind: KeyKind;
@@ -13,6 +15,7 @@ export interface Key {
 }
 
 export type FieldKind = 'integer' | 'decimal' | 'string' | 'uuid' | 'boolean' | 'timestamp';
+
 export type Scalar = string | boolean;
 
 export type ValueRef =
@@ -116,6 +119,7 @@ export type ContextValidator = (
 ) => boolean | 'unknown';
 
 export type Lifecycle = 'active' | 'deprecated' | 'retired';
+
 /** Code-owned per action (ADR 0003). Never chosen by a caller; there is no default. */
 export type BoundaryRequirement = 'required' | 'optional';
 
@@ -210,14 +214,18 @@ export interface CompleteFacts {
 
 /** Product user id; UUID validation is still required at trusted adapter boundaries. */
 export type UserId = IdentityId;
+
 export type UserTrustedInput = Omit<TrustedInput, 'tenant'>;
+
 export type UserAuthoritySnapshot = Omit<AuthoritySnapshot, 'tenant' | 'membership'> & {
   readonly user:
     { readonly id: UserId; readonly state: 'active' | 'suspended' | 'pending' } | undefined;
 };
+
 export type UserAuthorizedPlan = Omit<AuthorizedPlan, 'tenant' | 'identity'> & {
   readonly userId: UserId;
 };
+
 export type UserDecision =
   | Extract<Decision, { effect: 'deny' }>
   | {
@@ -225,8 +233,11 @@ export type UserDecision =
       readonly plan: UserAuthorizedPlan;
       readonly obligations: readonly Obligation[];
     };
+
 export type UserEdgeFact = Omit<EdgeFact, 'tenant'>;
+
 export type UserExceptionFact = Omit<ExceptionFact, 'tenant'>;
+
 export type UserCompleteFacts = Omit<CompleteFacts, 'tenant' | 'edges' | 'exceptions'> & {
   readonly edges: readonly UserEdgeFact[];
   readonly exceptions: readonly UserExceptionFact[];

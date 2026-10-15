@@ -30,7 +30,9 @@ let authorization: ProductAuthorization;
 let bindings: ProductBindingRegistry;
 const userId = randomUUID() as UserId;
 const secret = randomBytes(32).toString('base64url');
+
 const utf8 = (value: string) => Buffer.from(value);
+
 const injection = "' OR TRUE; DROP TABLE product_item; --";
 const rows = [
   { key: '9007199254740993', amount: '10.00', status: 'pending', title: injection },
@@ -454,6 +456,7 @@ async function readAllAuthority(tx: ProductTransaction) {
 
 test('authority read is limited to the requested permission and decides exactly like a full read', async () => {
   const malformed = randomUUID();
+
   const decide = async () =>
     runner.run('read', async (tx) => {
       const full = await readAllAuthority(tx);
@@ -489,6 +492,7 @@ test('authority read is limited to the requested permission and decides exactly 
       }
       return out;
     });
+
   // Direct identity deny on read, role allow on both, required boundaries bound.
   assert.deepEqual(await decide(), { read: 'allow', update: 'allow' });
   // A malformed rule of update denies update only; read never sees it.

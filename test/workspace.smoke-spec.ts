@@ -111,6 +111,7 @@ test('importing @base-authorization/core loads no framework, ORM, driver or valu
 
 test('API runtime and offline CLI take their codecs from one composition', () => {
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
+
   // The only place that picks value codecs for the product; both entry points call it.
   const manifest = read('../apps/api/src/authorization/product-manifest.ts');
   assert.match(

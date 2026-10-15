@@ -36,6 +36,7 @@ export function createDayjsTimestampCodec(): ScalarCodec<string> {
       if (!isRealUtcSecond(y, `-${month}-${day}T${hh}:${mm}:${ss}`)) return undefined;
       return `${year}-${month}-${day}T${hh}:${mm}:${ss}.${fraction.padEnd(6, '0')}Z`;
     },
+
     // Canonical strings are fixed-width UTC, so lexicographic order is chronological order.
     compare: (left, right): Comparison => (left === right ? 0 : left < right ? -1 : 1),
   };

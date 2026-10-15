@@ -32,6 +32,7 @@ const siteA: FactObject = {
   objectId: '54000000-0000-4000-8000-0000000000a1',
   fields: { name: 'Site A' },
 };
+
 const edge = (
   key: string,
   source: string,
@@ -46,8 +47,10 @@ const edge = (
   expiresAt: null,
   ...extra,
 });
+
 const submissionSite = (extra: Partial<EdgeFact> = {}) =>
   edge('submission.site', s1.objectId, { kind: 'object', objectId: siteA.objectId }, extra);
+
 const siteManager = (identity = alice, extra: Partial<EdgeFact> = {}) =>
   edge('site.manager', siteA.objectId, { kind: 'identity', identity }, extra);
 
@@ -59,6 +62,7 @@ function managedSite(f: CompleteFacts): 'allow' | 'deny' {
   assert.equal(decision.effect, 'allow');
   return decision.effect === 'allow' ? evaluate(decision.plan, f).effect : 'deny';
 }
+
 const graph = (edges: EdgeFact[]) => facts(s1, { objects: [s1, siteA], edges });
 
 test('submission.site → site.manager grants the site manager only', () => {
@@ -97,6 +101,7 @@ test('edges are directed: a reversed edge grants nothing', () => {
 
 test('relation type and direction are checked at validation', () => {
   const base = declarations();
+
   const withTemplate = (expression: Expr, resource = 'submission') =>
     validate(
       declarations({
@@ -106,6 +111,7 @@ test('relation type and direction are checked at validation', () => {
         ],
       }),
     );
+
   // site.manager starts at site, not submission.
   assert.equal(
     withTemplate({
@@ -151,11 +157,14 @@ test('paths of 8 steps are accepted and 9 steps rejected', () => {
     target: { kind: 'resource', type: 'submission' },
     binding: { kind: 'edgeStore' },
   };
+
   const path = (steps: number): Expr =>
     steps === 0
       ? { op: 'constant', value: true }
       : { op: 'exists', relation: 'submission.previous@1', where: path(steps - 1) };
+
   const base = declarations();
+
   const withDepth = (steps: number) =>
     validate(
       declarations({
@@ -172,6 +181,7 @@ test('paths of 8 steps are accepted and 9 steps rejected', () => {
         ],
       }),
     );
+
   assert.equal(withDepth(8).ok, true);
   assert.equal(withDepth(9).ok, false);
 });
@@ -239,8 +249,10 @@ test('manifest canonical form and hash are independent of declaration order', ()
       obligationHandlers: [...base.capabilities.obligationHandlers].reverse(),
     },
   });
+
   const hash = (d: ReturnType<typeof validated>) =>
     createHash('sha256').update(d.canonical).digest('hex');
+
   assert.equal(hash(validated(base)), hash(validated(reordered)));
   const changed = declarations({
     templates: base.templates.map((t) => (t.key === 'all' ? { ...t, version: 2 } : t)),

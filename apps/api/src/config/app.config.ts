@@ -1,5 +1,6 @@
 import type { LogLevel } from '@nestjs/common';
 import type { ProductOidcProviderConfig } from '@base-authorization/typeorm-postgres';
+
 export interface AppConfig {
   readonly nodeEnv: 'development' | 'test' | 'production';
   readonly port: number;
@@ -11,7 +12,9 @@ export interface AppConfig {
   readonly localEnabled: boolean;
   readonly oidcProviders: readonly ProductOidcProviderConfig[];
 }
+
 export class ConfigError extends Error {}
+
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const errors: string[] = [];
   const nodeEnv = env.NODE_ENV;

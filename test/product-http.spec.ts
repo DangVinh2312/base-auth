@@ -11,6 +11,7 @@ import {
 import { ProductErrorFilter } from '../apps/api/dist/infrastructure/product-error.filter.js';
 import { AuthController } from '../apps/api/dist/auth/auth.controller.js';
 import { ProductMetrics } from '../apps/api/dist/health/product-metrics.js';
+
 const env = {
   NODE_ENV: 'test',
   AUTH_METHODS: 'local',
@@ -63,7 +64,9 @@ test('trusted proxy hops are explicit: direct by default, bounded count otherwis
 });
 test('only own cookies are parsed: foreign junk is ignored, a repeated own cookie fails closed', () => {
   const name = cookieName(config, 'session');
+
   const req = (cookie: string) => ({ headers: { cookie }, originalUrl: '/' });
+
   assert.equal(sessionSecret(req(`junk; a=1; a=2; ${name}=s; =x`), config), 's');
   assert.throws(() => sessionSecret(req(`${name}=s; ${name}=t`), config));
 });
@@ -77,6 +80,7 @@ test('error filter: caller input is 400, programming faults are 503 and logged',
     } as never);
     return code;
   };
+
   const logged: string[] = [];
   const write = process.stdout.write.bind(process.stdout);
   const writeError = process.stderr.write.bind(process.stderr);

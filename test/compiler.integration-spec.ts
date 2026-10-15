@@ -51,6 +51,7 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
     );
     return rows.map((row) => row.id);
   };
+
   const evaluatorIds = (plan: AuthorizedPlan) => {
     const now = canonicalTimestamp(new Date().toISOString())!;
     return env.fixtures.A.submissions

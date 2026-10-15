@@ -5,6 +5,7 @@ import type { Expr, FieldKind, PlanExpr, Scalar, ValueRef } from './types.js';
 export const IDENTITY_FIELDS: Readonly<Record<string, FieldType>> = Object.freeze({
   identityId: Object.freeze({ kind: 'uuid' }),
 });
+
 export const MAX_PATH_DEPTH = 8;
 
 export const fieldKinds: readonly FieldKind[] = [
@@ -16,6 +17,7 @@ export const fieldKinds: readonly FieldKind[] = [
   'timestamp',
 ];
 const orderedKinds: readonly FieldKind[] = ['integer', 'decimal', 'string', 'timestamp'];
+
 export const isFieldKind = (value: unknown): value is FieldKind =>
   fieldKinds.includes(value as FieldKind);
 
@@ -55,6 +57,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /** Type-checks a declaration expression. Unknown shapes are errors: the core fails closed. */
 export function checkExpr(expr: unknown, ctx: CheckContext, errors: string[], at: string): void {
   let nodes = 0;
+
   const visit = (
     node: unknown,
     type: string,
@@ -127,6 +130,7 @@ export function checkExpr(expr: unknown, ctx: CheckContext, errors: string[], at
         errors.push(`${path}: unsupported operator ${JSON.stringify(node.op)}`);
     }
   };
+
   visit(expr, ctx.type, ctx.fields, 0, at);
 }
 

@@ -78,8 +78,16 @@ describe('tenant fence, revocation and transaction limits', () => {
       validUntil: new Date(now.getTime() + 60_000).toISOString(),
     };
   };
+
   /** One authorization: fence → authority facts → plan → gateway, all in one transaction. */
-  const readIds = (identity: IdentityId, hold?: { acquired: () => void; gate: Promise<void> }) =>
+  const readIds = (
+    identity: IdentityId,
+    hold?: {
+      acquired: () => void;
+
+      gate: Promise<void>;
+    },
+  ) =>
     authority.withSnapshot(
       { id: identity, assurance: 2 },
       tenantA,
@@ -99,8 +107,10 @@ describe('tenant fence, revocation and transaction limits', () => {
         return ids;
       },
     );
+
   const revision = async () =>
     (await admin.query<{ r: string }>('SELECT revision::text AS r FROM authz_fence')).rows[0]!.r;
+
   // Other roles' wait events are visible only to privileged monitors.
   const waitingOnLock = async (role: string) => {
     for (let i = 0; i < 50; i++) {
@@ -241,6 +251,7 @@ describe('tenant fence, revocation and transaction limits', () => {
     const retries: string[] = [];
     const impatient = new TenantTransactionRunner(env.registry, {
       lockTimeoutMs: 300,
+
       onRetry: (code) => {
         retries.push(code);
       },
@@ -267,6 +278,7 @@ describe('tenant fence, revocation and transaction limits', () => {
     let attempts = 0;
     const retrying = new TenantTransactionRunner(env.registry, {
       lockTimeoutMs: 300,
+
       onRetry: () => holder.query('ROLLBACK').then(() => undefined),
     });
     try {

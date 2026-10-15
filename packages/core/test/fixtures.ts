@@ -23,10 +23,15 @@ export const core = createAuthorizationCore({
 });
 
 export const tenantA = core.parseTenantId('00000000-0000-4000-8000-00000000000a');
+
 export const tenantB = core.parseTenantId('00000000-0000-4000-8000-00000000000b');
+
 export const alice = 'a0000000-0000-4000-8000-000000000001' as IdentityId;
+
 export const bob = 'b0000000-0000-4000-8000-000000000002' as IdentityId;
+
 export const now = '2026-10-13T10:00:00.000000Z';
+
 export const later = '2026-10-13T10:00:02.000000Z';
 
 const principalId: Expr = {
@@ -176,6 +181,7 @@ export function validated(source: SystemDeclarations = declarations()): Validate
 }
 
 let ruleCounter = 0;
+
 export function rule(
   permission: string,
   subject: RuleFact['subject'],

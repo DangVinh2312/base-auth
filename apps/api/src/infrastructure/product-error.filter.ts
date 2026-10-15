@@ -11,6 +11,7 @@ import {
   ProductInvalidRequest,
   TransactionConflictError,
 } from '@base-authorization/typeorm-postgres';
+
 const logger = new Logger('ProductErrorFilter');
 @Catch()
 export class ProductErrorFilter implements ExceptionFilter {

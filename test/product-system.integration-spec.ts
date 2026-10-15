@@ -22,6 +22,7 @@ import {
 import { startPostgres, type TestPostgres } from './setup-postgres.ts';
 import { productDeclarations } from '../apps/api/dist/authorization/product-manifest.js';
 import { core } from '../packages/core/test/fixtures.ts';
+
 let pg: TestPostgres;
 let runner: ProductTransactionRunner;
 let migration: DataSource;
@@ -38,17 +39,20 @@ const base = {
   boundaryBindings: [],
   removeBoundaryBindings: [],
 };
+
 const release2 = () =>
   prepareProductRelease(
     { ...base, sequence: '2', predecessor: '1', roles: [{ key: 'reviewer', label: 'Reviewer' }] },
     core,
   );
+
 const reconciler = () =>
   new ProductManifestReconciler(runner, {
     core,
     actor,
     capabilities: { validators: ['fresh@1'], obligationHandlers: ['audit@1'] },
   });
+
 before(async () => {
   pg = await startPostgres();
   const passwords = Object.fromEntries(
@@ -160,8 +164,10 @@ test('persistent bootstrap races once; revoke suspends Root and boot does not re
     reason: 'Fixture revocation',
   };
   await assert.rejects(revokeProductRoot(runner, { ...revocation, reason: ' ' }, core), /invalid/);
+
   const revisionNow = async () =>
     (await migration.query<{ r: string }[]>('SELECT revision::text r FROM authz_state'))[0]!.r;
+
   const beforeRevoke = await revisionNow();
   assert.deepEqual(await revokeProductRoot(runner, revocation, core), { revoked: true });
   const afterRevoke = await revisionNow();
@@ -206,7 +212,9 @@ test('persistent bootstrap races once; revoke suspends Root and boot does not re
     /already initialized/,
   );
 });
+
 const denied = (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501';
+
 test('bootstrap credential cannot promote another Root once the marker is initialized', async () => {
   const marker = await migration.query<{ initialized: boolean }[]>(
     'SELECT initialized_at IS NOT NULL AS initialized FROM security_bootstrap_state',
@@ -259,6 +267,7 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
   await reconciler().reconcile(
     prepareProductRelease({ ...fifth, defaultGrants: [reviewGrant] }, core),
   );
+
   const seeded = async () =>
     (
       await migration.query<{ n: number }[]>(
@@ -266,11 +275,14 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
         [Buffer.from('document.review')],
       )
     )[0]?.n;
+
   assert.equal(await seeded(), 1);
   const user = randomUUID();
   await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'active')`, [user]);
+
   const admin = (sql: string, params: unknown[]) =>
     runner.run('admin', (tx) => tx.manager.query(sql, params));
+
   // Assigning and unassigning a code-owned, non-system role is an ordinary authority fact.
   await admin('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
     user,

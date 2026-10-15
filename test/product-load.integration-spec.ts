@@ -170,6 +170,7 @@ test('real lock timeout retries are bounded and report timeout/retry metrics', a
   const runner = new ProductTransactionRunner(pools, {
     lockTimeoutMs: 30,
     maxRetries: 1,
+
     onMetric: (...entry) => {
       metrics.push(entry);
     },
@@ -205,18 +206,25 @@ test('real lock timeout retries are bounded and report timeout/retry metrics', a
 test('limiter advisory-lock wait under concurrent revokes is measured with an empty and a full table', async (context) => {
   const advisory: number[] = [];
   let advisoryStatements = 0;
+
   const isAdvisory = (sql: string) => sql.includes('pg_advisory_xact_lock');
+
   const logger: Logger = {
     logQuery: (sql) => {
       if (isAdvisory(sql)) advisoryStatements++;
     },
+
     // TypeORM reports whole milliseconds above the threshold; faster statements count as 0 ms.
     logQuerySlow: (time, sql) => {
       if (isAdvisory(sql)) advisory.push(time);
     },
+
     logQueryError: () => undefined,
+
     logSchemaBuild: () => undefined,
+
     logMigration: () => undefined,
+
     log: () => undefined,
   };
   const measured = await new DataSource({
@@ -250,12 +258,14 @@ test('limiter advisory-lock wait under concurrent revokes is measured with an em
       const latencies: number[] = [];
       const revokes: number[] = [];
       const failures: Record<string, number> = {};
+
       const record = (operation: string, error: unknown) => {
         const code = (error as { code?: unknown }).code;
         if (!(error instanceof Error) || typeof code !== 'string') throw error;
         const label = `${operation}:${error.constructor.name}:${code}`;
         failures[label] = (failures[label] ?? 0) + 1;
       };
+
       let next = 0;
       let done = false;
       const calls = 200;

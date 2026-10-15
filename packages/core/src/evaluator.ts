@@ -12,6 +12,7 @@ import type {
 } from './types.js';
 
 class InvalidFact extends Error {}
+
 const invalid = (reason: string): never => {
   throw new InvalidFact(reason);
 };
@@ -62,12 +63,15 @@ function evaluatePlan<P extends AuthorizedPlan | UserAuthorizedPlan>(
     } {
   try {
     const time = (value: string) => core.canonicalTimestamp(value) ?? invalid('invalid_time');
+
     const compareTime = (a: string, b: string) => core.compareValues('timestamp', a, b);
+
     const now = core.canonicalTimestamp(facts.now) ?? invalid('invalid_now');
     if (compareTime(now, plan.validUntil) >= 0)
       return { effect: 'deny', internalReason: 'plan_expired' };
     if (facts.record.type !== plan.resource)
       return { effect: 'deny', internalReason: 'resource_mismatch' };
+
     const active = (startsAt: string, expiresAt: string | null) => {
       const end = expiresAt === null ? null : time(expiresAt);
       return compareTime(time(startsAt), now) <= 0 && (end === null || compareTime(end, now) > 0);

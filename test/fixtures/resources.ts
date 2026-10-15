@@ -39,9 +39,13 @@ export { core };
 const { parseTenantId, plan, validate } = core;
 
 export const tenantA = parseTenantId('00000000-0000-4000-8000-00000000000a');
+
 export const tenantB = parseTenantId('00000000-0000-4000-8000-00000000000b');
+
 export const alice = 'a0000000-0000-4000-8000-000000000001' as IdentityId;
+
 export const bob = 'b0000000-0000-4000-8000-000000000002' as IdentityId;
+
 /** Manages both sites: exercises many-to-many paths. */
 export const carol = 'c0000000-0000-4000-8000-000000000003' as IdentityId;
 
@@ -50,6 +54,7 @@ const principalId: Expr = {
   field: 'identityId',
   value: { from: 'principal', name: 'id' },
 };
+
 const template = (key: string, resource: string, expression: Expr, parameters = {}) => ({
   key,
   version: 1,
@@ -57,6 +62,7 @@ const template = (key: string, resource: string, expression: Expr, parameters = 
   parameters,
   expression,
 });
+
 const baseline = { key: 'baseline', version: 1 };
 /** Existing fixture actions stay unbounded: optional requirement, no bindings. */
 const read = { policy: baseline, boundary: 'optional' } as const;
@@ -305,6 +311,7 @@ const objectId = (tenantDigit: string, n: number) =>
 
 export function tenantFixture(tenant: TenantId, digit: string, label: string): TenantFixture {
   const o = (n: number) => objectId(digit, n);
+
   const siteA = {
     id: 'd97eecc9-8f23-4a76-a9aa-82b9d4ef33ac',
     objectId: o(1),
@@ -324,6 +331,7 @@ export function tenantFixture(tenant: TenantId, digit: string, label: string): T
       { identity: carol, startsAt: past, expiresAt: null },
     ],
   };
+
   const sub = (n: number, id: string, fields: Partial<SubmissionRow>): SubmissionRow => ({
     id,
     objectId: o(n),
@@ -338,6 +346,7 @@ export function tenantFixture(tenant: TenantId, digit: string, label: string): T
     assignees: [],
     ...fields,
   });
+
   return {
     tenant,
     sites: [siteA, siteB],
@@ -613,6 +622,7 @@ export async function seedTenant(
       kind,
       bytes(key),
     ]);
+
   for (const site of fixture.sites) {
     await objectRef(site.objectId, 'site', 'uuid', site.id);
     await client.query('INSERT INTO site VALUES ($1, $2, $3, $4)', [
@@ -713,7 +723,9 @@ export interface GatewayEnvironment {
   registry: TenantDataSourceRegistry;
   identity: DataSource;
   fixtures: Record<'A' | 'B', TenantFixture>;
+
   adminOn(tenant: TenantId): Connection;
+
   stop(): Promise<void>;
 }
 
@@ -722,16 +734,20 @@ export async function startGatewayEnvironment(): Promise<GatewayEnvironment> {
   const provisioner = new TenantProvisioner(postgres.admin, { identityDatabase: 'authz_identity' });
   await provisioner.provisionIdentity();
   const passwords = new Map<string, string>();
+
   const password = (tenant: TenantId, purpose: ConnectionPurpose) => {
     const key = `${tenant}/${purpose}`;
     if (!passwords.has(key)) passwords.set(key, randomBytes(24).toString('base64url'));
     return passwords.get(key)!;
   };
+
   const fixtures = { A: tenantFixture(tenantA, 'c', 'A'), B: tenantFixture(tenantB, 'e', 'B') };
+
   const adminOn = (tenant: TenantId): Connection => ({
     ...postgres.admin,
     database: tenantDatabaseName(tenant),
   });
+
   for (const fixture of Object.values(fixtures)) {
     await provisioner.provision({
       tenantId: fixture.tenant,
@@ -763,6 +779,7 @@ export async function startGatewayEnvironment(): Promise<GatewayEnvironment> {
     identity,
     fixtures,
     adminOn,
+
     stop: async () => {
       await registry.close();
       await identity.destroy();
@@ -847,6 +864,7 @@ export function readPlan(
 }
 
 let ruleSeq = 0;
+
 export function rule(
   permission: string,
   effect: 'allow' | 'deny',

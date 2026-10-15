@@ -30,6 +30,7 @@ import {
 
 const core = createProductAuthorizationCore();
 const productRelease = createProductRelease(core);
+
 async function freePort() {
   const s = createServer();
   await new Promise<void>((r) => s.listen(0, '127.0.0.1', r));
@@ -38,11 +39,13 @@ async function freePort() {
   await new Promise<void>((r) => s.close(() => r()));
   return address.port;
 }
+
 async function stop(child: ChildProcess) {
   if (child.exitCode !== null) return;
   child.kill('SIGTERM');
   await new Promise<void>((resolve) => child.once('exit', () => resolve()));
 }
+
 test('actual API boot, activation/login, scoped read/write, Root bypass with fresh writes and revoke/reset fail closed', async (t) => {
   const pg = await startPostgres();
   const pools: DataSource[] = [];
@@ -130,6 +133,7 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
     env[`PRODUCT_${purpose.toUpperCase()}_DATABASE_URL`] =
       `postgres://${c.username}:${c.password}@${c.host}:${c.port}/${c.database}`;
   }
+
   const launch = () => {
     const processChild = spawn(process.execPath, ['apps/api/dist/main.js'], {
       cwd: process.cwd(),
@@ -139,8 +143,13 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
     let output = '';
     processChild.stdout.on('data', (b: Buffer) => (output += b.toString()));
     processChild.stderr.on('data', (b: Buffer) => (output += b.toString()));
-    return { processChild, output: () => output };
+    return {
+      processChild,
+
+      output: () => output,
+    };
   };
+
   let running = launch();
   child = running.processChild;
   let live: Response | undefined;
@@ -154,6 +163,7 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
   assert.equal((await fetch(`${origin}/health/ready`)).status, 200);
   const jar = new Map<string, string>();
   let csrf = '';
+
   async function request(path: string, method = 'GET', body?: unknown) {
     const response = await fetch(origin + path, {
       method,
@@ -172,6 +182,7 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
     }
     return response;
   }
+
   const csrfResponse = await request('/auth/csrf');
   csrf = ((await csrfResponse.json()) as { csrfToken: string }).csrfToken;
   assert.equal((await request('/documents')).status, 401);
@@ -305,6 +316,7 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
   assert.notEqual(child.exitCode, 0);
   await assert.rejects(fetch(`${origin}/documents`));
   child = undefined;
+
   // The same failure in-process, with main.ts's sequence: readiness stays closed, no listener,
   // and the (repeatable) cleanup returns every connection the runtime opened.
   const sessions = async () =>
@@ -315,6 +327,7 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
         )
       ).map((r) => r.pid),
     );
+
   const before = await sessions();
   const runtime = await ProductRuntime.create(loadConfig(env));
   assert.ok([...(await sessions())].filter((pid) => !before.has(pid)).length >= 4);

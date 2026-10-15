@@ -54,6 +54,7 @@ before(async () => {
 after(async () => {
   await fixture?.stop();
 });
+
 async function withProduct(
   run: (
     reconciler: ProductManifestReconciler,
@@ -79,6 +80,7 @@ async function withProduct(
     await sync.destroy();
   }
 }
+
 async function offlineAlter(
   migration: DataSource,
   sql: string,
@@ -91,6 +93,7 @@ async function offlineAlter(
     await migration.query('ALTER TABLE policy_rule ENABLE TRIGGER protect_product_rows');
   }
 }
+
 test('a new release cannot adopt drift in a persisted code-owned grant omitted from it', async () => {
   await withProduct(async (reconciler, migration) => {
     await offlineAlter(migration, "UPDATE policy_rule SET effect='deny' WHERE managed_by='code'");
@@ -203,8 +206,10 @@ test('a Root promotion commits only with the marker naming it', async () => {
     ).initialize();
     try {
       const runner = new ProductTransactionRunner({ bootstrap });
+
       const denied = (e: { code?: string; driverError?: { code?: string } }) =>
         (e.driverError?.code ?? e.code) === '42501';
+
       const target = randomUUID();
       const other = randomUUID();
       await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'pending'),($2,'pending')`, [
@@ -261,13 +266,16 @@ test('only the bootstrap credential issues activation for Root', async () => {
         await createProductPasswordHasher(new Set()),
       );
       const release = prepareProductRelease(base, core);
+
       const bootstrapInput = (userId: string) => ({
         operationId: randomUUID(),
         userId: userId as IdentityId,
         method: 'local' as const,
       });
+
       const denied = (e: { code?: string; driverError?: { code?: string } }) =>
         (e.driverError?.code ?? e.code) === '42501';
+
       // An identity invitation issued before bootstrap cannot later activate Root.
       const invited = randomUUID();
       await migration.query(

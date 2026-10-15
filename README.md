@@ -18,6 +18,22 @@ pnpm run start:dev
 
 API không chạy DDL khi boot. Privilege/capability/manifest lỗi khiến startup thất bại trước business listener. `/health/ready` chỉ200 sau sync; `/openapi.json` mô tả DTO/examples/status, `/health/metrics` chỉ chứa labels hữu hạn. Recovery delivery chưa cấu hình trả503. Không public signup, UI, file/export/job hay generic administration endpoints.
 
+## Format code
+
+Prettier dùng cấu hình chung tại `.prettierrc.json`: thụt lề 2 spaces, nháy đơn, dấu chấm phẩy, trailing comma, độ rộng mục tiêu 100 cột và xuống dòng LF. ESLint tại `eslint.format.config.js` thêm dòng trống sau nhóm import, giữa các khai báo export (kể cả const/interface/type/class) và giữa các function, arrow function, class/object method và chữ ký method trong interface/type. Comment và decorator của class/method được giữ cùng khai báo. Chạy từ thư mục root:
+
+```sh
+# Format các file TypeScript/JavaScript, gồm cả tests và tools.
+pnpm run format:code
+# Chỉ kiểm tra, không sửa file.
+pnpm run format:code:check
+# Format một file cụ thể.
+pnpm exec eslint --config eslint.format.config.js --fix apps/api/src/auth/auth.controller.ts
+pnpm exec prettier --write apps/api/src/auth/auth.controller.ts
+```
+
+Bước ESLint chỉ chạy rule cách dòng, không cần build hoặc typecheck; `lint` cũng kiểm tra rule này. ESLint bỏ qua `node_modules`, `dist`, coverage và thư mục công cụ tạm được khai báo trong config. Bước Prettier bỏ qua file theo `.gitignore` và `.prettierignore`. `pnpm run format` / `pnpm run format:check` vẫn áp dụng cho toàn bộ file được Prettier hỗ trợ, gồm cả tài liệu và cấu hình; CI dùng `format:check`.
+
 ## Kiểm chứng
 
 ```sh

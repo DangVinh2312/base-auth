@@ -3,6 +3,7 @@ import { DataSource, type DataSourceOptions } from 'typeorm';
 import { tenantEntities } from './entities/tenant.entity.js';
 
 const routableTenant = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /**
  * Legacy tenant routing: database and role identifiers are derived from the tenant id, so this is
  * the SQL identifier grammar owned here (canonical lowercase UUID only, no aliases), not a value
@@ -32,6 +33,7 @@ export interface TenantRoute {
 export interface TenantConnectionLease {
   /** For storage adapters only; never hand it to business handlers. */
   readonly dataSource: DataSource;
+
   /** Idempotent. Hold the lease for the whole transaction. */
   release(): Promise<void>;
 }
@@ -43,14 +45,17 @@ export interface TenantDataSourceRegistryOptions {
   /** Connection budget across all tenant pools of this process. */
   readonly maxConnections: number;
   readonly idleTimeoutMs: number;
+
   /** Resolves a verified tenant to its active route, or undefined when it is not routable. */
   resolveRoute(tenant: TenantId, purpose: ConnectionPurpose): Promise<TenantRoute | undefined>;
+
   /** Test seam; defaults to a TypeORM DataSource. */
   createDataSource?(options: DataSourceOptions): DataSource;
 }
 
 /** Invalid, unknown, disabled or mis-anchored tenant. Map to the same response as "not found". */
 export class TenantRoutingError extends Error {}
+
 /** Capacity exhausted or registry closed. Retryable; map to 503. */
 export class TenantUnavailableError extends Error {}
 
@@ -120,6 +125,7 @@ export class TenantDataSourceRegistry {
     let released = false;
     return {
       dataSource,
+
       release: async () => {
         if (released) return;
         released = true;

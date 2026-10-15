@@ -19,16 +19,19 @@ export interface ProductOidcProviderConfig {
   version: string;
   assuranceMappings: readonly { acr: string; amr: readonly string[]; assurance: 'mfa' }[];
 }
+
 export interface ProductOidcProvider {
   readonly settings: ProductOidcProviderConfig;
   readonly configuration: oidc.Configuration;
 }
+
 function trustedUrl(value: string): URL {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.username || url.password || url.hash || url.search)
     throw new TypeError('OIDC requires a fixed trusted HTTPS URL');
   return url;
 }
+
 export async function createProductOidcProvider(
   settings: ProductOidcProviderConfig,
 ): Promise<ProductOidcProvider> {
@@ -72,6 +75,7 @@ export async function createProductOidcProvider(
     configuration,
   };
 }
+
 interface Attempt {
   nonce: string;
   verifier: string;
@@ -97,6 +101,7 @@ interface Invitation extends Binding {
 
 export class ProductOidcService {
   readonly #providers: ReadonlyMap<string, ProductOidcProvider>;
+
   constructor(
     readonly identity: ProductIdentityService,
     providers: ReadonlyMap<string, ProductOidcProvider>,
@@ -117,11 +122,13 @@ export class ProductOidcService {
       provider.configuration.timeout = 5;
     }
   }
+
   provider(issuer: string): ProductOidcProvider {
     const provider = this.#providers.get(issuer);
     if (!provider) throw new ProductAuthenticationError();
     return provider;
   }
+
   async providerCurrent(tx: ProductTransaction, provider: ProductOidcProvider): Promise<void> {
     const rows = await tx.manager.query<{ version: string }[]>(
       `SELECT version FROM oidc_provider WHERE issuer=$1 AND enabled`,
@@ -129,6 +136,7 @@ export class ProductOidcService {
     );
     if (rows[0]?.version !== provider.settings.version) throw new ProductAuthenticationError();
   }
+
   async begin(
     issuer: string,
     browserSecret: string,
@@ -207,6 +215,7 @@ export class ProductOidcService {
       ...(purpose === 'reauth' ? { max_age: '0', prompt: 'login' } : {}),
     });
   }
+
   async callback(
     issuer: string | undefined,
     currentUrl: URL,
@@ -395,6 +404,7 @@ export class ProductOidcService {
       },
     );
   }
+
   /** Live OIDC invitations of one pending account with exactly one enabled binding at this issuer. */
   async invitation(
     tx: ProductTransaction,
@@ -418,6 +428,7 @@ export class ProductOidcService {
       throw new ProductAuthenticationError();
     return rows;
   }
+
   enrollmentHash(invitation: Invitation, issuer: string): Buffer {
     return secretDigest(
       JSON.stringify([
@@ -430,6 +441,7 @@ export class ProductOidcService {
       ]),
     );
   }
+
   async unlink(sessionSecret: string, issuer: string, subject: string): Promise<void> {
     this.provider(issuer);
     await this.identity.transactions.run('revoke', async (tx) => {

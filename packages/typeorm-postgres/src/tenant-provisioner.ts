@@ -102,6 +102,7 @@ const fenceFunctions = [
 
 const purposes: readonly ConnectionPurpose[] = connectionPurposes;
 const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
+
 const quote = (name: string) => {
   if (!identifier.test(name)) throw new TypeError('Unsafe SQL identifier');
   return `"${name}"`;

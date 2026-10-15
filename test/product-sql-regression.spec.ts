@@ -107,10 +107,13 @@ test('product identity relation SQL checks source object registry type as well a
 test('gateway filters and keys are normalized by the registry core, not a private parser', async () => {
   const calls: string[] = [];
   const standard = createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() });
+
   const spy = <T extends string | boolean>(kind: string, codec: ScalarCodec<T>) => ({
     normalize: (value: unknown) => (calls.push(kind), codec.normalize(value)),
+
     compare: (left: T, right: T) => codec.compare(left, right),
   });
+
   const values = Object.fromEntries(
     Object.entries(standard).map(([kind, codec]) => [
       kind,

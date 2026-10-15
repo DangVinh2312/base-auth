@@ -27,7 +27,9 @@ import {
 import { sqlState, startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 const core = createProductAuthorizationCore();
+
 const utf8 = (value: string) => Buffer.from(value);
+
 // Release 2 plus one boundary on document.read, so user_boundary facts can be written at all.
 const release = prepareProductRelease(
   {
@@ -82,10 +84,12 @@ const pending = async (email?: string): Promise<IdentityId> => {
   ]);
   return id;
 };
+
 const promote = (id: string) =>
   runner.run('bootstrap', (tx) =>
     tx.manager.query(`UPDATE app_user SET kind='root' WHERE id=$1`, [id]),
   );
+
 /** Writes one IAM fact for `user` through the authority (or sync) credential. */
 const facts: Record<string, (user: string) => Promise<unknown>> = {
   user_role: (user) =>
@@ -95,6 +99,7 @@ const facts: Record<string, (user: string) => Promise<unknown>> = {
         utf8('reviewer'),
       ]),
     ),
+
   user_boundary: (user) =>
     runner.run('admin', (tx) =>
       tx.manager.query(
@@ -102,6 +107,7 @@ const facts: Record<string, (user: string) => Promise<unknown>> = {
         [user, utf8('document.read'), utf8('documentLimit')],
       ),
     ),
+
   policy_rule: (user) =>
     runner.run('admin', (tx) =>
       tx.manager.query(
@@ -109,6 +115,7 @@ const facts: Record<string, (user: string) => Promise<unknown>> = {
         [randomUUID(), utf8('document.read'), user, utf8('ownedDocuments')],
       ),
     ),
+
   record_exception: (user) =>
     runner.run('admin', (tx) =>
       tx.manager.query(

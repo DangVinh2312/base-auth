@@ -47,6 +47,7 @@ export const documentDeclarations: Pick<
   ],
   boundaries: [],
 };
+
 export const documentDefaultGrants: ProductReleaseSource['defaultGrants'] = [
   {
     permission: 'document.read',
@@ -55,6 +56,7 @@ export const documentDefaultGrants: ProductReleaseSource['defaultGrants'] = [
     parameters: {},
   },
 ];
+
 export const documentBinding: ProductStorageBindings['resources'][number] = {
   resource: 'document',
   table: 'document',

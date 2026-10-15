@@ -4,7 +4,9 @@ export {
   MANIFEST_SYNC,
   type ManifestSyncPort,
 } from './bootstrap-coordinator.js';
+
 export { ReadinessGate } from './readiness.js';
+
 export {
   ProductAuthorizationModule,
   ProductAuthenticated,

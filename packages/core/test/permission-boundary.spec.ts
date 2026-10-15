@@ -19,12 +19,15 @@ import { alice, bob, core, later, now, tenantA, tenantB } from './fixtures.ts';
 const { evaluate, plan, validate } = core;
 
 const lit = (value: string) => ({ from: 'literal', value }) as const;
+
 const anyOf = (field: string, values: string[]): Expr => ({
   op: 'or',
   args: values.map((value) => ({ op: 'eq', field, value: lit(value) })),
 });
+
 const baseline = { key: 'baseline', version: 1 };
 const everything: Expr = { op: 'constant', value: true };
+
 const template = (key: string, resource: string, expression: Expr, parameters = {}) => ({
   key,
   version: 1,
@@ -44,6 +47,7 @@ const assignOperationalRoles: PermissionBoundary = {
     },
   ],
 };
+
 const approvalAmount = (
   version: number,
   limit: string,
@@ -67,6 +71,7 @@ const approvalAmount = (
     },
   ],
 });
+
 const regionalExport: PermissionBoundary = {
   key: 'regionalExport',
   version: 1,
@@ -157,12 +162,14 @@ function validated(declarations = source()): ValidatedDeclarations {
   if (!result.ok) throw new Error(result.errors.join('; '));
   return result.declarations;
 }
+
 const declarations = validated();
 
 const permission = (key: string, policy = baseline, boundary: 'required' | 'optional' | null) => {
   const [resource = '', action = ''] = key.split('.');
   return { key, resource, action, policy, boundary, lifecycle: 'active' as const };
 };
+
 const permissions = [
   permission('applicationRole.assign', baseline, 'required'),
   permission('contract.approve', { key: 'contractApproval', version: 1 }, 'required'),
@@ -189,6 +196,7 @@ function snapshot(overrides: Partial<AuthoritySnapshot> = {}): AuthoritySnapshot
     ...overrides,
   };
 }
+
 const binding = (
   permission: string,
   key: string,
@@ -201,7 +209,9 @@ const binding = (
   lifecycle: 'active',
   ...extra,
 });
+
 let ruleId = 0;
+
 const rule = (
   permission: string,
   templateKey: string,
@@ -216,6 +226,7 @@ const rule = (
   template: { key: templateKey, version: 1 },
   parameters,
 });
+
 const input = (resource: string, action: string, extra: Partial<TrustedInput> = {}) => ({
   tenant: tenantA,
   principal: { id: alice, assurance: 2 },
@@ -226,15 +237,19 @@ const input = (resource: string, action: string, extra: Partial<TrustedInput> = 
   validUntil: later,
   ...extra,
 });
+
 let objectSeq = 0;
+
 const object = (type: string, key: FactObject['key'], fields: FactObject['fields']) => ({
   type,
   key,
   objectId: `5b000000-0000-4000-8000-${String(++objectSeq).padStart(12, '0')}`,
   fields,
 });
+
 const role = (roleKey: string) =>
   object('applicationRole', { kind: 'string', value: roleKey }, { roleKey });
+
 const contract = (amount: string, currency = 'VND', status = 'pending') =>
   object(
     'contract',
@@ -245,12 +260,14 @@ const contract = (amount: string, currency = 'VND', status = 'pending') =>
       status,
     },
   );
+
 const customer = (region: string) =>
   object(
     'customer',
     { kind: 'uuid', value: `5c000000-0000-4000-8000-${String(objectSeq + 1).padStart(12, '0')}` },
     { region },
   );
+
 const recordException = (
   record: FactObject,
   permission: string,
@@ -285,6 +302,7 @@ function decide(
     exceptions,
   }).effect;
 }
+
 const planReason = (request: TrustedInput, facts: AuthoritySnapshot) => {
   const decision = plan(request, facts);
   return decision.effect === 'deny' ? decision.internalReason : 'allow';
@@ -299,6 +317,7 @@ describe('permission boundary declarations', () => {
     const result = validate(declarations);
     return result.ok ? [] : result.errors;
   };
+
   const withEntry = (entry: Record<string, unknown>) =>
     source({
       boundaries: [{ key: 'probe', version: 1, entries: [entry as never] }],
@@ -330,6 +349,7 @@ describe('permission boundary declarations', () => {
       contextRequirements,
       requiredScope,
     });
+
     for (const bad of [
       withEntry(entry('customer.delete', everything)),
       withEntry(entry('customer', everything)),
@@ -615,13 +635,16 @@ describe('permission boundary decisions', () => {
 
   test('property (seeded): a bound boundary never enlarges the allowed set', () => {
     let seed = 20261013;
+
     const random = () => {
       seed = (seed + 0x6d2b79f5) | 0;
       let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
+
     const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
+
     const subjects: RuleFact['subject'][] = [
       { kind: 'role', role: 'admin' },
       { kind: 'role', role: 'other' },

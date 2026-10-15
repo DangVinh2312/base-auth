@@ -12,9 +12,11 @@ import {
   setCookie,
 } from '../infrastructure/http-security.js';
 import { AUTH_HTTP_PORT, type AuthHttpPort } from './auth.http-port.js';
+
 @Controller('auth/oidc')
 export class OidcController {
   constructor(@Inject(AUTH_HTTP_PORT) private readonly auth: AuthHttpPort) {}
+
   @HttpCode(200)
   @Post('begin')
   @ProductPublic()
@@ -35,6 +37,7 @@ export class OidcController {
     );
     return { authorizationUrl: result };
   }
+
   @Get('callback')
   @ProductPublic()
   async callback(
@@ -60,6 +63,7 @@ export class OidcController {
       );
     return { status: session ? 'authenticated' : 'linked' };
   }
+
   @HttpCode(200)
   @Post('link')
   @ProductAuthenticated()
@@ -81,6 +85,7 @@ export class OidcController {
       ),
     };
   }
+
   @HttpCode(200)
   @Post('unlink')
   @ProductAuthenticated()
@@ -90,6 +95,7 @@ export class OidcController {
     await this.auth.oidc.unlink(sessionSecret(req, this.auth.config), dto.issuer!, dto.subject!);
     return { status: 'unlinked' };
   }
+
   @HttpCode(200)
   @Post('activate')
   @ProductPublic()
@@ -111,6 +117,7 @@ export class OidcController {
       ),
     };
   }
+
   @HttpCode(200)
   @Post('reauthenticate')
   @ProductAuthenticated()

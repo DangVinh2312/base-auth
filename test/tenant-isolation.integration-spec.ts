@@ -32,11 +32,13 @@ const identityDatabase = 'authz_identity';
 const purposes = ['data', 'authority', 'sync'] as const;
 
 const passwords = new Map<string, string>();
+
 const passwordFor = (tenant: TenantId, purpose: ConnectionPurpose) => {
   const key = `${tenant}/${purpose}`;
   if (!passwords.has(key)) passwords.set(key, randomBytes(24).toString('base64url'));
   return passwords.get(key)!;
 };
+
 const credentialsFor = (tenant: TenantId) => ({
   data: passwordFor(tenant, 'data'),
   authority: passwordFor(tenant, 'authority'),
@@ -54,6 +56,7 @@ describe('tenant provisioning and isolation', () => {
     password: passwordFor(tenant, purpose),
     database,
   });
+
   const adminOn = (database: string): Connection => ({ ...postgres.admin, database });
 
   before(async () => {
@@ -322,6 +325,7 @@ describe('tenant provisioning and isolation', () => {
           Buffer.from(database),
           tenant,
         ]);
+
       await setRoute(tenantA, 'moved_for_test');
       await setRoute(tenantB, tenantDatabaseName(tenantA));
       await assert.rejects(registry.acquire(tenantB, 'data'));
@@ -337,6 +341,7 @@ describe('tenant provisioning and isolation', () => {
           }
         );
       };
+
       const misconfigured = new TenantDataSourceRegistry({
         ...registryOptions,
         resolveRoute: resolveWithTenantACredentials,
@@ -375,10 +380,12 @@ describe('tenant provisioning and isolation', () => {
     await withClient(postgres.admin, (client) =>
       client.query(`CREATE DATABASE ${tenantDatabaseName(tenantC)}`),
     );
+
     const directoryRow = () =>
       identity.query<{ state: string }[]>('SELECT state FROM tenant_directory WHERE id = $1', [
         tenantC,
       ]);
+
     assert.deepEqual(await directoryRow(), [], 'half-provisioned tenant is not routable');
 
     await provisioner.provision({

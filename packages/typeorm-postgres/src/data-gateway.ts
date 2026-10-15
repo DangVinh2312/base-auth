@@ -26,6 +26,7 @@ export interface ListQuery {
 }
 
 export type Row = Readonly<Record<string, unknown>> & { readonly key: string };
+
 export interface Page {
   readonly items: readonly Row[];
   /** Matching rows for the same statement snapshot (window count); bigint as string. */
@@ -34,6 +35,7 @@ export interface Page {
 
 const limits = { defaultLimit: 20, maxLimit: 100, maxOffset: 10_000, maxFilterNodes: 32 };
 const orderedKinds: readonly FieldKind[] = ['integer', 'decimal', 'string', 'timestamp'];
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -170,6 +172,7 @@ export class DataGateway {
   #filter(binding: ResourceBinding, resource: string, input: unknown): PlanExpr {
     const fields = this.#registry.declarations.resources[resource]!.fields;
     let nodes = 0;
+
     const visit = (node: unknown): PlanExpr => {
       if (++nodes > limits.maxFilterNodes) throw new TypeError('Filter is too large');
       if (!isRecord(node)) throw new TypeError('Filter node must be an object');
@@ -197,6 +200,7 @@ export class DataGateway {
       }
       throw new TypeError(`Unsupported filter operator ${JSON.stringify(node.op)}`);
     };
+
     return visit(input);
   }
 

@@ -137,6 +137,7 @@ test('a failing value codec rejects a release with the normal release error', ()
         normalize: () => {
           throw new Error('codec failure');
         },
+
         compare: () => 0,
       },
     },

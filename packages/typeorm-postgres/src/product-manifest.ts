@@ -21,21 +21,27 @@ import {
 import { ProductTransactionRunner } from './product-transaction.js';
 import { appendProductAudit, PRODUCT_OFFLINE_ACTOR } from './product-audit.js';
 import { codeOwnedCatalogIsEmpty, protectedStateHash } from './protected-state.js';
+
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
+
 const reject = (reason: RejectReason, detail: string): never => {
   throw new ReleaseRejectedError(reason, detail);
 };
+
 const RUNTIME_CAPABILITY = 1;
 export interface ProductRole {
   readonly key: string;
   readonly label: string;
 }
+
 export interface ProductReleaseSource extends ReleaseContentSource {
   readonly roles: readonly ProductRole[];
   /** Exact earlier default grants to delete; default grants stay code-owned until removed here. */
   readonly removeDefaultGrants?: readonly DefaultGrant[];
 }
+
 export interface ProductReleaseManifest extends ValidatedReleaseContent {
   readonly roles: readonly ProductRole[];
   readonly removeDefaultGrants: readonly DefaultGrant[];
@@ -44,6 +50,7 @@ export interface ProductReleaseManifest extends ValidatedReleaseContent {
 
 /** Release → the authorization core that prepared it (provenance; never part of the hash). */
 const productVerified = new WeakMap<object, AuthorizationCore>();
+
 export function prepareProductRelease(
   source: ProductReleaseSource,
   core: AuthorizationCore,
@@ -105,6 +112,7 @@ export class ProductManifestReconciler {
   ) {
     if (!options.core.isCanonicalUuid(options.actor)) throw new TypeError('Invalid manifest actor');
   }
+
   async reconcile(release: ProductReleaseManifest): Promise<SyncResult> {
     if (productVerified.get(release) !== this.options.core)
       reject('invalid_release', 'product release was not prepared with this core');
@@ -614,6 +622,7 @@ export interface RootBootstrapInput {
   readonly issuer?: string;
   readonly subject?: string;
 }
+
 /**
  * Offline capability only: promotes one pending IAM account to Root (kind = 'root') with the
  * permanent marker and a one-time proof (ADR 0012). No role, grant or boundary is written.
@@ -702,6 +711,7 @@ export interface RootReissueInput {
   readonly issuer?: string;
   readonly subject?: string;
 }
+
 /**
  * Offline capability only: a fresh one-time proof for the still pending bootstrap Root (expired or
  * lost artifact). Earlier proofs are consumed in the same fenced transaction, with audit.
@@ -769,6 +779,7 @@ export interface RootRevocationInput {
   readonly approval: string;
   readonly reason: string;
 }
+
 /**
  * Offline capability only: suspends the Root and ends its sessions (auth_epoch) under the
  * exclusive fence with audit. The marker stays, so no new Root can follow (ADR 0012).
@@ -783,6 +794,7 @@ export async function revokeProductRoot(
     value.trim().length > 0 &&
     value.length <= max &&
     !/\p{Cc}/u.test(value);
+
   if (
     !core.isCanonicalUuid(input.operationId) ||
     !core.isCanonicalUuid(input.userId) ||

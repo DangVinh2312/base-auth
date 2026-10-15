@@ -9,6 +9,7 @@ export const sharedFenceBody = `
           IF v_required>p_capability THEN RAISE EXCEPTION 'runtime incompatible' USING ERRCODE='AZ001'; END IF;
           RETURN v_revision;
         END `;
+
 export const resolveSessionBody = `
         SELECT u.id,u.state,u.auth_epoch,u.authority_level,s.method,s.assurance,s.authenticated_at,s.reauthenticated_at,s.expires_at
         FROM public.application_session s JOIN public.app_user u ON u.id=s.user_id
@@ -19,6 +20,7 @@ export const resolveSessionBody = `
           AND ((s.method='local' AND u.email_verified AND c.version=s.credential_version)
             OR (s.method='oidc' AND e.enabled AND e.binding_version=s.binding_version AND EXISTS (SELECT FROM public.oidc_provider p WHERE p.issuer=e.issuer AND p.enabled AND p.version=s.provider_version)))
         `;
+
 export const productStateBody = `
       BEGIN
         IF TG_TABLE_NAME='security_bootstrap_state' THEN
@@ -30,8 +32,10 @@ export const productStateBody = `
         END IF;
         RETURN NEW;
       END `;
+
 export class ProductProtection1792108800001 implements MigrationInterface {
   name = 'ProductProtection1792108800001';
+
   async up(runner: QueryRunner): Promise<void> {
     await runner.query(`
       GRANT USAGE ON SCHEMA public TO product_data,product_identity,product_authority,product_sync,product_bootstrap,product_fence_owner,product_session_owner;
@@ -121,6 +125,7 @@ export class ProductProtection1792108800001 implements MigrationInterface {
       );
     }
   }
+
   down(): Promise<void> {
     return Promise.reject(new Error('Protected product schema requires explicit restore'));
   }

@@ -17,6 +17,7 @@ function fakeSync(fail: string[] = []) {
   const done: string[] = [];
   const sync: ManifestSyncPort = {
     tenants: () => tenants,
+
     reconcile: async (tenant) => {
       await sleep(50);
       if (fail.includes(tenant)) throw new Error('release rejected (fixture)');
@@ -64,6 +65,7 @@ test('the sync port is not injectable outside the bootstrap module (no handler/c
   // Decorators applied by hand: tests run through Node type stripping, which has no decorators.
   class Handler {
     sync: ManifestSyncPort;
+
     constructor(sync: ManifestSyncPort) {
       this.sync = sync;
     }

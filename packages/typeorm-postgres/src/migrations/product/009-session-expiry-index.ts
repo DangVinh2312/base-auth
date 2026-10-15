@@ -26,6 +26,7 @@ export class ProductSessionExpiryIndex1792108800009 implements MigrationInterfac
   name = 'ProductSessionExpiryIndex1792108800009';
   // Sessions are written on every login and touch; a plain build would block them.
   transaction = false;
+
   async up(runner: QueryRunner): Promise<void> {
     await createIndexConcurrently(
       runner,
@@ -33,6 +34,7 @@ export class ProductSessionExpiryIndex1792108800009 implements MigrationInterfac
       'public.application_session(expires_at)',
     );
   }
+
   async down(runner: QueryRunner): Promise<void> {
     await runner.query('DROP INDEX CONCURRENTLY IF EXISTS public.ix_session_expiry');
   }

@@ -16,6 +16,7 @@ export interface ProductAuditEnvelope {
   /** 1-based delivery attempt of this event, counted at claim. */
   readonly attempt: number;
 }
+
 /**
  * Delivery port. Delivery is at-least-once: a crash after send and before acknowledgement sends
  * again, so a sink must deduplicate by `eventId`. Resolve only after the sink durably accepted it.
@@ -23,6 +24,7 @@ export interface ProductAuditEnvelope {
 export interface ProductAuditSink {
   deliver(event: ProductAuditEnvelope): Promise<void>;
 }
+
 export interface ProductOutboxClaim {
   readonly token: string;
   readonly events: readonly ProductAuditEnvelope[];
@@ -31,6 +33,7 @@ export interface ProductOutboxClaim {
   /** Events parked by this claim: their last attempt's lease expired without acknowledgement. */
   readonly parked: number;
 }
+
 export interface ProductOutboxOptions {
   readonly batchSize?: number;
   readonly leaseMs?: number;
@@ -45,6 +48,7 @@ function bounded(name: string, value: number, min: number, max: number): number 
     throw new RangeError(`${name} must be an integer ${min}-${max}`);
   return value;
 }
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 

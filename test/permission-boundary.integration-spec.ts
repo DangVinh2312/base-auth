@@ -60,27 +60,33 @@ const bob = 'b0000000-0000-4000-8000-000000000002' as IdentityId;
 const carol = 'c0000000-0000-4000-8000-000000000003' as IdentityId;
 const dave = 'd0000000-0000-4000-8000-000000000004' as IdentityId;
 const outsider = 'e0000000-0000-4000-8000-000000000005' as IdentityId;
+
 const bytes = (value: string) => Buffer.from(value, 'utf8');
 
 // ---- Declarations: application configuration only; the core knows none of these names ----
 
 const lit = (value: string) => ({ from: 'literal', value }) as const;
+
 const anyOf = (field: string, values: string[]): Expr => ({
   op: 'or',
   args: values.map((value) => ({ op: 'eq', field, value: lit(value) })),
 });
+
 const everything: Expr = { op: 'constant', value: true };
 const baseline = { key: 'baseline', version: 1 };
+
 const entry = (permission: string, requiredScope: Expr) => ({
   permission,
   contextRequirements: [],
   requiredScope,
 });
+
 const operationalRoles = (version: number, roles: string[]): PermissionBoundary => ({
   key: 'assignOperationalRoles',
   version,
   entries: [entry('applicationRole.assign', anyOf('roleKey', roles))],
 });
+
 const approvalAmount = (version: number, limit: string): PermissionBoundary => ({
   key: 'approvalAmount',
   version,
@@ -94,11 +100,13 @@ const approvalAmount = (version: number, limit: string): PermissionBoundary => (
     }),
   ],
 });
+
 const regionalExport: PermissionBoundary = {
   key: 'regionalExport',
   version: 1,
   entries: [entry('customer.export', anyOf('region', ['north', 'central']))],
 };
+
 const template = (key: string, resource: string) => ({
   key,
   version: 1,
@@ -155,6 +163,7 @@ function declarations(boundaries: PermissionBoundary[]): SystemDeclarations {
     capabilities: { validators: ['minimumAssurance@1'], obligationHandlers: [] },
   };
 }
+
 const v1Boundaries = [
   operationalRoles(1, ['reviewer', 'editor']),
   approvalAmount(1, '100000000'),
@@ -237,7 +246,9 @@ const storageBindings: StorageBindings = {
 // ---- Business rows (single source for PostgreSQL and evaluator facts) ----
 
 let objectSeq = 0;
+
 const objectId = () => `5d000000-0000-4000-8000-${String(++objectSeq).padStart(12, '0')}`;
+
 const rows: Record<string, FactObject[]> = {
   applicationRole: ['owner', 'reviewer', 'editor'].map((roleKey) => ({
     type: 'applicationRole',
@@ -266,7 +277,9 @@ const rows: Record<string, FactObject[]> = {
     fields: { region },
   })),
 };
+
 const row = (resource: string, key: string) => rows[resource]!.find((r) => r.key.value === key)!;
+
 const exceptions: ExceptionFact[] = [
   [alice, row('contract', '5'), 'contract.approve', 'deny'],
   [dave, row('contract', '1'), 'contract.approve', 'allow'],
@@ -318,17 +331,20 @@ describe('permission boundary on PostgreSQL', () => {
   if (!validated.ok) throw new Error(validated.errors.join('; '));
   const runtimeDeclarations = validated.declarations;
   const passwords = new Map<string, string>();
+
   const password = (tenant: TenantId, purpose: ConnectionPurpose) => {
     const key = `${tenant}/${purpose}`;
     if (!passwords.has(key)) passwords.set(key, randomBytes(24).toString('base64url'));
     return passwords.get(key)!;
   };
+
   const as = (purpose: ConnectionPurpose): Connection => ({
     ...postgres.admin,
     username: tenantRoleName(tenantA, purpose),
     password: password(tenantA, purpose),
     database: tenantDatabaseName(tenantA),
   });
+
   const fence = async () =>
     (
       await admin.query<{ revision: string; sequence: string; capability: number }>(
@@ -336,11 +352,13 @@ describe('permission boundary on PostgreSQL', () => {
                 min_runtime_capability AS capability FROM authz_fence`,
       )
     ).rows[0]!;
+
   const count = async (sql: string, params: unknown[] = []) =>
     Number(
       (await admin.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${sql}`, params)).rows[0]!
         .n,
     );
+
   const rejected = async (attempt: () => Promise<unknown>, reason: string) => {
     const before = await fence();
     await assert.rejects(
@@ -349,6 +367,7 @@ describe('permission boundary on PostgreSQL', () => {
     );
     assert.deepEqual(await fence(), before, 'rejected release changes nothing');
   };
+
   const bind = (member: IdentityId, permission: string, boundary: string | null, version = 1) =>
     runner.run(tenantA, 'admin', (tx) =>
       writeBoundaryBinding(
@@ -362,6 +381,7 @@ describe('permission boundary on PostgreSQL', () => {
         core,
       ),
     );
+
   const bindingOf = async (member: IdentityId, permission: string) =>
     (
       await admin.query<{ boundary: string; owner: string | null }>(
@@ -377,7 +397,11 @@ describe('permission boundary on PostgreSQL', () => {
     member: IdentityId,
     resource: string,
     action: string,
-    hold?: { acquired: () => void; gate: Promise<void> },
+    hold?: {
+      acquired: () => void;
+
+      gate: Promise<void>;
+    },
   ) =>
     authority.withSnapshot({ id: member, assurance: 2 }, tenantA, 'read', async (snapshot, tx) => {
       const now = new Date();
@@ -402,6 +426,7 @@ describe('permission boundary on PostgreSQL', () => {
       const keys = await readPaths(decision.plan, tx);
       return { keys, reason: 'allow', plan: decision.plan };
     });
+
   async function readPaths(authorized: AuthorizedPlan, tx: TenantTransaction): Promise<string[]> {
     const listed: string[] = [];
     for (let offset = 0; ; offset += 2) {
@@ -420,6 +445,7 @@ describe('permission boundary on PostgreSQL', () => {
     assert.equal(counted, String(listed.length), 'count agrees');
     return listed.sort();
   }
+
   const evaluatorKeys = (authorized: AuthorizedPlan) => {
     const now = canonicalTimestamp(new Date().toISOString())!;
     return rows[authorized.resource]!.filter(
@@ -693,6 +719,7 @@ describe('permission boundary on PostgreSQL', () => {
          VALUES ($1, $2, $3, $4, 1)`,
         [tenant, member, bytes(permission), bytes(boundary)],
       );
+
     assert.equal(
       await sqlState(insertBinding(tenantA, bob, 'contract.approve', 'regionalExport')),
       '23503',
@@ -872,6 +899,7 @@ describe('permission boundary on PostgreSQL', () => {
         release(sequence, predecessor, { declarations: declarations(v2Boundaries), ...changes }),
         core,
       );
+
     const carolSeed = (version: number, owner = 'access-module') => ({
       owner,
       identity: carol,
@@ -972,10 +1000,12 @@ describe('permission boundary on PostgreSQL', () => {
     test('binding seeds are removed only by an explicit removal of the same owner', async () => {
       await reconciler.reconcile(tenantA, v2('5', '4', { boundaryBindings: [] }));
       assert.ok(await bindingOf(carol, 'applicationRole.assign'), 'omitted seed is kept');
+
       const removal = (owner: string) => ({
         boundaryBindings: [],
         removeBoundaryBindings: [{ owner, identity: carol, permission: 'applicationRole.assign' }],
       });
+
       await reconciler.reconcile(tenantA, v2('6', '5', removal('other-module')));
       assert.ok(await bindingOf(carol, 'applicationRole.assign'), 'another owner cannot remove it');
       await reconciler.reconcile(tenantA, v2('7', '6', removal('access-module')));
@@ -1022,6 +1052,7 @@ describe('permission boundary on PostgreSQL', () => {
       try {
         const incompatible = (error: unknown) =>
           error instanceof AuthorityUnavailableError && error.code === 'runtime_incompatible';
+
         await assert.rejects(visible(bob, 'customer', 'export'), incompatible);
         await assert.rejects(bind(bob, 'customer.export', 'regionalExport'), incompatible);
         await assert.rejects(reconciler.reconcile(tenantA, v2('8', '7')), incompatible);
