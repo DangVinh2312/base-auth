@@ -50,7 +50,7 @@ Chuỗi đích của cả 10 mutation khớp nguyên văn code tại `72367b6` (
 - Container disposable `postgres:18.4` trên cổng 55432 (`--rm`).
 - Script provision (dist mới) gọi `provisionProductDatabase` với password ngẫu nhiên và in JSON settings ra stdout; JSON chỉ đi qua pipe sang script probe cũ, không in ra terminal hay ghi file. Script probe cũ mở DataSource `data`, `identity`, `authority`, `sync` bằng `productDataSourceOptions` của dist `50d6053` và gọi `verifyProductPrivileges` của dist `50d6053`.
 - Lệnh: `node iam-compat-provision.ts | node iam-compat-old-probe.ts`.
-- Kết quả: DB ở migration `ProductIamRoot1792108800012`; probe cũ ném `Product privilege drift for data: unexpected [], missing [column:app_user.authority_level:SELECT]`. Binary cũ không khởi động trên schema mới (đúng kỳ vọng `Product privilege drift …`).
+- Kết quả: DB ở migration `ProductIamRoot1792108800012`; probe cũ ném `Product privilege drift for data: unexpected [], missing [column:app_user.authority_level:SELECT]`. Binary cũ không khởi động trên schema mới (đúng kỳ vọng `Product privilege drift …`). Exit code của hai tiến trình trong pipe không được ghi lại; bằng chứng là thông điệp lỗi ở trên. Không chạy lại vì provision lần nữa sinh password mới không khớp role đã tạo.
 - Đã dọn: `docker stop iam-compat`, `git worktree remove … --force`, xóa hai script.
 
 ## Gates chưa được chứng nhận (ADR 0012)
