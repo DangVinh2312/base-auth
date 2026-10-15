@@ -83,16 +83,14 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   }).reconcile(productRelease);
   const root = randomUUID() as IdentityId;
   const user = randomUUID() as IdentityId;
-  const peer = randomUUID() as IdentityId;
   await ds.migration.query(
-    `INSERT INTO app_user(id,email_canonical,state,authority_level) VALUES($1,'root@example.test','pending',1000),($2,'reader@example.test','pending',10),($3,'peer@example.test','active',0)`,
-    [root, user, peer],
+    `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'root@example.test','pending'),($2,'reader@example.test','pending')`,
+    [root, user],
   );
   const bootstrap = await bootstrapProductRoot(runner, productRelease, {
     operationId: randomUUID(),
     userId: root,
     method: 'local',
-    boundaries: [{ permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } }],
   });
   assert.ok(bootstrap.activationSecret);
   const userToken = await runner.run('revoke', (tx) => identity.issueActivation(tx, user));
@@ -111,15 +109,6 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
     await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
       user,
       Buffer.from('reviewer'),
-    ]);
-    // The peer's rank comes only from a runtime role: the account boundary must see it.
-    await tx.manager.query(
-      "INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1000,'Operator')",
-      [Buffer.from('operator')],
-    );
-    await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-      peer,
-      Buffer.from('operator'),
     ]);
     await tx.manager.query(
       `INSERT INTO policy_rule(rule_id,permission_key,user_id,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{}','runtime')`,
@@ -258,19 +247,18 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
     items: unknown[];
     total: string;
   };
+  // Root is no IAM principal and holds no grant.
   assert.equal(rootPage.total, '0');
   assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 403);
   assert.equal((await request('/auth/reauthenticate', 'POST', { password })).status, 200);
-  assert.equal((await request(`/administration/users/${root}/suspend`, 'POST')).status, 403);
-  assert.equal((await request(`/administration/users/${peer}/suspend`, 'POST')).status, 404);
-  assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 200);
+  assert.equal((await request(`/administration/users/${user}/suspend`, 'POST')).status, 403);
   assert.equal(
     (
       await ds.migration.query<{ state: string }[]>('SELECT state FROM app_user WHERE id=$1', [
         user,
       ])
     )[0]?.state,
-    'suspended',
+    'active',
   );
   assert.equal((await request('/auth/logout', 'POST')).status, 200);
   assert.equal((await request('/auth/session')).status, 401);
@@ -280,7 +268,7 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   // Simulate unauthorized drift offline. The actual AppModule must fail before opening its listener.
   await ds.migration.query('ALTER TABLE role_definition DISABLE TRIGGER protect_product_rows');
   await ds.migration.query(`UPDATE role_definition SET label='drift' WHERE role_key=$1`, [
-    Buffer.from('system.root'),
+    Buffer.from('reviewer'),
   ]);
   await ds.migration.query('ALTER TABLE role_definition ENABLE TRIGGER protect_product_rows');
   running = launch();
@@ -290,8 +278,8 @@ test('actual API boot, activation/login, scoped read/write, Root boundaries and 
   assert.match(running.output(), /Application startup failed/);
   await assert.rejects(fetch(`${origin}/documents`));
   await ds.migration.query('ALTER TABLE role_definition DISABLE TRIGGER protect_product_rows');
-  await ds.migration.query("UPDATE role_definition SET label='Root' WHERE role_key=$1", [
-    Buffer.from('system.root'),
+  await ds.migration.query("UPDATE role_definition SET label='Reviewer' WHERE role_key=$1", [
+    Buffer.from('reviewer'),
   ]);
   await ds.migration.query('ALTER TABLE role_definition ENABLE TRIGGER protect_product_rows');
   await ds.migration.query('REVOKE UPDATE(title) ON document FROM product_data');

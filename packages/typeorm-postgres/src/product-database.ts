@@ -4,29 +4,33 @@ import { ProductInitial1792108800000 } from './migrations/product/001-initial.js
 import {
   ProductProtection1792108800001,
   productStateBody,
-  resolveSessionBody,
   sharedFenceBody,
 } from './migrations/product/002-protection.js';
 import { ProductUserRelationVersion1792108800003 } from './migrations/product/003-user-relation-version.js';
 import {
   accountLifecycleBody,
   ProductProtectionGuards1792108800004,
-  productRowsBody,
 } from './migrations/product/004-protection-guards.js';
 import { ProductOidcActivation1792108800005 } from './migrations/product/005-oidc-activation.js';
 import { ProductAccountRank1792108800006 } from './migrations/product/006-account-rank.js';
-import {
-  ProductRootMarker1792108800007,
-  requireRootMarkerBody,
-} from './migrations/product/007-root-marker.js';
+import { ProductRootMarker1792108800007 } from './migrations/product/007-root-marker.js';
 import {
   ProductSystemActivation1792108800008,
-  systemActivationBody,
   tokenConsumptionBody,
 } from './migrations/product/008-system-activation.js';
 import { ProductSessionExpiryIndex1792108800009 } from './migrations/product/009-session-expiry-index.js';
 import { ProductAuditOutboxDelivery1792108800010 } from './migrations/product/010-audit-outbox-delivery.js';
 import { ProductAuditOutboxPendingIndex1792108800011 } from './migrations/product/011-audit-outbox-pending-index.js';
+import {
+  guardRootActivationBody,
+  guardRootKindBody,
+  guardRootLifecycleBody,
+  guardRootNotIamSubjectBody,
+  ProductIamRoot1792108800012,
+  productRowsIamBody,
+  requireRootMarkerKindBody,
+  resolveSessionKindBody,
+} from './migrations/product/012-iam-root.js';
 
 export type ProductDatabasePurpose =
   'data' | 'identity' | 'authority' | 'sync' | 'migration' | 'bootstrap' | 'outbox';
@@ -42,6 +46,7 @@ export const productMigrations = [
   ProductSessionExpiryIndex1792108800009,
   ProductAuditOutboxDelivery1792108800010,
   ProductAuditOutboxPendingIndex1792108800011,
+  ProductIamRoot1792108800012,
 ];
 export function productDataSourceOptions(
   connection: PostgresConnectionSettings,
@@ -191,7 +196,7 @@ const audit = 'table:audit_outbox:INSERT';
 const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = {
   data: [
     ...tables(['SELECT'], authorityTables),
-    ...columns('SELECT', 'app_user', ['id', 'state', 'auth_epoch', 'authority_level']),
+    ...columns('SELECT', 'app_user', ['id', 'state', 'auth_epoch']),
     audit,
     sharedFence,
     resolveSession,
@@ -225,9 +230,9 @@ const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = 
   ],
   authority: [
     ...tables(['SELECT'], [...authorityTables, 'authz_state']),
-    ...columns('SELECT', 'app_user', ['id', 'state', 'auth_epoch', 'authority_level']),
-    ...columns('UPDATE', 'app_user', ['state', 'auth_epoch', 'authority_level']),
-    'table:account_rank:SELECT',
+    ...columns('SELECT', 'app_user', ['id', 'state', 'auth_epoch', 'kind']),
+    ...columns('UPDATE', 'app_user', ['state', 'auth_epoch']),
+    'table:iam_account:SELECT',
     'column:authz_state.revision:UPDATE',
     ...tables(
       ['INSERT', 'UPDATE', 'DELETE'],
@@ -270,13 +275,8 @@ const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = 
   ],
   bootstrap: [
     ...tables(['SELECT'], [...authorityTables, 'authz_state']),
-    ...columns('SELECT', 'app_user', [
-      'id',
-      'state',
-      'auth_epoch',
-      'authority_level',
-      'email_canonical',
-    ]),
+    ...columns('SELECT', 'app_user', ['id', 'state', 'auth_epoch', 'email_canonical', 'kind']),
+    ...columns('UPDATE', 'app_user', ['kind', 'state', 'auth_epoch']),
     'column:local_credential.user_id:SELECT',
     ...columns('SELECT', 'external_identity', [
       'issuer',
@@ -287,10 +287,9 @@ const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = 
     ]),
     'column:authz_state.revision:UPDATE',
     ...tables(['SELECT', 'UPDATE'], ['security_bootstrap_state']),
-    ...tables(['INSERT'], ['user_role', 'user_boundary', 'one_time_token']),
+    'table:one_time_token:INSERT',
     ...columns('SELECT', 'one_time_token', ['user_id', 'purpose', 'consumed_at']),
     'column:one_time_token.consumed_at:UPDATE',
-    'table:user_role:DELETE',
     audit,
   ],
   // Audit delivery worker: reads events, writes delivery state only; no fence, no other table.
@@ -309,13 +308,16 @@ const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = 
 /** Protection functions in public: owner, SECURITY DEFINER and exact body after the migrations. */
 const protectionFunctions: Readonly<Record<string, readonly [string, boolean, string]>> = {
   authz_acquire_shared_fence: ['product_fence_owner', true, sharedFenceBody],
-  resolve_session: ['product_session_owner', true, resolveSessionBody],
-  protect_system_activation: ['product_session_owner', true, systemActivationBody],
+  resolve_session: ['product_session_owner', true, resolveSessionKindBody],
   protect_product_state: ['product_migration', false, productStateBody],
-  protect_product_rows: ['product_migration', false, productRowsBody],
+  protect_product_rows: ['product_migration', false, productRowsIamBody],
   protect_account_lifecycle: ['product_migration', false, accountLifecycleBody],
-  require_root_marker: ['product_migration', false, requireRootMarkerBody],
   protect_token_consumption: ['product_migration', false, tokenConsumptionBody],
+  guard_root_kind: ['product_session_owner', true, guardRootKindBody],
+  require_root_marker_kind: ['product_session_owner', true, requireRootMarkerKindBody],
+  guard_root_not_iam_subject: ['product_session_owner', true, guardRootNotIamSubjectBody],
+  guard_root_activation: ['product_session_owner', true, guardRootActivationBody],
+  guard_root_lifecycle: ['product_session_owner', true, guardRootLifecycleBody],
 };
 /**
  * Every non-internal trigger on the protected tables, as
@@ -331,15 +333,87 @@ const protectionTriggers = new Set([
     'relation_edge',
     'user_boundary',
   ].map((table) => `${table}.protect_product_rows:protect_product_rows:31::O:false:false`),
+  ...['user_role', 'user_boundary', 'policy_rule', 'record_exception'].map(
+    (table) => `${table}.guard_root_not_iam_subject:guard_root_not_iam_subject:23::O:false:false`,
+  ),
   'security_bootstrap_state.protect_product_state:protect_product_state:19::O:false:false',
   'authz_state.protect_product_state:protect_product_state:19::O:false:false',
   'app_user.protect_account_lifecycle:protect_account_lifecycle:19::O:false:false',
-  'user_role.require_root_marker:require_root_marker:5::O:true:true',
-  'user_role.protect_system_activation:protect_system_activation:23:role_key,user_id:O:false:false',
-  'one_time_token.protect_system_activation:protect_system_activation:7::O:false:false',
+  'app_user.guard_root_kind:guard_root_kind:23:kind:O:false:false',
+  'app_user.require_root_marker_kind:require_root_marker_kind:17:kind:O:true:true',
+  'app_user.guard_root_lifecycle:guard_root_lifecycle:19:auth_epoch,state:O:false:false',
+  'one_time_token.guard_root_activation:guard_root_activation:7::O:false:false',
   'one_time_token.protect_token_consumption:protect_token_consumption:19::O:false:false',
 ]);
 const protectedTables = [...new Set([...protectionTriggers].map((t) => t.split('.')[0]!))];
+/**
+ * Exact ACL of the NOLOGIN owner of resolve_session and the Root guards: the 002/008 grants with
+ * the 012 delta (spec 3.2). Anything more widens what every SECURITY DEFINER guard can do.
+ */
+const sessionOwnerAcl: readonly string[] = [
+  'schema:public:USAGE',
+  ...columns('SELECT', 'app_user', ['id', 'state', 'auth_epoch', 'email_verified', 'kind']),
+  'column:app_user.kind:UPDATE',
+  ...columns('SELECT', 'application_session', [
+    'token_hash',
+    'user_id',
+    'auth_epoch',
+    'method',
+    'assurance',
+    'authenticated_at',
+    'reauthenticated_at',
+    'expires_at',
+    'revoked_at',
+    'last_seen_at',
+    'credential_version',
+    'external_issuer',
+    'external_subject',
+    'binding_version',
+    'provider_version',
+  ]),
+  ...columns('SELECT', 'local_credential', ['user_id', 'version']),
+  ...columns('SELECT', 'external_identity', [
+    'issuer',
+    'subject',
+    'user_id',
+    'enabled',
+    'binding_version',
+  ]),
+  ...columns('SELECT', 'oidc_provider', ['issuer', 'version', 'enabled']),
+  ...['user_role', 'user_boundary', 'policy_rule', 'record_exception'].map(
+    (table) => `column:${table}.user_id:SELECT`,
+  ),
+  ...columns('SELECT', 'one_time_token', ['user_id', 'purpose', 'consumed_at', 'expires_at']),
+  'table:security_bootstrap_state:SELECT',
+  ...[
+    'resolve_session(bytea)',
+    'guard_root_kind()',
+    'require_root_marker_kind()',
+    'guard_root_not_iam_subject()',
+    'guard_root_activation()',
+    'guard_root_lifecycle()',
+  ].map((fn) => `function:${fn}:EXECUTE`),
+];
+/**
+ * `grantee`-filtered grants on every table, column and function in a non-system schema (objects
+ * outside public are reported schema-qualified), plus schema grants when `withSchemas`.
+ */
+const grantsOf = (grantees: string, withSchemas: boolean) =>
+  `WITH schemas AS (SELECT oid,nspname,CASE WHEN nspname='public' THEN '' ELSE nspname||'.' END AS prefix FROM pg_namespace
+        WHERE nspname NOT IN ('pg_catalog','information_schema') AND nspname NOT LIKE 'pg\\_toast%' AND nspname NOT LIKE 'pg\\_temp\\_%'),
+      acl AS (
+        ${withSchemas ? `SELECT 'schema:'||q.nspname AS object,a.privilege_type,a.is_grantable,a.grantee FROM pg_namespace n JOIN schemas q ON q.oid=n.oid,aclexplode(n.nspacl) a UNION ALL` : ''}
+        SELECT 'table:'||q.prefix||c.relname AS object,a.privilege_type,a.is_grantable,a.grantee
+          FROM pg_class c JOIN schemas q ON q.oid=c.relnamespace,aclexplode(c.relacl) a
+        UNION ALL
+        SELECT 'column:'||q.prefix||c.relname||'.'||t.attname,a.privilege_type,a.is_grantable,a.grantee
+          FROM pg_attribute t JOIN pg_class c ON c.oid=t.attrelid JOIN schemas q ON q.oid=c.relnamespace,
+          aclexplode(t.attacl) a WHERE t.attnum>0 AND NOT t.attisdropped
+        UNION ALL
+        SELECT 'function:'||q.prefix||p.proname||'('||oidvectortypes(p.proargtypes)||')',a.privilege_type,a.is_grantable,a.grantee
+          FROM pg_proc p JOIN schemas q ON q.oid=p.pronamespace,aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a)
+      SELECT DISTINCT object||':'||privilege_type||CASE WHEN is_grantable THEN '+grant' ELSE '' END AS grant
+        FROM acl WHERE grantee IN (${grantees})`;
 
 /**
  * Startup probe fails closed if credentials or narrow DB capabilities drift. Every table, column
@@ -375,22 +449,7 @@ export async function verifyProductPrivileges(
     if (role?.name !== `product_${purpose}` || role.unsafe)
       throw new Error('Unsafe product credential');
     const granted = await source.query<{ grant: string }[]>(
-      `WITH me AS (SELECT oid FROM pg_roles WHERE rolname=current_user),
-      -- Every non-system schema; objects outside public are reported schema-qualified.
-      schemas AS (SELECT oid,CASE WHEN nspname='public' THEN '' ELSE nspname||'.' END AS prefix FROM pg_namespace
-        WHERE nspname NOT IN ('pg_catalog','information_schema') AND nspname NOT LIKE 'pg\\_toast%' AND nspname NOT LIKE 'pg\\_temp\\_%'),
-      acl AS (
-        SELECT 'table:'||q.prefix||c.relname AS object,a.privilege_type,a.is_grantable,a.grantee
-          FROM pg_class c JOIN schemas q ON q.oid=c.relnamespace,aclexplode(c.relacl) a
-        UNION ALL
-        SELECT 'column:'||q.prefix||c.relname||'.'||t.attname,a.privilege_type,a.is_grantable,a.grantee
-          FROM pg_attribute t JOIN pg_class c ON c.oid=t.attrelid JOIN schemas q ON q.oid=c.relnamespace,
-          aclexplode(t.attacl) a WHERE t.attnum>0 AND NOT t.attisdropped
-        UNION ALL
-        SELECT 'function:'||q.prefix||p.proname||'('||oidvectortypes(p.proargtypes)||')',a.privilege_type,a.is_grantable,a.grantee
-          FROM pg_proc p JOIN schemas q ON q.oid=p.pronamespace,aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a)
-      SELECT DISTINCT object||':'||privilege_type||CASE WHEN is_grantable THEN '+grant' ELSE '' END AS grant
-        FROM acl WHERE grantee IN (0,(SELECT oid FROM me))`,
+      grantsOf('0,(SELECT oid FROM pg_roles WHERE rolname=current_user)', false),
     );
     const actual = new Set(granted.map((g) => g.grant));
     const expected = new Set([...expectedPrivileges[purpose], ...(additional[purpose] ?? [])]);
@@ -407,6 +466,15 @@ export async function verifyProductPrivileges(
           AND NOT has_schema_privilege(r.oid,'public','CREATE') AND NOT EXISTS(SELECT FROM pg_auth_members m WHERE m.member=r.oid)
           AND p.proconfig @> ARRAY['search_path=pg_catalog, pg_temp']) AS valid`);
     if (!hardening?.valid) throw new Error('Product protection drift');
+    const ownerGrants = await source.query<{ grant: string }[]>(
+      grantsOf("SELECT oid FROM pg_roles WHERE rolname='product_session_owner'", true),
+    );
+    const ownerActual = new Set(ownerGrants.map((g) => g.grant));
+    if (
+      ownerActual.size !== sessionOwnerAcl.length ||
+      sessionOwnerAcl.some((g) => !ownerActual.has(g))
+    )
+      throw new Error('Product protection drift');
     const functions = await source.query<
       { name: string; owner: string; definer: boolean; body: string; config: string[] | null }[]
     >(

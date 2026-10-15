@@ -322,10 +322,10 @@ test('a fully classified app runs the runtime bootstrap once and becomes ready',
 test('the composed release and storage bindings are unchanged', () => {
   // The hash is what manifest sync stores; a different hash would be a new release.
   const release = createProductRelease(createProductAuthorizationCore());
-  assert.equal(release.hash, 'c1fbb3451d9292477ae24ed1d342f581612b68d9519ffccce6f08a9a3c874fa9');
+  assert.equal(release.hash, 'ba878a4b746edefaf548dc8c26e864d9a8ca5f7e1a01cac9e9fd7db51234170b');
   assert.equal(
     createHash('sha256').update(JSON.stringify(productBindings)).digest('hex'),
-    'fc00a30169a68b06debf87759f6e9ea03b69d66dd29005726408a83078833882',
+    '77d13233fa04e02cc2e6444fff57b7dec4f2d1f23c737ec9a6746006de1bb6f8',
   );
 });
 

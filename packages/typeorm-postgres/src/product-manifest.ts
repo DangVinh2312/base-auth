@@ -601,24 +601,24 @@ async function apply(m: EntityManager, release: VerifiedReleaseManifest): Promis
   if (unusable.length > 0)
     reject('definition_in_use', unusable.map((ref) => refKey(ref)).join(', '));
 
+  // No rank since 012: a role is its key, owner and label.
   for (const role of release.roles) {
-    const rows = await m.query<{ managed_by: string; authority_level: number; label: string }[]>(
-      'SELECT managed_by, authority_level, label FROM role_definition WHERE role_key = $1',
+    const rows = await m.query<{ managed_by: string; label: string }[]>(
+      'SELECT managed_by, label FROM role_definition WHERE role_key = $1',
       [utf8(role.key)],
     );
     if (rows.length === 0) {
-      await m.query(`INSERT INTO role_definition VALUES ($1, 'code', $2, $3)`, [
-        utf8(role.key),
-        role.authorityLevel,
-        role.label,
-      ]);
+      await m.query(
+        `INSERT INTO role_definition(role_key, managed_by, label) VALUES ($1, 'code', $2)`,
+        [utf8(role.key), role.label],
+      );
     } else if (rows[0]!.managed_by !== 'code') {
       reject('collision', `role ${role.key} is runtime-managed`);
-    } else if (rows[0]!.authority_level !== role.authorityLevel || rows[0]!.label !== role.label) {
-      await m.query(
-        'UPDATE role_definition SET authority_level = $2, label = $3 WHERE role_key = $1',
-        [utf8(role.key), role.authorityLevel, role.label],
-      );
+    } else if (rows[0]!.label !== role.label) {
+      await m.query('UPDATE role_definition SET label = $2 WHERE role_key = $1', [
+        utf8(role.key),
+        role.label,
+      ]);
     }
   }
 
@@ -774,12 +774,11 @@ export interface RootBootstrapInput {
   readonly method: 'local' | 'oidc';
   readonly issuer?: string;
   readonly subject?: string;
-  readonly boundaries: readonly {
-    permission: string;
-    boundary: { key: string; version: number };
-  }[];
 }
-/** Offline capability only: marker persists independently of account/assignment lifecycle. */
+/**
+ * Offline capability only: promotes one pending IAM account to Root (kind = 'root') with the
+ * permanent marker and a one-time proof (ADR 0012). No role, grant or boundary is written.
+ */
 export async function bootstrapProductRoot(
   runner: ProductTransactionRunner,
   release: ProductReleaseManifest,
@@ -808,44 +807,14 @@ export async function bootstrapProductRoot(
     );
     if (state?.hash !== release.hash || state.materialized !== (await protectedStateHash(m)))
       reject('not_ready', 'manifest must be applied without drift');
-    const role = release.roles.find((r) => r.key === 'system.root');
-    if (!role) reject('missing_reference', 'Root definition not declared');
+    // Lock the target before any check (spec 3.3): a concurrent fact or token insert either
+    // waits for this promotion or is already visible to the DB guard.
     const [target] = await m.query<{ state: string; email_canonical: string | null }[]>(
-      'SELECT state,email_canonical FROM app_user WHERE id=$1',
+      'SELECT state,email_canonical FROM app_user WHERE id=$1 FOR NO KEY UPDATE',
       [input.userId],
     );
     if (target?.state !== 'pending')
       reject('collision', 'Root enrollment target must already be pending');
-    const grants = release.systemGrants.filter((g) => g.role === 'system.root');
-    if (grants.length === 0) reject('missing_reference', 'Root has no explicit system grants');
-    const supplied = new Map(input.boundaries.map((b) => [b.permission, b]));
-    if (supplied.size !== input.boundaries.length)
-      reject('invalid_release', 'duplicate bootstrap boundary');
-    for (const grant of grants) {
-      const [resource, action] = grant.permission.split('.');
-      const declaration = release.declarations.resources[resource!]!.actions[action!]!;
-      if (declaration.boundary === 'required' && !supplied.has(grant.permission))
-        reject('missing_reference', 'mandatory Root boundary missing');
-    }
-    for (const binding of input.boundaries) {
-      const boundary = release.declarations.boundaries[refKey(binding.boundary)];
-      if (
-        !grants.some((g) => g.permission === binding.permission) ||
-        !boundary ||
-        boundary.lifecycle === 'retired' ||
-        !boundary.entries.some((e) => e.permission === binding.permission)
-      )
-        reject('invalid_release', 'invalid Root boundary');
-      await m.query(
-        'INSERT INTO user_boundary(user_id,permission_key,boundary_key,boundary_version) VALUES($1,$2,$3,$4)',
-        [
-          input.userId,
-          utf8(binding.permission),
-          utf8(binding.boundary.key),
-          binding.boundary.version,
-        ],
-      );
-    }
     if (input.method === 'local') {
       if (!target!.email_canonical)
         reject('missing_reference', 'local target needs verified delivery address enrollment');
@@ -862,11 +831,8 @@ export async function bootstrapProductRoot(
     // OIDC activation additionally needs a fresh IdP proof of the exact pre-bound subject.
     const { randomBytes } = await import('node:crypto');
     const activationSecret = randomBytes(32).toString('base64url');
-    // Assignment first: the DB refuses a system assignment whose target already holds a live token.
-    await m.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-      input.userId,
-      utf8('system.root'),
-    ]);
+    // Promotion before the proof: the guard refuses a target holding IAM facts or a live invitation.
+    await m.query(`UPDATE app_user SET kind='root' WHERE id=$1`, [input.userId]);
     await m.query(
       `INSERT INTO one_time_token(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,statement_timestamp()+interval '15 minutes')`,
       [
@@ -915,13 +881,12 @@ export async function reissueRootActivation(
     const [target] = await m.query<
       { state: string; delivery: boolean; root: boolean; credential: boolean; bindings: number }[]
     >(
-      `SELECT u.state,u.email_canonical IS NOT NULL delivery,
-        EXISTS(SELECT FROM user_role r WHERE r.user_id=u.id AND r.role_key=$2) root,
+      `SELECT u.state,u.email_canonical IS NOT NULL delivery,u.kind='root' root,
         EXISTS(SELECT FROM local_credential c WHERE c.user_id=u.id) credential,
         (SELECT count(*) FROM external_identity e WHERE e.user_id=u.id AND e.enabled)::int bindings
        FROM security_bootstrap_state b JOIN app_user u ON u.id=b.target_user_id
-       WHERE b.singleton AND b.initialized_at IS NOT NULL AND u.id=$1 FOR UPDATE OF b`,
-      [input.userId, utf8('system.root')],
+       WHERE b.singleton AND b.initialized_at IS NOT NULL AND u.id=$1 FOR UPDATE OF b FOR NO KEY UPDATE OF u`,
+      [input.userId],
     );
     if (!target || target.state !== 'pending' || !target.root || target.credential)
       reject('collision', 'only the pending bootstrap Root can receive a new proof');
@@ -966,8 +931,8 @@ export interface RootRevocationInput {
   readonly reason: string;
 }
 /**
- * Offline capability only: removes one Root assignment under the exclusive fence with audit.
- * Adding a Root holder after bootstrap is not supported here; it needs the approval authority gate.
+ * Offline capability only: suspends the Root and ends its sessions (auth_epoch) under the
+ * exclusive fence with audit. The marker stays, so no new Root can follow (ADR 0012).
  */
 export async function revokeProductRoot(
   runner: ProductTransactionRunner,
@@ -988,8 +953,8 @@ export async function revokeProductRoot(
     reject('invalid_release', 'invalid Root revocation input');
   return runner.run('bootstrap', async (tx) => {
     const removed = await tx.manager.query<unknown[]>(
-      'WITH removed AS (DELETE FROM user_role WHERE user_id=$1 AND role_key=$2 RETURNING 1) SELECT * FROM removed',
-      [input.userId, utf8('system.root')],
+      `WITH revoked AS (UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1 AND kind='root' AND state<>'suspended' RETURNING 1) SELECT * FROM revoked`,
+      [input.userId],
     );
     if (!removed.length) return { revoked: false };
     await appendProductAudit(tx, {

@@ -120,7 +120,7 @@ test('same release full drift fails; rollback avoids runtime seed takeover', asy
   const id = randomUUID();
   await runner.run('admin', (tx) =>
     tx.manager.query(
-      `INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1,'Runtime')`,
+      "INSERT INTO role_definition(role_key,managed_by,label) VALUES($1,'runtime','Runtime')",
       [Buffer.from('runtime')],
     ),
   );
@@ -146,12 +146,7 @@ test('persistent bootstrap races once, mandatory boundary, no boot reseed after 
     operationId: randomUUID(),
     userId: target,
     method: 'local' as const,
-    boundaries: [{ permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } }],
   };
-  await assert.rejects(
-    bootstrapProductRoot(runner, release2(), { ...input, boundaries: [] }),
-    /boundary/,
-  );
   const outcomes = await Promise.all([
     bootstrapProductRoot(runner, release2(), input),
     bootstrapProductRoot(runner, release2(), { ...input, operationId: randomUUID() }).catch(
@@ -219,19 +214,33 @@ test('persistent bootstrap races once, mandatory boundary, no boot reseed after 
     )[0]?.n,
     0,
   );
+  assert.deepEqual(await migration.query('SELECT kind,state FROM app_user WHERE id=$1', [target]), [
+    { kind: 'root', state: 'suspended' },
+  ]);
   await assert.rejects(
     bootstrapProductRoot(runner, release2(), { ...input, operationId: randomUUID() }),
     /already initialized/,
   );
 });
-test('bootstrap credential cannot assign Root by SQL once the marker is initialized', async () => {
+const denied = (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501';
+test('bootstrap credential cannot promote another Root once the marker is initialized', async () => {
   const marker = await migration.query<{ initialized: boolean }[]>(
     'SELECT initialized_at IS NOT NULL AS initialized FROM security_bootstrap_state',
   );
   assert.equal(marker[0]?.initialized, true);
   const second = randomUUID();
-  await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'active')`, [second]);
-  // The previous test revoked Root, so only the permanent marker can refuse this insert.
+  await migration.query(
+    `INSERT INTO app_user(id,email_canonical,state) VALUES($1,'second@example.test','pending')`,
+    [second],
+  );
+  // The previous test suspended Root; the permanent marker alone refuses another promotion.
+  await assert.rejects(
+    runner.run('bootstrap', (tx) =>
+      tx.manager.query(`UPDATE app_user SET kind='root' WHERE id=$1`, [second]),
+    ),
+    denied,
+  );
+  // Nor can it fall back to a role assignment: the bootstrap login has no INSERT on user_role.
   await assert.rejects(
     runner.run('bootstrap', (tx) =>
       tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
@@ -239,17 +248,11 @@ test('bootstrap credential cannot assign Root by SQL once the marker is initiali
         Buffer.from('system.root'),
       ]),
     ),
-    (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501',
+    denied,
   );
-  assert.equal(
-    (
-      await migration.query<{ n: number }[]>(
-        'SELECT count(*)::int n FROM user_role WHERE role_key=$1',
-        [Buffer.from('system.root')],
-      )
-    )[0]?.n,
-    0,
-  );
+  assert.deepEqual(await migration.query('SELECT kind FROM app_user WHERE id=$1', [second]), [
+    { kind: 'iam' },
+  ]);
 });
 test('system grant explicit content change/removal requires prior exact hash', async () => {
   const changedGrant = { ...grant, template: { key: 'limitedAccounts', version: 1 } };
@@ -274,9 +277,9 @@ test('system grant explicit content change/removal requires prior exact hash', a
         resource: 'account',
         parameters: {},
         expression: {
-          op: 'lte' as const,
-          field: 'authorityLevel',
-          value: { from: 'literal' as const, value: '500' },
+          op: 'eq' as const,
+          field: 'state',
+          value: { from: 'literal' as const, value: 'active' },
         },
       },
     ],
@@ -332,7 +335,6 @@ test('system grant explicit content change/removal requires prior exact hash', a
   assert.equal((await reconciler().reconcile(fourth)).changed, false);
 });
 
-const denied = (e: { driverError?: { code?: string } }) => e.driverError?.code === '42501';
 test('code-owned roles are runtime assignments; their grants leave only by explicit release removal', async () => {
   const reviewGrant = {
     permission: 'document.review',
@@ -385,14 +387,7 @@ test('code-owned roles are runtime assignments; their grants leave only by expli
     Buffer.from('reviewer'),
   ]);
   await admin('DELETE FROM user_role WHERE user_id=$1', [user]);
-  // Root assignment, code-role grants and seeded defaults stay out of runtime reach.
-  await assert.rejects(
-    admin('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-      user,
-      Buffer.from('system.root'),
-    ]),
-    denied,
-  );
+  // Code-role grants and seeded defaults stay out of runtime reach.
   await assert.rejects(
     admin(
       `INSERT INTO policy_rule(rule_id,permission_key,role_key,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{}','runtime')`,
@@ -442,7 +437,6 @@ test('Root bootstrap and reissue refuse the offline actor id as target user', as
       operationId: randomUUID(),
       userId: PRODUCT_OFFLINE_ACTOR,
       method: 'local',
-      boundaries: [],
     }),
     /offline actor/,
   );

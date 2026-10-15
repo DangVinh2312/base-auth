@@ -274,16 +274,9 @@ export class ProductAuthorization {
     if (!this.bindings.core.isCanonicalUuid(target)) throw new ProductAccessDenied();
     return this.access(secret, 'account', 'suspend', 'admin', async (plan, tx) => {
       if (plan.userId === target) throw new ProductAccessDenied();
+      // iam_account (012) holds IAM accounts only; rank no longer exists (ADR 0012).
       const row = await this.gateway.detail(plan, this.bindings.core.parseKey('uuid', target), tx);
       if (!row) return false;
-      const rank = await tx.manager.query<{ id: string; rank: string }[]>(
-        `SELECT id,authority_level::text rank FROM account_rank WHERE id=ANY($1::uuid[])`,
-        [[plan.userId, target]],
-      );
-      const actorRank = rank.find((r) => r.id === plan.userId)?.rank;
-      const targetRank = rank.find((r) => r.id === target)?.rank;
-      if (!actorRank || !targetRank || BigInt(actorRank) <= BigInt(targetRank))
-        throw new ProductAccessDenied();
       await tx.manager.query(
         `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
         [target],

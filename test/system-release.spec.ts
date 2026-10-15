@@ -100,15 +100,15 @@ test('system grants require exact declared permission/template and unique stable
 test('product manifest hash is unchanged by the codec refactor (data only, no adapter in hash)', async () => {
   const { createProductAuthorizationCore, createProductRelease } =
     await import('../apps/api/dist/authorization/product-manifest.js');
-  // Computed from the pre-refactor build (productRelease constant, regex + Date.parse parser).
-  const expected = 'c1fbb3451d9292477ae24ed1d342f581612b68d9519ffccce6f08a9a3c874fa9';
+  // Release 2 data (ADR 0012) with the pre-v2 product envelope; Task 4 removes the system grant fields.
+  const expected = 'ba878a4b746edefaf548dc8c26e864d9a8ca5f7e1a01cac9e9fd7db51234170b';
   const first = createProductRelease(createProductAuthorizationCore());
   const second = createProductRelease(createProductAuthorizationCore());
   assert.equal(first.hash, expected);
   assert.equal(second.hash, expected);
   assert.equal(
     createHash('sha256').update(first.declarations.canonical).digest('hex'),
-    'b374c0057e1ac10b41bf93b65b7ebcb6cc3f218532670025d81a33a4bc1fceec',
+    '528137d7eaf0aeb8599f473611acb0a3e9101377bf57c7d1f19352bbdcb25701',
   );
 });
 

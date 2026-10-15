@@ -91,10 +91,9 @@ test('measured small mixed workload uses real purpose credentials and singleton 
                   : 'read';
           await runner.run(mode, async (tx) => {
             if (mode === 'admin')
-              await tx.manager.query(
-                'UPDATE app_user SET authority_level=(authority_level+1)%10 WHERE id=$1',
-                [userId],
-              );
+              await tx.manager.query('UPDATE app_user SET auth_epoch=auth_epoch+1 WHERE id=$1', [
+                userId,
+              ]);
             else if (mode === 'revoke')
               await tx.manager.query('UPDATE app_user SET auth_epoch=auth_epoch+1 WHERE id=$1', [
                 userId,

@@ -181,9 +181,6 @@ test('OIDC Root bootstrap issues a one-time OIDC proof only for one exact pre-bo
         method: 'oidc' as const,
         issuer: 'https://idp.example.test',
         subject: 'root-subject',
-        boundaries: [
-          { permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } },
-        ],
       };
       // A second enabled binding would let another subject finish the activation.
       await assert.rejects(
@@ -227,54 +224,46 @@ test('OIDC Root bootstrap issues a one-time OIDC proof only for one exact pre-bo
   });
 });
 
-test('bootstrap credential cannot commit a Root assignment without the marker naming it', async () => {
+test('a Root promotion commits only with the marker naming it', async () => {
   await withProduct(async (_reconciler, migration, settings) => {
     const bootstrap = await new DataSource(
       productDataSourceOptions(settings.bootstrap),
     ).initialize();
     try {
       const runner = new ProductTransactionRunner({ bootstrap });
+      const denied = (e: { code?: string; driverError?: { code?: string } }) =>
+        (e.driverError?.code ?? e.code) === '42501';
       const target = randomUUID();
-      await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'active')`, [target]);
-      await assert.rejects(
-        runner.run('bootstrap', (tx) =>
-          tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-            target,
-            Buffer.from('system.root'),
-          ]),
-        ),
-        (e: { code?: string; driverError?: { code?: string } }) =>
-          (e.driverError?.code ?? e.code) === '42501',
-      );
-      // Nor with a marker naming somebody else, nor by forcing the check early.
       const other = randomUUID();
-      await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'pending')`, [other]);
+      await migration.query(`INSERT INTO app_user(id,state) VALUES($1,'pending'),($2,'pending')`, [
+        target,
+        other,
+      ]);
+      const promote = `UPDATE app_user SET kind='root' WHERE id=$1`;
+      // No marker at all: the deferred check refuses the commit.
+      await assert.rejects(
+        runner.run('bootstrap', (tx) => tx.manager.query(promote, [target])),
+        denied,
+      );
+      // A marker naming somebody else, and forcing the check early, are refused too.
       await assert.rejects(
         runner.run('bootstrap', async (tx) => {
-          await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-            target,
-            Buffer.from('system.root'),
-          ]);
+          await tx.manager.query(promote, [target]);
           await tx.manager.query(
             'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
             [randomUUID(), other],
           );
         }),
-        (e: { code?: string; driverError?: { code?: string } }) =>
-          (e.driverError?.code ?? e.code) === '42501',
+        denied,
       );
       await assert.rejects(
         runner.run('bootstrap', async (tx) => {
           await tx.manager.query('SET CONSTRAINTS ALL IMMEDIATE');
-          await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-            target,
-            Buffer.from('system.root'),
-          ]);
+          await tx.manager.query(promote, [target]);
         }),
-        (e: { code?: string; driverError?: { code?: string } }) =>
-          (e.driverError?.code ?? e.code) === '42501',
+        denied,
       );
-      assert.deepEqual(await migration.query('SELECT user_id FROM user_role'), []);
+      assert.deepEqual(await migration.query(`SELECT id FROM app_user WHERE kind='root'`), []);
       assert.deepEqual(
         await migration.query('SELECT initialized_at FROM security_bootstrap_state'),
         [{ initialized_at: null }],
@@ -285,7 +274,7 @@ test('bootstrap credential cannot commit a Root assignment without the marker na
   });
 });
 
-test('only the bootstrap credential issues activation for a system account', async () => {
+test('only the bootstrap credential issues activation for Root', async () => {
   await withProduct(async (_reconciler, migration, settings) => {
     const bootstrap = await new DataSource(
       productDataSourceOptions(settings.bootstrap),
@@ -304,9 +293,6 @@ test('only the bootstrap credential issues activation for a system account', asy
         operationId: randomUUID(),
         userId: userId as IdentityId,
         method: 'local' as const,
-        boundaries: [
-          { permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } },
-        ],
       });
       const denied = (e: { code?: string; driverError?: { code?: string } }) =>
         (e.driverError?.code ?? e.code) === '42501';

@@ -221,16 +221,13 @@ try {
         userId: userId as IdentityId,
         method,
         ...(method === 'oidc' ? { issuer: flags['--issuer'], subject: flags['--subject'] } : {}),
-        boundaries: [
-          { permission: 'account.suspend', boundary: { key: 'rootAccounts', version: 1 } },
-        ],
       });
       committed = result.initialized;
       if (result.activationSecret) await file.writeFile(result.activationSecret + '\n');
       console.log(
         result.initialized
           ? 'Root enrollment committed; activation still required.'
-          : 'Operation already committed; marker and assignments unchanged.',
+          : 'Operation already committed; marker and Root unchanged.',
       );
     } finally {
       await file.close();
@@ -256,8 +253,8 @@ try {
     );
     console.log(
       result.revoked
-        ? 'Root assignment revoked; marker unchanged.'
-        : 'No Root assignment for this user; nothing changed.',
+        ? 'Root suspended and its sessions revoked; marker unchanged.'
+        : 'No unsuspended Root for this user; nothing changed.',
     );
   } else if (command === 'reissue-root') {
     const userId = flags['--user'];

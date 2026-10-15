@@ -40,6 +40,20 @@ const release = prepareProductRelease(
       policies: productDeclarations.policies.map((p) =>
         p.key === 'readable' ? { ...p, obligations: [{ handler: 'audit@1' }] } : p,
       ),
+      boundaries: [
+        ...productDeclarations.boundaries,
+        {
+          key: 'accountAll',
+          version: 1,
+          entries: [
+            {
+              permission: 'account.suspend',
+              contextRequirements: [],
+              requiredScope: { op: 'constant', value: true },
+            },
+          ],
+        },
+      ],
     },
   },
   core,
@@ -128,7 +142,7 @@ before(async () => {
   await new ProductDocument1792108800002().up(qr);
   await qr.release();
   await migration.query(
-    `INSERT INTO app_user(id,state,email_verified,authority_level) VALUES($1,'active',true,0),($2,'active',true,0)`,
+    `INSERT INTO app_user(id,state,email_verified) VALUES($1,'active',true),($2,'active',true)`,
     [actor, target],
   );
   await migration.query(
@@ -143,21 +157,15 @@ before(async () => {
       capabilities: release.declarations.capabilities,
     }).reconcile(release),
   );
-  // Fixture authority: Root (marker first commit), its boundary, a document and an update grant.
-  await runner.run('bootstrap', async (tx) => {
-    await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
-      actor,
-      utf8('system.root'),
-    ]);
-    await tx.manager.query(
-      'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
-      [randomUUID(), actor],
-    );
-  });
+  // Fixture authority (IAM actor): direct document grants, account.suspend grant and its boundary.
   await runner.run('admin', async (tx) => {
     await tx.manager.query(
       'INSERT INTO user_boundary(user_id,permission_key,boundary_key,boundary_version) VALUES($1,$2,$3,1)',
-      [actor, utf8('account.suspend'), utf8('rootAccounts')],
+      [actor, utf8('account.suspend'), utf8('accountAll')],
+    );
+    await tx.manager.query(
+      "INSERT INTO policy_rule(rule_id,permission_key,user_id,effect,template_key,template_version,parameters,managed_by) VALUES($1,$2,$3,'allow',$4,1,'{}','runtime')",
+      [randomUUID(), utf8('account.suspend'), actor, utf8('allAccounts')],
     );
     await tx.manager.query(
       "INSERT INTO object_ref(object_id,type_key,key_kind,key_bytes) VALUES($1,$2,'uuid',$3)",
@@ -194,7 +202,7 @@ test('manifest sync records the evaluated revision and the revision it publishes
         'manifest.sync',
         operator,
         before,
-        { sequence: '1', hash: release.hash, resultingRevision: after },
+        { sequence: release.sequence, hash: release.hash, resultingRevision: after },
       ],
     ],
   );

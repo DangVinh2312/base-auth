@@ -1,8 +1,5 @@
 import type { SystemDeclarations } from '@base-authorization/core';
-import type {
-  ProductReleaseSource,
-  ProductStorageBindings,
-} from '@base-authorization/typeorm-postgres';
+import type { ProductStorageBindings } from '@base-authorization/typeorm-postgres';
 
 /** Account administration fragment: data only, composed into the release in authorization/. */
 export const accountDeclarations: Pick<
@@ -13,8 +10,9 @@ export const accountDeclarations: Pick<
     {
       key: 'account',
       keyKind: 'uuid',
-      fields: { state: { kind: 'string' }, authorityLevel: { kind: 'integer' } },
+      fields: { state: { kind: 'string' } },
       actions: {
+        // An IAM principal needs a grant and an explicit boundary; Root bypasses both (ADR 0012).
         suspend: { policy: { key: 'freshAuthentication', version: 1 }, boundary: 'required' },
       },
     },
@@ -37,40 +35,14 @@ export const accountDeclarations: Pick<
       expression: { op: 'constant', value: true },
     },
   ],
-  boundaries: [
-    {
-      key: 'rootAccounts',
-      version: 1,
-      entries: [
-        {
-          permission: 'account.suspend',
-          contextRequirements: [],
-          requiredScope: {
-            op: 'lte',
-            field: 'authorityLevel',
-            value: { from: 'literal', value: '999' },
-          },
-        },
-      ],
-    },
-  ],
+  boundaries: [],
 };
-export const accountSystemGrants: ProductReleaseSource['systemGrants'] = [
-  {
-    owner: 'product',
-    key: 'root-suspend',
-    role: 'system.root',
-    permission: 'account.suspend',
-    template: { key: 'allAccounts', version: 1 },
-    parameters: {},
-  },
-];
 export const accountBinding: ProductStorageBindings['resources'][number] = {
   resource: 'account',
-  // Effective rank (column or assigned roles), never the raw column alone.
-  table: 'account_rank',
+  // IAM accounts only: Root and absent ids look the same to every account action.
+  table: 'iam_account',
   objectIdColumn: 'id',
   keyColumn: 'id',
-  columns: { state: 'state', authorityLevel: 'authority_level' },
-  projection: ['state', 'authorityLevel'],
+  columns: { state: 'state' },
+  projection: ['state'],
 };

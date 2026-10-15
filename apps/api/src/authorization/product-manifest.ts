@@ -13,11 +13,7 @@ import {
   createDayjsTimestampCodec,
   createStandardValueCodecs,
 } from '@base-authorization/value-adapters';
-import {
-  accountBinding,
-  accountDeclarations,
-  accountSystemGrants,
-} from '../administration/account.declarations.js';
+import { accountBinding, accountDeclarations } from '../administration/account.declarations.js';
 import {
   documentBinding,
   documentDeclarations,
@@ -45,15 +41,13 @@ export const productDeclarations: SystemDeclarations = {
 };
 /** Release content is data only; codecs are provenance and never enter the manifest hash. */
 export const productReleaseSource: ProductReleaseSource = {
-  sequence: '1',
-  predecessor: '0',
+  // Release 2 (ADR 0012): Root left IAM; no system role, system grant or rank boundary remains.
+  sequence: '2',
+  predecessor: '1',
   declarations: productDeclarations,
-  roles: [
-    { key: 'system.root', label: 'Root', authorityLevel: 1000 },
-    { key: 'reviewer', label: 'Reviewer', authorityLevel: 10 },
-  ],
+  roles: [{ key: 'reviewer', label: 'Reviewer', authorityLevel: 10 }],
   defaultGrants: documentDefaultGrants,
-  systemGrants: accountSystemGrants,
+  systemGrants: [],
   removeSystemGrants: [],
   seeds: [],
   removeSeeds: [],

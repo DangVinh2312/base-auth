@@ -208,14 +208,9 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   );
   await assert.rejects(readFile(join(dir, 'retry'), 'utf8'));
   await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
-    assert.equal(
-      (
-        await client.query<{ n: number }>(
-          'SELECT count(*)::int n FROM user_role WHERE user_id=$1',
-          [userId],
-        )
-      ).rows[0]?.n,
-      1,
+    assert.deepEqual(
+      (await client.query('SELECT kind,state FROM app_user WHERE id=$1', [userId])).rows,
+      [{ kind: 'root', state: 'pending' }],
     );
   });
   // A lost proof of the still pending Root is reissued by the bootstrap credential only.
@@ -251,19 +246,21 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
     { env, encoding: 'utf8', timeout: 30000 },
   );
   assert.notEqual(refused.status, 0, 'approval and reason are mandatory');
-  assert.match(
-    revoke('--approval', 'CHG-1', '--reason', 'Fixture handover'),
-    /Root assignment revoked/,
-  );
+  assert.match(revoke('--approval', 'CHG-1', '--reason', 'Fixture handover'), /Root suspended/);
   assert.match(revoke('--approval', 'CHG-1', '--reason', 'Fixture retry'), /nothing changed/);
   await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
-    const rows = await client.query<{ n: number; marker: boolean; audit: number }>(
-      `SELECT (SELECT count(*)::int FROM user_role WHERE user_id=$1) n,
+    const rows = await client.query<{
+      kind: string;
+      state: string;
+      marker: boolean;
+      audit: number;
+    }>(
+      `SELECT (SELECT kind FROM app_user WHERE id=$1) kind,(SELECT state FROM app_user WHERE id=$1) state,
         (SELECT initialized_at IS NOT NULL FROM security_bootstrap_state) marker,
         (SELECT count(*)::int FROM audit_outbox WHERE event_kind=$2 AND reason='Fixture handover') audit`,
       [userId, Buffer.from('root.revoke')],
     );
-    assert.deepEqual(rows.rows[0], { n: 0, marker: true, audit: 1 });
+    assert.deepEqual(rows.rows[0], { kind: 'root', state: 'suspended', marker: true, audit: 1 });
   });
 });
 

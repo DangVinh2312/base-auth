@@ -131,22 +131,20 @@ const release = prepareProductRelease(
       capabilities: { validators: [], obligationHandlers: [] },
     },
     roles: [
-      { key: 'system.root', label: 'Root fixture', authorityLevel: 1000 },
+      { key: 'operator', label: 'Operator fixture', authorityLevel: 1 },
       { key: 'auditor', label: 'Code role without grants', authorityLevel: 1 },
     ],
-    defaultGrants: [],
+    defaultGrants: ['read', 'update'].map((action) => ({
+      permission: `item.${action}`,
+      role: 'operator',
+      template: { key: 'allItems', version: 1 },
+      parameters: {},
+    })),
     seeds: [],
     removeSeeds: [],
     boundaryBindings: [],
     removeBoundaryBindings: [],
-    systemGrants: ['read', 'update'].map((action) => ({
-      owner: 'fixture',
-      key: `root-${action}`,
-      role: 'system.root',
-      permission: `item.${action}`,
-      template: { key: 'allItems', version: 1 },
-      parameters: {},
-    })),
+    systemGrants: [],
     removeSystemGrants: [],
   },
   core,
@@ -194,21 +192,17 @@ before(async () => {
     );
     await client.query('GRANT SELECT,UPDATE ON product_item TO product_data');
   });
-  await runner.run('bootstrap', async (tx) => {
-    await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
+  // The principal is an ordinary IAM user: the code-owned operator role carries its grants.
+  await runner.run('admin', (tx) =>
+    tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
       userId,
-      utf8('system.root'),
-    ]);
-    // The first Root commits only together with the marker naming it.
-    await tx.manager.query(
-      'UPDATE security_bootstrap_state SET operation_id=$1,target_user_id=$2,initialized_at=statement_timestamp() WHERE singleton',
-      [randomUUID(), userId],
-    );
-  });
-  // After that the bootstrap credential cannot add another Root or any other assignment.
+      utf8('operator'),
+    ]),
+  );
+  // The bootstrap credential has no assignment capability at all (ADR 0012).
   const other = randomUUID();
   await pools.identity.query("INSERT INTO app_user(id,state) VALUES($1,'active')", [other]);
-  for (const role of ['system.root', 'auditor'])
+  for (const role of ['operator', 'auditor'])
     await assert.rejects(
       runner.run('bootstrap', (tx) =>
         tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
@@ -528,7 +522,7 @@ test('authority read is limited to the requested permission and decides exactly 
   await runner.run('admin', async (tx) => {
     // Code-owned roles cannot carry runtime rules (trigger); a runtime role can.
     await tx.manager.query(
-      "INSERT INTO role_definition(role_key,managed_by,authority_level,label) VALUES($1,'runtime',1,'Runtime deny fixture')",
+      "INSERT INTO role_definition(role_key,managed_by,label) VALUES($1,'runtime','Runtime deny fixture')",
       [utf8('runtime.denier')],
     );
     await tx.manager.query('INSERT INTO user_role(user_id,role_key) VALUES($1,$2)', [
