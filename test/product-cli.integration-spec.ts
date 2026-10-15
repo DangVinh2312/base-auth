@@ -5,7 +5,15 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PRODUCT_OFFLINE_ACTOR } from '@base-authorization/typeorm-postgres/composition';
+import { DataSource } from 'typeorm';
+import { ProductAuthenticationError } from '@base-authorization/typeorm-postgres';
+import {
+  PRODUCT_OFFLINE_ACTOR,
+  ProductIdentityService,
+  ProductTransactionRunner,
+  createProductPasswordHasher,
+} from '@base-authorization/typeorm-postgres/composition';
+import { productDataSourceOptions } from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient } from './setup-postgres.ts';
 test('offline CLI provisions, forward migrates, syncs and bootstraps once without printing activation secret', async (t) => {
   const pg = await startPostgres();
@@ -238,30 +246,102 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   // Diagnosable without secrets: class and reason enum only.
   assert.match(notRoot.stderr, /\(ReleaseRejectedError collision\)/);
   await assert.rejects(readFile(join(dir, 'not-root-proof'), 'utf8'));
-  const revoke = (...extra: string[]) =>
-    run('revoke-root', '--user', userId, '--operation', randomUUID(), ...extra);
-  const refused = spawnSync(
-    process.execPath,
-    ['tools/product.ts', 'revoke-root', '--user', userId, '--operation', randomUUID()],
-    { env, encoding: 'utf8', timeout: 30000 },
-  );
-  assert.notEqual(refused.status, 0, 'approval and reason are mandatory');
-  assert.match(revoke('--approval', 'CHG-1', '--reason', 'Fixture handover'), /Root suspended/);
-  assert.match(revoke('--approval', 'CHG-1', '--reason', 'Fixture retry'), /nothing changed/);
-  await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
-    const rows = await client.query<{
-      kind: string;
-      state: string;
-      marker: boolean;
-      audit: number;
-    }>(
-      `SELECT (SELECT kind FROM app_user WHERE id=$1) kind,(SELECT state FROM app_user WHERE id=$1) state,
+  // enroll → bootstrap → activation (only the reissued proof works) → login.
+  const identitySource = await new DataSource(
+    productDataSourceOptions({
+      host: c.host,
+      port: c.port,
+      username: 'product_identity',
+      password: env['PRODUCT_IDENTITY_PASSWORD'] ?? '',
+      database: 'cli_fixture',
+    }),
+  ).initialize();
+  try {
+    const identityRunner = new ProductTransactionRunner({ identity: identitySource });
+    const identity = new ProductIdentityService(
+      identityRunner,
+      await createProductPasswordHasher(new Set()),
+    );
+    const rootPassword = 'a long unique cli root password';
+    await assert.rejects(
+      identity.activate(proof, rootPassword, 'cli-root'),
+      ProductAuthenticationError,
+    );
+    await identity.activate((await readFile(reissuePath, 'utf8')).trim(), rootPassword, 'cli-root');
+    const session = await identity.login('root-cli@example.test', rootPassword, 'cli-root');
+    const revoke = (...extra: string[]) =>
+      run('revoke-root', '--user', userId, '--operation', randomUUID(), ...extra);
+    const refused = spawnSync(
+      process.execPath,
+      ['tools/product.ts', 'revoke-root', '--user', userId, '--operation', randomUUID()],
+      { env, encoding: 'utf8', timeout: 30000 },
+    );
+    assert.notEqual(refused.status, 0, 'approval and reason are mandatory');
+    assert.match(revoke('--approval', 'CHG-1', '--reason', 'Fixture handover'), /Root suspended/);
+    assert.match(revoke('--approval', 'CHG-1', '--reason', 'Fixture retry'), /nothing changed/);
+    await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
+      const rows = await client.query<{
+        kind: string;
+        state: string;
+        marker: boolean;
+        audit: number;
+      }>(
+        `SELECT (SELECT kind FROM app_user WHERE id=$1) kind,(SELECT state FROM app_user WHERE id=$1) state,
         (SELECT initialized_at IS NOT NULL FROM security_bootstrap_state) marker,
         (SELECT count(*)::int FROM audit_outbox WHERE event_kind=$2 AND reason='Fixture handover') audit`,
-      [userId, Buffer.from('root.revoke')],
+        [userId, Buffer.from('root.revoke')],
+      );
+      assert.deepEqual(rows.rows[0], { kind: 'root', state: 'suspended', marker: true, audit: 1 });
+    });
+    // The suspended Root cannot log in, and the session it held before the revocation is dead.
+    await assert.rejects(
+      identity.login('root-cli@example.test', rootPassword, 'cli-root'),
+      ProductAuthenticationError,
     );
-    assert.deepEqual(rows.rows[0], { kind: 'root', state: 'suspended', marker: true, audit: 1 });
-  });
+    await assert.rejects(
+      identityRunner.run('identity', (tx) => identity.authenticate(tx, session.secret)),
+      ProductAuthenticationError,
+    );
+    // The marker is permanent: no bootstrap after a revocation.
+    const next = randomUUID();
+    run('enroll', '--user', next, '--method', 'local', '--email', 'next-root@example.test');
+    const again = spawnSync(
+      process.execPath,
+      [
+        'tools/product.ts',
+        'bootstrap',
+        '--user',
+        next,
+        '--operation',
+        randomUUID(),
+        '--method',
+        'local',
+        '--activation-file',
+        join(dir, 'again-proof'),
+      ],
+      { env, encoding: 'utf8', timeout: 30000 },
+    );
+    assert.notEqual(again.status, 0);
+    assert.match(again.stderr, /\(ReleaseRejectedError collision\)/);
+    await assert.rejects(readFile(join(dir, 'again-proof'), 'utf8'));
+    // root.* audit: the offline actor acts, the Root account is the target.
+    await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
+      const rows = await client.query<{ kind: string; actor: string; target: string }>(
+        `SELECT convert_from(event_kind,'UTF8') kind,actor_id::text actor,safe_metadata->>'targetUserId' target
+       FROM audit_outbox WHERE convert_from(event_kind,'UTF8') LIKE 'root.%' ORDER BY occurred_at,event_id`,
+      );
+      assert.deepEqual(
+        rows.rows.map((r) => [r.kind, r.actor, r.target]),
+        [
+          ['root.bootstrap', PRODUCT_OFFLINE_ACTOR, userId],
+          ['root.reissue', PRODUCT_OFFLINE_ACTOR, userId],
+          ['root.revoke', PRODUCT_OFFLINE_ACTOR, userId],
+        ],
+      );
+    });
+  } finally {
+    await identitySource.destroy();
+  }
 });
 
 test('offline CLI refuses the offline actor id as a user for enroll, invite, bootstrap and reissue-root', async (t) => {
