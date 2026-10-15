@@ -135,7 +135,7 @@ Siết boundary có hiệu lực với quyết định mới theo cam kết revo
 - Required thiếu binding deny; optional có binding vẫn bị giới hạn; sai version/permission/tenant/type hoặc thiếu facts fail closed.
 - Một lõi với ba fixture role assignment, amount approval, regional export; list/detail/count/export cùng tập được phép.
 - Boundary không bị mở rộng khi thêm role; client giả boundary/amount/role facts không có tác dụng.
-- Bulk một item không hợp lệ rollback; role thay quyền giữa preview/assign bị kiểm tra lại; không self/peer hoặc gỡ boundary gián tiếp.
+- Bulk một item không hợp lệ rollback; role thay quyền giữa preview/assign bị kiểm tra lại; không tự nâng quyền hoặc gỡ boundary gián tiếp; bảo vệ giữa IAM principals theo boundary/deny đã khai báo (ADR 0012).
 - Concurrent boundary tighten/assign giữ fence; authorization sau commit không dùng revision cũ; boot nhiều instance idempotent, runtime binding không bị reset.
 - Migration trên DB hiện hữu, cross-tenant FK, old binary readiness, invalid AST, compiler/evaluator differential tests và mutation test bỏ conjunct boundary đều phải được kiểm chứng.
 

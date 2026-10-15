@@ -574,6 +574,25 @@ test('startup rejects disabled or weakened protection triggers', async () => {
       'DROP TRIGGER protect_token_consumption ON one_time_token; CREATE TRIGGER protect_token_consumption AFTER INSERT ON one_time_token FOR EACH ROW EXECUTE FUNCTION protect_token_consumption()',
       'DROP TRIGGER protect_token_consumption ON one_time_token; CREATE TRIGGER protect_token_consumption BEFORE UPDATE ON one_time_token FOR EACH ROW EXECUTE FUNCTION protect_token_consumption()',
     ],
+    // Same body, owner and ACL, weaker volatility: a STABLE guard reuses the caller's snapshot and
+    // misses a fact committed while it waited on the account row lock (spec 3.3).
+    [
+      'ALTER FUNCTION public.guard_root_kind() STABLE',
+      'ALTER FUNCTION public.guard_root_kind() VOLATILE',
+    ],
+    [
+      'ALTER FUNCTION public.protect_product_rows() IMMUTABLE',
+      'ALTER FUNCTION public.protect_product_rows() VOLATILE',
+    ],
+    // iam_account must stay the IAM-only projection: a Root row in it is visible to IAM (spec 7.2).
+    [
+      'CREATE OR REPLACE VIEW public.iam_account WITH (security_invoker=true) AS SELECT id,state FROM public.app_user',
+      "CREATE OR REPLACE VIEW public.iam_account WITH (security_invoker=true) AS SELECT id,state FROM public.app_user WHERE kind='iam'",
+    ],
+    [
+      'ALTER VIEW public.iam_account RESET (security_invoker)',
+      'ALTER VIEW public.iam_account SET (security_invoker=true)',
+    ],
     // A neutralized body behind the same name, owner and settings.
     [
       `CREATE OR REPLACE FUNCTION public.protect_product_rows() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog,pg_temp AS $fn$BEGIN IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW; END$fn$`,

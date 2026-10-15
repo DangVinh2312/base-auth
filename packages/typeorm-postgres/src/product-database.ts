@@ -316,7 +316,7 @@ const expectedPrivileges: Readonly<Record<RuntimePurpose, readonly string[]>> = 
   ],
 };
 
-/** Protection functions in public: owner, SECURITY DEFINER and exact body after the migrations. */
+/** Protection functions in public: VOLATILE, owner, SECURITY DEFINER and exact migration body. */
 const protectionFunctions: Readonly<Record<string, readonly [string, boolean, string]>> = {
   authz_acquire_shared_fence: ['product_fence_owner', true, sharedFenceBody],
   resolve_session: ['product_session_owner', true, resolveSessionKindBody],
@@ -330,6 +330,11 @@ const protectionFunctions: Readonly<Record<string, readonly [string, boolean, st
   guard_root_activation: ['product_session_owner', true, guardRootActivationBody],
   guard_root_lifecycle: ['product_session_owner', true, guardRootLifecycleBody],
 };
+/** PostgreSQL 18 pg_get_viewdef output of the IAM-only projection installed by migration 012. */
+const iamAccountDefinition = ` SELECT id,
+    state
+   FROM app_user
+  WHERE (kind = 'iam'::text);`;
 /**
  * Every non-internal trigger on the protected tables, as
  * table.trigger:function:tgtype:UPDATE OF columns:enabled:deferrable:initially deferred.
@@ -487,10 +492,24 @@ export async function verifyProductPrivileges(
       sessionOwnerAcl.some((g) => !ownerActual.has(g))
     )
       throw new Error('Product protection drift');
+    const [view] = await source.query<{ valid: boolean }[]>(
+      `SELECT pg_get_viewdef(c.oid,false)=$1 AND COALESCE(c.reloptions @> ARRAY['security_invoker=true'],false) AS valid
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname='public' AND c.relname='iam_account' AND c.relkind='v'`,
+      [iamAccountDefinition],
+    );
+    if (!view?.valid) throw new Error('Product protection drift');
     const functions = await source.query<
-      { name: string; owner: string; definer: boolean; body: string; config: string[] | null }[]
+      {
+        name: string;
+        owner: string;
+        definer: boolean;
+        volatility: string;
+        body: string;
+        config: string[] | null;
+      }[]
     >(
-      `SELECT p.proname AS name,r.rolname AS owner,p.prosecdef AS definer,p.prosrc AS body,p.proconfig AS config
+      `SELECT p.proname AS name,r.rolname AS owner,p.prosecdef AS definer,p.provolatile AS volatility,p.prosrc AS body,p.proconfig AS config
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_roles r ON r.oid=p.proowner
         WHERE n.nspname='public' AND p.proname=ANY($1)`,
       [Object.keys(protectionFunctions)],
@@ -510,11 +529,12 @@ export async function verifyProductPrivileges(
     const actualTriggers = new Set(triggers.map((t) => t.trigger));
     if (
       functions.length !== Object.keys(protectionFunctions).length ||
-      functions.some(({ name, owner, definer, body, config }) => {
+      functions.some(({ name, owner, definer, volatility, body, config }) => {
         const [expectedOwner, expectedDefiner, expectedBody] = protectionFunctions[name]!;
         return (
           owner !== expectedOwner ||
           definer !== expectedDefiner ||
+          volatility !== 'v' ||
           body !== expectedBody ||
           config?.join('|') !== 'search_path=pg_catalog, pg_temp'
         );
