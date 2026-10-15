@@ -197,3 +197,85 @@ test('a failing value codec rejects a release with the normal release error', ()
     (error) => error instanceof ReleaseRejectedError && error.reason === 'invalid_release',
   );
 });
+
+test('legacy release hash and validation are unchanged by the product/legacy split', () => {
+  const source = {
+    sequence: '1',
+    predecessor: '0',
+    declarations: declarations(),
+    roles: [
+      { key: 'reviewer', label: 'Reviewer', authorityLevel: 10 },
+      { key: 'system.root', label: 'Root', authorityLevel: 1000 },
+    ],
+    defaultGrants: [
+      {
+        permission: 'submission.read',
+        role: 'reviewer',
+        template: { key: 'all', version: 1 },
+        parameters: {},
+      },
+    ],
+    seeds: [],
+    removeSeeds: [],
+    boundaryBindings: [],
+    removeBoundaryBindings: [],
+  };
+  // Computed from the 50d6053 build, before the split: the legacy envelope stays byte-for-byte.
+  assert.equal(
+    prepareRelease(source, core).hash,
+    'b8fef6264647e605444e39f908addf9822cbed066c57323fd556c0354301361b',
+  );
+  for (const authorityLevel of [-1, 1001, 1.5])
+    assert.throws(
+      () =>
+        prepareRelease(
+          {
+            ...source,
+            roles: [{ key: 'reviewer', label: 'Reviewer', authorityLevel }],
+            defaultGrants: [],
+          },
+          core,
+        ),
+      /authority level/,
+    );
+  assert.throws(
+    () => prepareRelease({ ...source, roles: [...source.roles, source.roles[0]!] }, core),
+    /role reviewer/,
+  );
+  assert.throws(
+    () =>
+      prepareRelease(
+        { ...source, roles: [{ key: 'reviewer', label: ' ', authorityLevel: 10 }] },
+        core,
+      ),
+    /label/,
+  );
+  // Several faults at once: the first error is the same as before the split.
+  assert.throws(
+    () =>
+      prepareRelease(
+        {
+          ...source,
+          roles: [
+            { key: 'a', label: ' ', authorityLevel: 10 },
+            { key: 'b', label: 'B', authorityLevel: -1 },
+          ],
+          defaultGrants: [{ ...source.defaultGrants[0]!, role: 'missing' }],
+        },
+        core,
+      ),
+    /role a label/,
+  );
+  assert.throws(
+    () =>
+      prepareRelease(
+        {
+          ...source,
+          roles: [{ key: 'a', label: 'A', authorityLevel: -1 }],
+          defaultGrants: [{ ...source.defaultGrants[0]!, role: 'missing' }],
+        },
+        core,
+      ),
+    /role a authority level/,
+  );
+});

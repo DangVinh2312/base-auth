@@ -19,6 +19,7 @@ import {
 } from './manifest-reconciler.js';
 import { ProductTransactionRunner } from './product-transaction.js';
 import { appendProductAudit, PRODUCT_OFFLINE_ACTOR } from './product-audit.js';
+import { codeOwnedCatalogIsEmpty, protectedStateHash } from './protected-state.js';
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
 const reject = (reason: RejectReason, detail: string): never => {
@@ -193,7 +194,10 @@ export class ProductManifestReconciler {
       }
       if (BigInt(release.sequence) < BigInt(current!.sequence))
         reject('downgrade', 'older release');
-      if (release.predecessor !== current!.sequence)
+      // Genesis (ADR 0012): a fresh database (sequence 0, empty code-owned catalog) accepts any
+      // release as its first. Every other case keeps the strict predecessor.
+      const genesis = current!.sequence === '0' && (await codeOwnedCatalogIsEmpty(m));
+      if (!genesis && release.predecessor !== current!.sequence)
         reject('predecessor_mismatch', 'unexpected previous release');
       if (current!.sequence !== '0' && (await protectedStateHash(m)) !== current!.materialized)
         reject(
@@ -329,29 +333,6 @@ async function reconcileSystemGrants(
 function stableGrantId(owner: string, key: string): string {
   const h = sha256(`${owner}/${key}`);
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-async function protectedStateHash(m: EntityManager): Promise<string> {
-  const rows: unknown[] = [];
-  // Table names and predicates are registered code, never request identifiers.
-  for (const [table, predicate] of [
-    ['resource_type', 'true'],
-    ['permission_policy', 'true'],
-    ['permission_catalog', 'true'],
-    ['scope_template', 'true'],
-    ['permission_boundary', 'true'],
-    ['permission_boundary_entry', 'true'],
-    ['resource_relation_definition', 'true'],
-    ['role_definition', "managed_by='code'"],
-    ['policy_rule', "managed_by='code'"],
-    ['relation_edge', 'seed_owner IS NOT NULL'],
-    ['user_boundary', 'seed_owner IS NOT NULL'],
-  ])
-    rows.push(
-      await m.query(
-        `SELECT to_jsonb(t) fact FROM public.${table} t WHERE ${predicate} ORDER BY to_jsonb(t)::text COLLATE "C"`,
-      ),
-    );
-  return sha256(canonicalJson(rows));
 }
 const definitionHash = (value: unknown) => sha256(canonicalJson(value));
 

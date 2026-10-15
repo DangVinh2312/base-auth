@@ -115,14 +115,6 @@ export class ReleaseRejectedError extends Error {
 
 /** Release → the authorization core that validated it (provenance; never part of the hash). */
 const verified = new WeakMap<object, AuthorizationCore>();
-const sizeLimits = {
-  roles: 200,
-  defaultGrants: 1_000,
-  seeds: 1_000,
-  removeSeeds: 1_000,
-  boundaryBindings: 1_000,
-  removeBoundaryBindings: 1_000,
-};
 const identifier = /^[a-z][A-Za-z0-9_]*(\.[a-z][A-Za-z0-9_]*)*$/;
 const ownerKey = /^[a-z][a-z0-9._-]{0,127}$/;
 const reject = (reason: RejectReason, detail: string): never => {
@@ -131,16 +123,40 @@ const reject = (reason: RejectReason, detail: string): never => {
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const utf8 = (value: string) => Buffer.from(value, 'utf8');
 
+/** Release fields without roles: shared by legacy (ranked roles) and product (key + label) releases. */
+export type ReleaseContentSource = Omit<ReleaseSource, 'roles'>;
+export type ValidatedReleaseContent = Omit<VerifiedReleaseManifest, 'roles' | 'hash'>;
+const contentLimits = {
+  defaultGrants: 1_000,
+  seeds: 1_000,
+  removeSeeds: 1_000,
+  boundaryBindings: 1_000,
+  removeBoundaryBindings: 1_000,
+};
+const maxRoles = 200;
+
 /**
- * Validates and freezes a release from a trusted deployment artifact before any lock is taken (size
- * limits, references, typed parameters and keys) and computes its canonical hash. It does not verify
- * a signature (none exists yet, ADR 0004). `reconcile` accepts only these objects, and only from the
- * same `core`. The core is provenance, not content: it never enters the hash.
+ * Key grammar, uniqueness, label and count of release roles; rank is the legacy caller's, run via
+ * `afterKey` so a legacy input with several faults still reports the same first error.
  */
-export function prepareRelease(
-  source: ReleaseSource,
-  core: AuthorizationCore,
-): VerifiedReleaseManifest {
+export function validateRoleKeys<R extends { readonly key: string; readonly label: string }>(
+  roles: readonly R[],
+  afterKey?: (role: R) => void,
+): ReadonlySet<string> {
+  if (roles.length > maxRoles) reject('invalid_release', 'too many roles');
+  const keys = new Set<string>();
+  for (const role of roles) {
+    if (!identifier.test(role.key) || keys.has(role.key))
+      reject('invalid_release', `role ${role.key}`);
+    afterKey?.(role);
+    if (role.label.trim().length === 0 || role.label.length > 120)
+      reject('invalid_release', `role ${role.key} label`);
+    keys.add(role.key);
+  }
+  return keys;
+}
+
+function validateHead(source: ReleaseContentSource, core: AuthorizationCore) {
   const sequence = core.canonicalInt64(source.sequence);
   const predecessor = core.canonicalInt64(source.predecessor);
   if (
@@ -154,28 +170,23 @@ export function prepareRelease(
   }
   const validated = core.validate(source.declarations);
   if (!validated.ok) return reject('invalid_release', validated.errors.join('; '));
-  const declarations = validated.declarations;
-  for (const [name, limit] of Object.entries(sizeLimits)) {
-    if (source[name as keyof typeof sizeLimits].length > limit)
+  return { sequence: sequence!, predecessor: predecessor!, declarations: validated.declarations };
+}
+
+function checkContentLimits(source: ReleaseContentSource): void {
+  for (const [name, limit] of Object.entries(contentLimits)) {
+    if (source[name as keyof typeof contentLimits].length > limit)
       reject('invalid_release', `too many ${name}`);
   }
+}
 
-  const roleKeys = new Set<string>();
-  for (const role of source.roles) {
-    if (!identifier.test(role.key) || roleKeys.has(role.key))
-      reject('invalid_release', `role ${role.key}`);
-    if (
-      !Number.isSafeInteger(role.authorityLevel) ||
-      role.authorityLevel < 0 ||
-      role.authorityLevel > 1000
-    ) {
-      reject('invalid_release', `role ${role.key} authority level`);
-    }
-    if (role.label.trim().length === 0 || role.label.length > 120)
-      reject('invalid_release', `role ${role.key} label`);
-    roleKeys.add(role.key);
-  }
-
+function validateBody(
+  source: ReleaseContentSource,
+  core: AuthorizationCore,
+  head: ReturnType<typeof validateHead>,
+  roleKeys: ReadonlySet<string>,
+): ValidatedReleaseContent {
+  const { declarations } = head;
   const defaultGrants = source.defaultGrants.map((grant) => {
     const [resource = '', action = ''] = grant.permission.split('.');
     const declared = Object.hasOwn(declarations.resources, resource)
@@ -290,36 +301,81 @@ export function prepareRelease(
       reject('invalid_release', 'boundary binding removal');
     return { owner: removal.owner, identity: removal.identity, permission: removal.permission };
   });
-
-  const byJson = <T>(items: T[]) =>
-    [...items].sort((a, b) => (canonicalJson(a) < canonicalJson(b) ? -1 : 1));
-  const roles = source.roles.map((r) => ({
-    key: r.key,
-    authorityLevel: r.authorityLevel,
-    label: r.label,
-  }));
-  const hash = sha256(
-    canonicalJson({
-      declarations: JSON.parse(declarations.canonical) as unknown,
-      roles: byJson(roles),
-      defaultGrants: byJson(defaultGrants),
-      seeds: byJson(seeds),
-      removeSeeds: byJson(removeSeeds),
-      boundaryBindings: byJson(boundaryBindings),
-      removeBoundaryBindings: byJson(removeBoundaryBindings),
-    }),
-  );
-  const manifest: VerifiedReleaseManifest = Object.freeze({
-    sequence: sequence!,
-    predecessor: predecessor!,
+  return {
+    sequence: head.sequence,
+    predecessor: head.predecessor,
     declarations,
-    roles,
     defaultGrants,
     seeds,
     removeSeeds,
     boundaryBindings,
     removeBoundaryBindings,
-    hash,
+  };
+}
+
+/** Everything but roles: sequence, declarations, limits, references, typed parameters and keys. */
+export function validateReleaseContent(
+  source: ReleaseContentSource,
+  core: AuthorizationCore,
+  roleKeys: ReadonlySet<string>,
+): ValidatedReleaseContent {
+  const head = validateHead(source, core);
+  checkContentLimits(source);
+  return validateBody(source, core, head, roleKeys);
+}
+
+const byJson = <T>(items: readonly T[]) =>
+  [...items].sort((a, b) => (canonicalJson(a) < canonicalJson(b) ? -1 : 1));
+/** Canonical release envelope: unchanged keys and order, so legacy hashes stay byte-for-byte. */
+export function releaseContentHash(
+  content: ValidatedReleaseContent,
+  roles: readonly object[],
+): string {
+  return sha256(
+    canonicalJson({
+      declarations: JSON.parse(content.declarations.canonical) as unknown,
+      roles: byJson(roles),
+      defaultGrants: byJson(content.defaultGrants),
+      seeds: byJson(content.seeds),
+      removeSeeds: byJson(content.removeSeeds),
+      boundaryBindings: byJson(content.boundaryBindings),
+      removeBoundaryBindings: byJson(content.removeBoundaryBindings),
+    }),
+  );
+}
+
+/**
+ * Validates and freezes a release from a trusted deployment artifact before any lock is taken (size
+ * limits, references, typed parameters and keys) and computes its canonical hash. It does not verify
+ * a signature (none exists yet, ADR 0004). `reconcile` accepts only these objects, and only from the
+ * same `core`. The core is provenance, not content: it never enters the hash.
+ */
+export function prepareRelease(
+  source: ReleaseSource,
+  core: AuthorizationCore,
+): VerifiedReleaseManifest {
+  // Check order is part of the contract: sequence, declarations, limits, then per-role faults.
+  const head = validateHead(source, core);
+  if (source.roles.length > maxRoles) reject('invalid_release', 'too many roles');
+  checkContentLimits(source);
+  const roleKeys = validateRoleKeys(source.roles, (role) => {
+    if (
+      !Number.isSafeInteger(role.authorityLevel) ||
+      role.authorityLevel < 0 ||
+      role.authorityLevel > 1000
+    )
+      reject('invalid_release', `role ${role.key} authority level`);
+  });
+  const content = validateBody(source, core, head, roleKeys);
+  const roles = source.roles.map((r) => ({
+    key: r.key,
+    authorityLevel: r.authorityLevel,
+    label: r.label,
+  }));
+  const manifest: VerifiedReleaseManifest = Object.freeze({
+    ...content,
+    roles,
+    hash: releaseContentHash(content, roles),
   });
   verified.set(manifest, core);
   return manifest;
