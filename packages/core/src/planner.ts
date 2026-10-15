@@ -22,6 +22,50 @@ const deny = (reason: string): never => {
   throw new Denied(reason);
 };
 
+/** One mapping for every planner entry point: denials, configuration faults and the rest. */
+function denied(error: unknown): Extract<Decision, { effect: 'deny' }> {
+  if (error instanceof Denied) return { effect: 'deny', internalReason: error.message };
+  if (error instanceof ConfigurationError)
+    return { effect: 'deny', internalReason: `configuration: ${error.message}` };
+  return { effect: 'deny', internalReason: 'internal_error' };
+}
+
+/**
+ * Checks every plan shares, in planUser's order: provenance, principal, active user, validity
+ * window, declared resource/action and its catalog row.
+ */
+function resolveTarget(
+  core: AuthorizationCore,
+  input: UserTrustedInput,
+  snapshot: UserAuthoritySnapshot,
+) {
+  const declarations = snapshot.declarations;
+  if (!core.isValidated(declarations)) deny('unvalidated_declarations');
+  const principal = input.principal;
+  if (!core.isCanonicalUuid(principal.id) || typeof principal.assurance !== 'number')
+    deny('invalid_principal');
+  if (snapshot.user?.id !== principal.id || snapshot.user.state !== 'active') deny('inactive_user');
+  const now = core.canonicalTimestamp(input.now) ?? deny('invalid_now');
+  const validUntil = core.canonicalTimestamp(input.validUntil) ?? deny('invalid_valid_until');
+  if (core.compareValues('timestamp', validUntil, now) <= 0) deny('invalid_validity_window');
+  const resource = Object.hasOwn(declarations.resources, input.resource)
+    ? declarations.resources[input.resource]!
+    : deny('unknown_resource');
+  const action = Object.hasOwn(resource.actions, input.action)
+    ? resource.actions[input.action]!
+    : deny('unknown_action');
+  const permissionKey = `${resource.key}.${input.action}`;
+  const permission =
+    snapshot.permissions.find((p) => p.key === permissionKey) ?? deny('permission_not_in_catalog');
+  if (
+    permission.resource !== resource.key ||
+    permission.action !== input.action ||
+    permission.lifecycle === 'retired'
+  )
+    deny('permission_unavailable');
+  return { declarations, principal, validUntil, resource, action, permissionKey, permission };
+}
+
 /**
  * Builds the authorized plan (spec 4.2):
  * P = policy.requiredScope AND boundary.requiredScope AND (allow scopes OR record allow)
@@ -55,10 +99,7 @@ export function plan(
     });
     return { effect: 'allow', plan: authorized, obligations: authorized.obligations };
   } catch (error) {
-    if (error instanceof Denied) return { effect: 'deny', internalReason: error.message };
-    if (error instanceof ConfigurationError)
-      return { effect: 'deny', internalReason: `configuration: ${error.message}` };
-    return { effect: 'deny', internalReason: 'internal_error' };
+    return denied(error);
   }
 }
 
@@ -71,10 +112,7 @@ export function planUser(
   try {
     return buildPlan(core, input, snapshot);
   } catch (error) {
-    if (error instanceof Denied) return { effect: 'deny', internalReason: error.message };
-    if (error instanceof ConfigurationError)
-      return { effect: 'deny', internalReason: `configuration: ${error.message}` };
-    return { effect: 'deny', internalReason: 'internal_error' };
+    return denied(error);
   }
 }
 
@@ -83,34 +121,8 @@ function buildPlan(
   input: UserTrustedInput,
   snapshot: UserAuthoritySnapshot,
 ): UserDecision {
-  const declarations = snapshot.declarations;
-  if (!core.isValidated(declarations)) deny('unvalidated_declarations');
-
-  const principal = input.principal;
-  if (!core.isCanonicalUuid(principal.id) || typeof principal.assurance !== 'number')
-    deny('invalid_principal');
-  if (snapshot.user?.id !== principal.id || snapshot.user.state !== 'active') deny('inactive_user');
-  const now = core.canonicalTimestamp(input.now) ?? deny('invalid_now');
-  const validUntil = core.canonicalTimestamp(input.validUntil) ?? deny('invalid_valid_until');
-  if (core.compareValues('timestamp', validUntil, now) <= 0) deny('invalid_validity_window');
-
-  // Registered resource/action, catalog binding and its exact policy version.
-  const resource = Object.hasOwn(declarations.resources, input.resource)
-    ? declarations.resources[input.resource]!
-    : deny('unknown_resource');
-  const action = Object.hasOwn(resource.actions, input.action)
-    ? resource.actions[input.action]!
-    : deny('unknown_action');
-  const permissionKey = `${resource.key}.${input.action}`;
-  const permission =
-    snapshot.permissions.find((p) => p.key === permissionKey) ?? deny('permission_not_in_catalog');
-  if (
-    permission.resource !== resource.key ||
-    permission.action !== input.action ||
-    permission.lifecycle === 'retired'
-  ) {
-    deny('permission_unavailable');
-  }
+  const { declarations, principal, validUntil, resource, action, permissionKey, permission } =
+    resolveTarget(core, input, snapshot);
   if (refKey(permission.policy) !== refKey(action.policy)) deny('policy_binding_mismatch');
   const policyRef = refKey(action.policy);
   const policy = Object.hasOwn(declarations.policies, policyRef)
@@ -261,4 +273,38 @@ function buildPlan(
     obligations,
   });
   return { effect: 'allow', plan: authorized, obligations: authorized.obligations };
+}
+
+/**
+ * Plan for a principal the adapter verified as unrestricted (Root, ADR 0012). Same target,
+ * principal, user, validity and revision checks as planUser; only the authorization predicate
+ * becomes `true`: no policy, grant, deny, boundary or obligation is evaluated. The core never
+ * learns why a caller is unrestricted; projection and writable fields stay the adapter's.
+ */
+export function planUnrestricted(
+  core: AuthorizationCore,
+  input: UserTrustedInput,
+  snapshot: UserAuthoritySnapshot,
+): UserDecision {
+  try {
+    const { principal, validUntil, resource, permissionKey } = resolveTarget(core, input, snapshot);
+    if (
+      core.canonicalInt64(snapshot.revision) !== snapshot.revision ||
+      BigInt(snapshot.revision) < 1n
+    )
+      deny('invalid_revision');
+    const authorized: UserAuthorizedPlan = deepFreeze({
+      userId: principal.id,
+      resource: resource.key,
+      action: input.action,
+      permission: permissionKey,
+      revision: snapshot.revision,
+      predicate: { op: 'constant', value: true },
+      validUntil,
+      obligations: [],
+    });
+    return { effect: 'allow', plan: authorized, obligations: authorized.obligations };
+  } catch (error) {
+    return denied(error);
+  }
 }

@@ -238,4 +238,30 @@ describe('ESLint import boundaries', () => {
     ])
       assert.deepEqual(await violations('tools/product.ts', code), [], code);
   });
+
+  test('only product-authority.ts may reach planUnrestricted', async () => {
+    const restricted = async (filePath: string, code: string) => {
+      const [result] = await eslint.lintText(`${code}\n`, { filePath: abs(filePath) });
+      assert.ok(result);
+      return result.messages.filter((m) => m.ruleId === 'no-restricted-syntax');
+    };
+    const call =
+      'declare const core: { planUnrestricted(a: unknown, b: unknown): unknown };\ncore.planUnrestricted({}, {});';
+    const destructured =
+      'declare const core: { planUnrestricted: unknown };\nconst { planUnrestricted } = core;\nexport { planUnrestricted };';
+    for (const file of [
+      'packages/typeorm-postgres/src/product-gateway.ts',
+      'packages/typeorm-postgres/src/product-identity.ts',
+      'apps/api/src/documents/documents.controller.ts',
+      'apps/api/src/infrastructure/product-runtime.ts',
+      'tools/product.ts',
+      'test/product-root.integration-spec.ts',
+    ])
+      for (const code of [call, destructured])
+        assert.equal((await restricted(file, code)).length, 1, `${file}: ${code}`);
+    assert.deepEqual(
+      await restricted('packages/typeorm-postgres/src/product-authority.ts', call),
+      [],
+    );
+  });
 });

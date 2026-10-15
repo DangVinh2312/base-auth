@@ -6,7 +6,11 @@ import type {
 import { evaluate as evaluateWith, evaluateUser as evaluateUserWith } from './evaluator.js';
 import { fieldKinds } from './expression.js';
 import { MAX_KEY_BYTES, utf8ByteLength } from './key-codec.js';
-import { plan as planWith, planUser as planUserWith } from './planner.js';
+import {
+  plan as planWith,
+  planUnrestricted as planUnrestrictedWith,
+  planUser as planUserWith,
+} from './planner.js';
 import { validateDeclarations } from './policy-validator.js';
 import type { Comparison, ValueCodecs } from './ports/value-codecs.js';
 import type {
@@ -38,6 +42,15 @@ export interface AuthorizationCore {
   readonly isValidated: (value: unknown) => value is ValidatedDeclarations;
   readonly planUser: (input: UserTrustedInput, snapshot: UserAuthoritySnapshot) => UserDecision;
   readonly evaluateUser: (plan: UserAuthorizedPlan, facts: UserCompleteFacts) => UserDecision;
+  /**
+   * planUser's checks with predicate `true` and no obligations, for a principal the adapter has
+   * verified as unrestricted. Only ProductAuthorization.access may call it (ESLint, ADR 0012):
+   * a developer boundary, not a sandbox.
+   */
+  readonly planUnrestricted: (
+    input: UserTrustedInput,
+    snapshot: UserAuthoritySnapshot,
+  ) => UserDecision;
   /** Legacy tenant contracts; tenant is still checked. */
   readonly plan: (input: TrustedInput, snapshot: AuthoritySnapshot) => Decision;
   readonly evaluate: (plan: AuthorizedPlan, facts: CompleteFacts) => Decision;
@@ -147,6 +160,8 @@ export function createAuthorizationCore(options: {
       issue(planUserWith(core, input, snapshot)),
     evaluateUser: (plan: UserAuthorizedPlan, facts: UserCompleteFacts) =>
       isRecord(plan) && issued.has(plan) ? evaluateUserWith(core, plan, facts) : foreign(),
+    planUnrestricted: (input: UserTrustedInput, snapshot: UserAuthoritySnapshot) =>
+      issue(planUnrestrictedWith(core, input, snapshot)),
     plan: (input: TrustedInput, snapshot: AuthoritySnapshot) =>
       issue(planWith(core, input, snapshot)),
     evaluate: (plan: AuthorizedPlan, facts: CompleteFacts) =>

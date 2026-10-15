@@ -90,6 +90,7 @@ test('public API: no default engine; scalar/plan/evaluate free functions are gon
     'evaluate',
     'planUser',
     'evaluateUser',
+    'planUnrestricted',
     'normalizeValue',
     'compareValues',
     'canonicalTimestamp',

@@ -106,4 +106,23 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // planUnrestricted is the Root branch of ProductAuthorization.access only (ADR 0012); core
+    // unit tests exercise it directly. Developer boundary, not process isolation.
+    files: ['**/*.ts'],
+    ignores: ['packages/typeorm-postgres/src/product-authority.ts', 'packages/core/test/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "MemberExpression[property.name='planUnrestricted']",
+          message: 'Only ProductAuthorization.access may plan unrestricted access (ADR 0012).',
+        },
+        {
+          selector: "ObjectPattern > Property[key.name='planUnrestricted']",
+          message: 'Only ProductAuthorization.access may plan unrestricted access (ADR 0012).',
+        },
+      ],
+    },
+  },
 );
