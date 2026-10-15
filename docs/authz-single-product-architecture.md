@@ -262,7 +262,7 @@ Cache key phải chứa user, action, normalized query và authority revision n�
 | `authz_state`              | Singleton CHECK id=1, revision bigint, release_sequence, manifest_hash; seed bởi migration                                                                       |
 | `permission_policy`        | PK key+version, immutable validated expression/context/obligations, lifecycle/hash                                                                               |
 | `permission_catalog`       | permission PK, resource/action UNIQUE, policy FK, boundary_requirement CHECK                                                                                     |
-| `role_definition`          | key PK, authority_level, managed_by CHECK, lifecycle; core roles code-owned                                                                                      |
+| `role_definition`          | key PK, managed_by CHECK, lifecycle; core roles code-owned                                                                                                       |
 | `user_role`                | PK user+role, FKs; không role chaining                                                                                                                           |
 | `scope_template`           | key+version PK, schema/AST/hash; immutable definition                                                                                                            |
 | `policy_rule`              | permission/template FK; effect CHECK; chính xác một trong user_id/role_key non-null; typed parameters                                                            |
@@ -324,7 +324,7 @@ Chưa phân vùng theo module/resource_type. Trước khi phân vùng phải có
 
 ## 10. Quản trị và bootstrap
 
-Một admin command chỉ hợp lệ khi có permission, đạt policy/boundary, có rank cao hơn mọi user bị tác động trước/sau, và candidate grants nằm trong delegation envelope. Kiểm affected set cho edit role, xóa deny, thay department/team/owner, import/bulk và bật lại user. Role có quyền cao không bypass invariant; admin ngang cấp không sửa nhau; sửa role actor đang giữ hoặc gỡ boundary của actor đều bị chặn.
+Một admin command chỉ hợp lệ khi có permission, đạt policy/boundary và candidate grants nằm trong delegation envelope. Kiểm affected set cho edit role, xóa deny, thay department/team/owner, import/bulk và bật lại user. Role có quyền cao không bypass invariant; admin ngang cấp không sửa nhau; sửa role actor đang giữ hoặc gỡ boundary của actor đều bị chặn.
 
 User tự đổi password/profile qua luồng self-service có giới hạn không bị coi là quản trị role; không được dùng nó để đổi role, authority level hoặc trạng thái suspended. Admin có thể suspend user thấp cấp theo quyền, nhưng không đặt password họ biết, đổi địa chỉ recovery hay tạo session của user đó.
 
@@ -333,6 +333,8 @@ Tạo Root đầu tiên bằng bootstrap command có marker một lần, pending
 Code-owned permissions/policies/boundaries/roles/relations không sửa/xóa từ UI. Custom grants và bindings chỉ thay qua typed command; mass-assignment DTO không nhận managed_by, issuer, revision hoặc protection flags. Không chứng minh subset của delegation bằng template được hỗ trợ thì deny.
 
 ### 10.1 Role hệ thống và `Root`
+
+> Superseded bởi ADR 0012: Root là account `kind = root` ngoài IAM; nội dung bên dưới là lịch sử.
 
 Role hệ thống là role khai báo trong manifest và có `managed_by='code'`. Profile tham chiếu khai báo key ổn định `system.root`, label `Root`, authority level cao nhất trong tập role của sản phẩm. Đây là application role, không phải PostgreSQL superuser hoặc runtime credential. Không kiểm tên/key Root để trả allow vô điều kiện.
 

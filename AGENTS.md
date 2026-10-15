@@ -59,6 +59,7 @@
 ## Ports và adapters
 
 - Kế hoạch `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`: giai đoạn A (T0–T7, T11) đã triển khai trong working tree (`createAuthorizationCore`, `packages/value-adapters`, API theo capability, entrypoints, audit typed; bằng chứng ở checkbox/ledger và `docs/single-product-verification.md`); giai đoạn B: T8 xong; T9 và T10 xong phần độc lập, phần phụ thuộc policy/provider bị chặn (ADR 0010–0011, ledger §6). Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
+- Kế hoạch `docs/superpowers/plans/2026-10-15-iam-root-separation.md` (ADR 0012): IAM không rank, Root ngoài IAM, migration `012`; trạng thái theo checkbox/ledger của plan.
 - Core sở hữu contract thuần; adapter sở hữu thư viện/driver; composition root chọn implementation. Không import Day.js/Moment, NestJS, DB hoặc HTTP client vào core, không để kiểu riêng của thư viện rò vào port.
 - Chỉ thêm port khi có capability cần thay implementation; không biến mọi helper thành plugin. Không cài nhiều thư viện cùng chức năng chỉ để minh họa khả năng thay thế.
 - Adapter là trusted code cố định lúc boot, không được chọn từ request/admin payload. Thiếu adapter, input sai hoặc adapter lỗi phải reject/fail closed; không fallback parser lỏng hay silently allow.
@@ -69,13 +70,14 @@
 ## Bất biến bảo mật
 
 - Runtime đích không có tenant: một database, user/session chung; không tenant giả, tenantId tùy chọn hoặc flag bỏ isolation. Không gộp dữ liệu tenant thật thiếu mapping.
-- Default deny; mọi deny thắng allow. Permission policy nằm ngoài mọi grant, kể cả record allow.
+- Với IAM principals: default deny; mọi deny thắng allow. Permission policy nằm ngoài mọi grant, kể cả record allow.
+- Root là account `kind = root` nằm ngoài IAM, là super admin bypass mọi kiểm tra phân quyền qua `planUnrestricted`, chỉ khi `kind` đến từ session đã kiểm chứng; tối đa một Root; chỉ bootstrap offline chuyển `iam → root`; mọi `access` của Root được audit; ghi nghiệp vụ/quản trị cần fresh-auth.
 - Permission boundary là giới hạn tổng quát của membership/permission, không tự grant; áp dụng ngoài mọi allow kể cả record exception. Đọc `docs/permission-boundaries.md`; `ApplicationRoleBoundary` chỉ là ví dụ, không hardcode vào lõi.
 - Không baseline ngầm khi thiếu policy. Unknown action/resource/scope/operator/validator/obligation làm fail closed.
 - List/detail/count/export/write dùng cùng AST. Không lọc quyền sau pagination hoặc lấy quyền read suy ra update.
 - Context/user/roles không lấy trực tiếp từ payload chưa kiểm chứng. Không dùng brand TypeScript như một security boundary.
 - ReBAC kiểm tra source/target type, exact version và hạn trên từng cạnh; path tối đa 8 bước, không đệ quy vô hạn hoặc SQL callback tùy ý.
-- Cấm tự nâng quyền trực tiếp/gián tiếp, quản trị peer/superior, sửa code-owned definitions qua UI và lấy quyền user admin để reset/link/impersonate global identity.
+- Không có rank ngầm. Bảo vệ giữa các IAM principal khai báo bằng boundary/deny. Action tác động lên principal khác phải là `boundary: 'required'`. Cấm tự nâng quyền trực tiếp/gián tiếp, sửa code-owned definitions qua UI và lấy quyền user admin để reset/link/impersonate global identity.
 - Secrets/token/PII không ghi log. DTO/projection chỉ trả field được phép; foreign/absent record không phân biệt sự tồn tại.
 - Không dump `.env`, connection string, request headers/body hoặc SQL bind có dữ liệu nhạy cảm vào terminal, test artifact hay báo cáo. Dùng fixtures giả và metadata đã redact; không trả stack trace/raw DB error cho client.
 - Auth/session/OIDC/recovery phải giữ validation issuer/audience/state/nonce/PKCE theo flow, expiry, one-time use và chống replay. Không bỏ cookie/CSRF/origin checks hoặc tin forwarded headers ngoài cấu hình proxy để làm local test pass.

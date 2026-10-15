@@ -99,7 +99,7 @@ Lõi không biết role, hợp đồng hoặc vùng. Hệ thống chọn resourc
 3. Đánh giá context requirements của policy và boundary trên trusted facts. Callback không được query DB/network hoặc kiểm tra từng row; row conditions phải là AST.
 4. Compile `policy.requiredScope AND boundary.requiredScope AND allowScope AND NOT denyScope`, luôn kèm tenant/type. Dùng cùng predicate cho list/detail/count/export/mutation.
 5. Với create, đánh giá trên candidate đã chuẩn hóa; với write kiểm tra trạng thái hiện tại và transition theo hợp đồng hiện có. Boundary cần giới hạn trạng thái sau phải có postcondition được khai báo và kiểm tra trong transaction, không suy ra từ precondition.
-6. Command thay đổi quyền/quan hệ tiếp tục kiểm tra affected set, rank trước/sau, self/peer và delegation envelope trong exclusive fence, rồi audit, mutate và tăng revision nguyên tử.
+6. Command thay đổi quyền/quan hệ tiếp tục kiểm tra affected set, self và boundary/deny (không có rank; ADR 0012) và delegation envelope trong exclusive fence, rồi audit, mutate và tăng revision nguyên tử.
 
 Một boundary đã gắn áp dụng cho permission qua mọi endpoint, job và internal service, không chỉ decorator. Guard không phải nơi enforcement duy nhất. `AuthorizedPlan` phải mang predicate đã kết hợp boundary và cùng revision/expiry; handler không được supply boundary reference hoặc chọn bỏ bước này.
 
@@ -122,7 +122,7 @@ Migration hiện hữu cần backfill requirement tường minh từ manifest v�
 
 Boot sync definition và code-owned binding seeds có version/hash cùng release hiện có. Không ghi đè binding runtime; không tự chuyển mọi binding sang version mới nhất. Publish definition và đổi các binding code-owned được khai báo trong cùng transaction; binding runtime còn trỏ version cũ giữ nguyên cho đến command chuyển version được authorize. Không retire definition còn được dùng. Thay đổi boundary/binding/requirement đều tăng authority revision dưới exclusive fence và audit. Missing/invalid active definition không được fallback allow.
 
-Boundary definition code-owned không sửa qua UI. Quản lý binding là permission riêng với boundary/delegation riêng, không mặc nhiên đi kèm `assignRole`. Actor không được tự mở rộng hoặc gỡ boundary của chính mình, kể cả gián tiếp. Thay binding của người khác phải kiểm tra rank, affected set và tập quyền hiệu lực trước/sau. Không chứng minh được subset trong template được hỗ trợ thì từ chối; không cố giải containment biểu thức tùy ý.
+Boundary definition code-owned không sửa qua UI. Quản lý binding là permission riêng với boundary/delegation riêng, không mặc nhiên đi kèm `assignRole`. Actor không được tự mở rộng hoặc gỡ boundary của chính mình, kể cả gián tiếp. Thay binding của người khác phải kiểm tra affected set và tập quyền hiệu lực trước/sau. Không chứng minh được subset trong template được hỗ trợ thì từ chối; không cố giải containment biểu thức tùy ý.
 
 Siết boundary có hiệu lực với quyết định mới theo cam kết revoke hiện có. Siết boundary cho hành động assign chỉ hạn chế các lần gán tiếp theo, **không tự thu hồi các role đã gán cho người khác**; thu hồi đó là command riêng. Boundary của read/approve tác động trực tiếp tới lần read/approve tiếp theo. Không cache allow độc lập khỏi revision.
 
@@ -140,3 +140,7 @@ Siết boundary có hiệu lực với quyết định mới theo cam kết revo
 - Migration trên DB hiện hữu, cross-tenant FK, old binary readiness, invalid AST, compiler/evaluator differential tests và mutation test bỏ conjunct boundary đều phải được kiểm chứng.
 
 Chưa cần thư viện, dependency hoặc class theo từng loại boundary. Câu hỏi mở: có thực sự cần boundary kế thừa từ role hoặc nhiều binding không; chưa thêm chúng vào hợp đồng bản đầu.
+
+## Root
+
+Root (`app_user.kind = 'root'`, ADR 0012) nằm ngoài IAM và không có binding boundary nào; DB guard `guard_root_not_iam_subject` từ chối gắn boundary cho Root. Root bypass mọi kiểm tra phân quyền qua `planUnrestricted`, nên boundary không tham gia quyết định của Root. Boundary và deny chỉ áp cho IAM principals.

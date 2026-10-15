@@ -1,3 +1,68 @@
+# IAM thuần / Root ngoài IAM (ADR 0012)
+
+Ngày: 2026-10-15. Môi trường: Node 24.20.0, pnpm 12.3.4, Docker 29.8.2, PostgreSQL 18.4 disposable (Testcontainers), macOS. Branch `feat/iam-root-separation`, HEAD `72367b6` (Task 1–9 đã commit) cộng thay đổi docs của Task 10 chưa commit lúc chạy; không staging/production, không push/deploy. Kết quả là lượt chạy local, không thay CI hoặc kiểm chứng production và không nâng trạng thái production-ready. Plan và ledger: `docs/superpowers/plans/2026-10-15-iam-root-separation.md`.
+
+## Semantics mới
+
+- Root là account `app_user.kind = 'root'` ngoài IAM (tối đa một; không role/grant/boundary/rule/record exception, DB guard chặn). `ProductAuthorization.access` là điểm rẽ nhánh duy nhất: `kind` từ `resolve_session` trong fenced transaction; Root dùng `planUnrestricted` (predicate `true`, không obligations, vẫn kiểm resource/action đã khai báo, principal, validity, revision canonical), IAM dùng `planUser` như cũ.
+- Root vẫn cần session hợp lệ, `auth_epoch`, không suspended, CSRF/Origin; ghi `write`/`admin` cần fresh-auth 300 giây tính trong SQL (`PRODUCT_FRESH_AUTH_SQL`, µs, đồng hồ DB). Thiếu fresh → `ProductAccessDenied`, không audit.
+- Mỗi `access` commit của Root ghi một event (`principalKind: 'root'`, `outcome` `ok`/`absent`) trực tiếp trong transaction: đọc `access.<resource>.<action>`, ghi `data.update`/`account.suspend`. Audit lỗi → rollback, không payload. Event IAM giữ nguyên.
+- IAM không còn rank; `account.suspend` cần grant + boundary (hiện chưa có boundary cho `account`, nên chỉ Root suspend được). Root, chính actor Root và id vắng mặt đều 404.
+- Lịch sử bên dưới (vd. mutation "Bypass Root" bị bắt như lỗi) giữ nguyên; semantics đó đã bị ADR 0012 thay thế.
+
+## Gate
+
+| Lệnh (từ repo root)              | Exit | Kết quả                                                                                                                                                                                                              |
+| -------------------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install --frozen-lockfile` | 0    | Lockfile up to date; `pnpm-lock.yaml` không đổi                                                                                                                                                                      |
+| `pnpm run format:check`          | 1    | Chỉ 15 file trong `.superpowers/sdd/` (workspace SDD tạm, untracked và git-ignored bằng `.gitignore` lồng mà Prettier không đọc) bị báo. Cùng lệnh Prettier thêm `--ignore-path .superpowers/sdd/.gitignore`: exit 0 |
+| `pnpm run lint`                  | 0    | pass                                                                                                                                                                                                                 |
+| `pnpm run typecheck`             | 0    | pass                                                                                                                                                                                                                 |
+| `pnpm run build`                 | 0    | pass                                                                                                                                                                                                                 |
+| `pnpm run test:unit`             | 0    | 234/234 pass, 13 suites, 0 skip                                                                                                                                                                                      |
+| `pnpm run test:integration`      | 0    | 236/236 pass, 12 suites, 0 skip/cancelled; không có lỗi môi trường/Testcontainers timeout (161,6 s)                                                                                                                  |
+| `pnpm run test:e2e`              | 0    | 1/1 pass                                                                                                                                                                                                             |
+
+Một lượt full-suite thật, không targeted rerun. Không sửa `.prettierignore` cho workspace tạm.
+
+## Mutation checks (spec mục 10) trên bản sao cô lập
+
+Git worktree của `72367b6` trong thư mục scratchpad, `pnpm install --frozen-lockfile`; mỗi mutation: sửa đúng chuỗi (script kiểm chuỗi xuất hiện đúng một lần) → chạy lệnh (script tự `tsc -b`) → ghi exit code và test fail → `git checkout -- .`. Worktree đã xóa. Cả 10 mutation đều bị bắt; mutation nào cũng làm fail test được plan nêu tên.
+
+| #   | Mutation                                                                                                 | Lệnh (`pnpm run test:integration -- …`)             | Exit | Test fail (fail/tổng)                                                                                                                                                                                                                                                              |
+| --- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Coi mọi principal là Root (`session.kind === 'root'` → `true` trong ternary `decision`)                  | `test/product-root.integration-spec.ts`             | 1    | 3/10: `IAM reads stay scoped and unaudited; a role named like Root grants nothing`, `IAM suspend needs a grant and a boundary; self is 403; Root is invisible to IAM`, `a failed Root audit rolls the access back and returns nothing`                                             |
+| 2   | Lấy `kind` từ role name (`snapshot.roles.includes('system.root')`)                                       | như #1                                              | 1    | 5/10: `IAM reads stay scoped…`, `Root reads every document without a grant, through the same projection, with an audit per access`, `Root writes need a fresh reauthentication…`, `an OIDC reauthentication is fresh as well…`, `Root suspends an IAM account…`                    |
+| 3   | Bỏ fresh-auth ghi Root (xóa `if (session.kind === 'root' && mode !== 'read' && !session.fresh) throw …`) | như #1                                              | 1    | 3/10: `Root writes need a fresh reauthentication; then policy scope is bypassed but fields are not`, `an OIDC reauthentication is fresh as well…`, `Root suspends an IAM account…`                                                                                                 |
+| 4   | Bỏ `kind='iam'` trong view `iam_account` (`012-iam-root.ts`)                                             | `test/product-root-guards.integration-spec.ts` + #1 | 1    | 3/17: `iam_account hides Root, DELETE app_user is refused, resolve_session reports kind`, `Root suspends an IAM account; itself, absent and malformed ids reveal nothing`, `IAM suspend needs a grant and a boundary…`                                                             |
+| 5   | Bỏ audit Root (xóa `if (session.kind === 'root') await appendProductAudit(…)`)                           | như #1                                              | 1    | 4/10: `Root reads every document…`, `Root writes need a fresh reauthentication…`, `a failed Root audit rolls the access back…`, `Root suspends an IAM account…`                                                                                                                    |
+| 6   | Bỏ drift check trong migration (xóa khối bước 2 của `012`)                                               | `test/product-iam-migration.integration-spec.ts`    | 1    | 1/7: `unmarked release 1: drift and a stray holder roll back; then 012 upgrades and release 2 syncs`                                                                                                                                                                               |
+| 7   | Genesis không kiểm catalog rỗng (`current!.sequence === '0'`)                                            | `test/product-genesis.integration-spec.ts`          | 1    | 1/2: `genesis needs an empty code-owned catalog; otherwise the predecessor stays strict`                                                                                                                                                                                           |
+| 8   | Bỏ ` FOR SHARE` trong `guardRootNotIamSubjectBody`                                                       | `test/product-root-concurrency.integration-spec.ts` | 1    | 2/4: `facts and tokens written while a promotion holds the target wait, then are refused`, `a promotion waiting behind an uncommitted fact or token is refused once the writer commits`                                                                                            |
+| 9   | Bỏ khối `IF current_setting('transaction_isolation')…END IF;` trong `guard_root_kind`                    | như #8                                              | 1    | 1/4: `a promotion outside READ COMMITTED is refused with real credentials outside the runner`                                                                                                                                                                                      |
+| 10  | `guardRootLifecycleBody`: `ELSIF session_user NOT IN ('product_identity','product_authority')`           | `test/product-root-guards.integration-spec.ts`      | 1    | 3/7: `lifecycle: bootstrap never touches IAM, authority never touches Root, identity keeps its flows`, `no runtime login lifts a Root suspension; the approved offline repair does (spec 4.6)`, `iam_account hides Root, DELETE app_user is refused, resolve_session reports kind` |
+
+Chuỗi đích của cả 10 mutation khớp nguyên văn code tại `72367b6` (mutation #7 đúng `current!.sequence === '0' && (await codeOwnedCatalogIsEmpty(m))`). Lượt đầu của #8 bị dừng giữa chừng do lỗi script của người chạy (không phải kết quả test); #8–#10 chạy lại trọn vẹn và kết quả trên là của lượt chạy lại.
+
+## Kiểm tra thủ công một lần: binary cũ trên schema mới
+
+- Git worktree `50d6053` (trước Task 1) trong scratchpad: `pnpm install --frozen-lockfile`, `pnpm run build` (exit 0); repo hiện tại build bằng `tsc -b tsconfig.build.json` (exit 0).
+- Container disposable `postgres:18.4` trên cổng 55432 (`--rm`).
+- Script provision (dist mới) gọi `provisionProductDatabase` với password ngẫu nhiên và in JSON settings ra stdout; JSON chỉ đi qua pipe sang script probe cũ, không in ra terminal hay ghi file. Script probe cũ mở DataSource `data`, `identity`, `authority`, `sync` bằng `productDataSourceOptions` của dist `50d6053` và gọi `verifyProductPrivileges` của dist `50d6053`.
+- Lệnh: `node iam-compat-provision.ts | node iam-compat-old-probe.ts`.
+- Kết quả: DB ở migration `ProductIamRoot1792108800012`; probe cũ ném `Product privilege drift for data: unexpected [], missing [column:app_user.authority_level:SELECT]`. Binary cũ không khởi động trên schema mới (đúng kỳ vọng `Product privilege drift …`).
+- Đã dọn: `docker stop iam-compat`, `git worktree remove … --force`, xóa hai script.
+
+## Gates chưa được chứng nhận (ADR 0012)
+
+- CI GitHub chưa chạy cho branch này; kết quả trên là local.
+- Spec 4.3 yêu cầu holder giữ nguyên `state` pending/active/suspended khi nâng cấp; test hiện chỉ kiểm `active`.
+- Chưa đo timing Root/absent ở suspend; chưa có test khẳng định IAM actor nhận event giống hệt cho target Root và target vắng mặt (lập luận từ code).
+- Reauth OIDC trong suite `product-root` dựng bằng `reauthenticated_at` do DB đặt, không qua IdP thật (spec deviation 8).
+- Repair gỡ suspend Root và nâng cấp production chưa diễn tập; runbook ở `docs/single-product-operations.md` mục 8–9.
+
+---
+
 # Bằng chứng giai đoạn A — Foundation Hardening, API Structure & Pluggable Adapters
 
 Ngày: 2026-10-14. Môi trường: Node 24.20.0, pnpm 12.3.4, Docker local, PostgreSQL 18.4 disposable (Testcontainers), macOS. Working tree chưa commit trên branch `feat/foundation-hardening-adapters`; không staging/production, không push/deploy. Kết quả dưới đây là lượt chạy local của T11 trên working tree này; không thay thế CI hoặc kiểm chứng production, và không nâng trạng thái production-ready. Phase B (T8–T10) chưa thực hiện.

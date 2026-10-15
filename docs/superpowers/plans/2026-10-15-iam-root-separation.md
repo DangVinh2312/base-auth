@@ -127,7 +127,7 @@ export function releaseContentHash(
 ): string;
 ```
 
-- [ ] **Step 1: Viết test ghim hash legacy (characterization) và test genesis fail**
+- [x] **Step 1: Viết test ghim hash legacy (characterization) và test genesis fail**
 
 Thêm vào cuối `test/system-release.spec.ts`:
 
@@ -276,7 +276,7 @@ test('genesis needs an empty code-owned catalog; otherwise the predecessor stays
 });
 ```
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:unit -- test/system-release.spec.ts`
 Expected: PASS ở HEAD (test ghim hành vi trước refactor). Nếu literal `b8fef626…` FAIL ngay ở HEAD (dist cũ hơn source), thay literal bằng giá trị `actual` in ra **ở HEAD, trước mọi thay đổi**, không bao giờ sau refactor.
@@ -284,7 +284,7 @@ Expected: PASS ở HEAD (test ghim hành vi trước refactor). Nếu literal `b
 Run: `pnpm run test:integration -- test/product-genesis.integration-spec.ts`
 Expected: FAIL ở test đầu với `Release rejected (predecessor_mismatch): unexpected previous release`.
 
-- [ ] **Step 3: Tạo `protected-state.ts`**
+- [x] **Step 3: Tạo `protected-state.ts`**
 
 ```ts
 import { createHash } from 'node:crypto';
@@ -335,7 +335,7 @@ export async function codeOwnedCatalogIsEmpty(m: EntityManager): Promise<boolean
 
 Trong `product-manifest.ts`: xóa hàm `protectedStateHash` cục bộ (dòng 333–357) và thêm `import { codeOwnedCatalogIsEmpty, protectedStateHash } from './protected-state.js';`. Thuật toán không đổi (cùng câu SQL, cùng `sha256(canonicalJson(rows))`).
 
-- [ ] **Step 4: Genesis trong `ProductManifestReconciler.reconcile`**
+- [x] **Step 4: Genesis trong `ProductManifestReconciler.reconcile`**
 
 Thay hai dòng kiểm predecessor (`product-manifest.ts:198-199`):
 
@@ -348,7 +348,7 @@ if (!genesis && release.predecessor !== current!.sequence)
   reject('predecessor_mismatch', 'unexpected previous release');
 ```
 
-- [ ] **Step 5: Tách helper validation trong `manifest-reconciler.ts`**
+- [x] **Step 5: Tách helper validation trong `manifest-reconciler.ts`**
 
 Giữ `sizeLimits` nhưng bỏ khóa `roles` khỏi vòng lặp của nội dung; thêm các hàm sau ngay trước `prepareRelease`, rồi viết lại `prepareRelease`:
 
@@ -448,7 +448,7 @@ export function prepareRelease(
 
 Xóa `byJson`/`hash` cục bộ cũ trong `prepareRelease`. `legacy.ts` không đổi.
 
-- [ ] **Step 6: Chạy test**
+- [x] **Step 6: Chạy test**
 
 Run: `pnpm run test:unit -- test/system-release.spec.ts`
 Expected: PASS (hash legacy `b8fef626…` không đổi).
@@ -456,7 +456,7 @@ Expected: PASS (hash legacy `b8fef626…` không đổi).
 Run: `pnpm run test:integration -- test/product-genesis.integration-spec.ts test/manifest-sync.integration-spec.ts test/permission-boundary.integration-spec.ts test/product-system.integration-spec.ts`
 Expected: PASS (genesis mới; legacy và product hiện có không đổi).
 
-- [ ] **Step 7: Kiểm tra rộng và commit**
+- [x] **Step 7: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write packages/typeorm-postgres/src/protected-state.ts packages/typeorm-postgres/src/manifest-reconciler.ts packages/typeorm-postgres/src/product-manifest.ts test/system-release.spec.ts test/product-genesis.integration-spec.ts && pnpm run lint && pnpm run typecheck && pnpm run test:unit`
 Expected: exit 0.
@@ -494,7 +494,7 @@ readonly planUnrestricted: (input: UserTrustedInput, snapshot: UserAuthoritySnap
 //   validUntil, obligations: [] }, deep-frozen, nằm trong tập issued của instance.
 ```
 
-- [ ] **Step 1: Viết test core fail**
+- [x] **Step 1: Viết test core fail**
 
 Create `packages/core/test/unrestricted.spec.ts`:
 
@@ -643,12 +643,12 @@ test('only product-authority.ts may reach planUnrestricted', async () => {
 });
 ```
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:unit -- packages/core/test/unrestricted.spec.ts packages/core/test/runtime.spec.ts test/package-boundaries.spec.ts`
 Expected: FAIL — `core.planUnrestricted is not a function` (TypeError ở hai test core) và `0 !== 1` ở test ESLint.
 
-- [ ] **Step 3: Implement trong `planner.ts`**
+- [x] **Step 3: Implement trong `planner.ts`**
 
 Thêm sau `const deny = …`:
 
@@ -743,7 +743,7 @@ export function planUnrestricted(
 }
 ```
 
-- [ ] **Step 4: Implement trong `runtime.ts`**
+- [x] **Step 4: Implement trong `runtime.ts`**
 
 Import `planUnrestricted as planUnrestrictedWith` từ `./planner.js`. Thêm vào interface `AuthorizationCore` sau `evaluateUser`:
 
@@ -763,7 +763,7 @@ và vào object `core` sau `evaluateUser`:
       issue(planUnrestrictedWith(core, input, snapshot)),
 ```
 
-- [ ] **Step 5: ESLint rule**
+- [x] **Step 5: ESLint rule**
 
 Thêm block cuối mảng trong `eslint.config.js`:
 
@@ -789,12 +789,12 @@ Thêm block cuối mảng trong `eslint.config.js`:
   },
 ```
 
-- [ ] **Step 6: Chạy test**
+- [x] **Step 6: Chạy test**
 
 Run: `pnpm run test:unit -- packages/core/test test/package-boundaries.spec.ts`
 Expected: PASS (mọi test core cũ, gồm `user-decision.spec.ts` với role tên `system.root` không bypass, vẫn PASS).
 
-- [ ] **Step 7: Kiểm tra rộng và commit**
+- [x] **Step 7: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write packages/core/src/planner.ts packages/core/src/runtime.ts eslint.config.js packages/core/test/unrestricted.spec.ts packages/core/test/runtime.spec.ts test/package-boundaries.spec.ts && pnpm run lint && pnpm run typecheck && pnpm run test:unit`
 Expected: exit 0.
@@ -857,7 +857,7 @@ export interface RootBootstrapInput {
 // revokeProductRoot = state 'suspended' + auth_epoch+1 cho Root chưa suspended; { revoked: false } nếu không có.
 ```
 
-- [ ] **Step 1: Viết test guard DB fail**
+- [x] **Step 1: Viết test guard DB fail**
 
 Create `test/product-root-guards.integration-spec.ts`:
 
@@ -1262,12 +1262,12 @@ test('no runtime login lifts a Root suspension; the approved offline repair does
 });
 ```
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root-guards.integration-spec.ts`
 Expected: FAIL ở test đầu, `column "kind" of relation "app_user" does not exist` (hoặc assertion regex không khớp vì chưa có guard).
 
-- [ ] **Step 3: Viết migration `012`**
+- [x] **Step 3: Viết migration `012`**
 
 Create `packages/typeorm-postgres/src/migrations/product/012-iam-root.ts`:
 
@@ -1572,7 +1572,7 @@ export class ProductIamRoot1792108800012 implements MigrationInterface {
 }
 ```
 
-- [ ] **Step 4: Đăng ký migration và cập nhật probe trong `product-database.ts`**
+- [x] **Step 4: Đăng ký migration và cập nhật probe trong `product-database.ts`**
 
 1. Imports: bỏ `resolveSessionBody` khỏi import 002, bỏ `productRowsBody` khỏi import 004, bỏ import 007 (`requireRootMarkerBody`) và `systemActivationBody` của 008; thêm:
 
@@ -1735,7 +1735,7 @@ if (ownerActual.size !== sessionOwnerAcl.length || sessionOwnerAcl.some((g) => !
   throw new Error('Product protection drift');
 ```
 
-- [ ] **Step 5: Đường ghi DB theo schema mới trong `product-manifest.ts`**
+- [x] **Step 5: Đường ghi DB theo schema mới trong `product-manifest.ts`**
 
 1. Vòng `release.roles` trong `apply` (dòng 622–643):
 
@@ -1831,7 +1831,7 @@ const removed = await tx.manager.query<unknown[]>(
 );
 ```
 
-- [ ] **Step 6: `suspendUser` không còn rank (`product-authority.ts`)**
+- [x] **Step 6: `suspendUser` không còn rank (`product-authority.ts`)**
 
 Xóa khối đọc `account_rank` (dòng 279–286); thân callback còn:
 
@@ -1853,7 +1853,7 @@ await appendProductAudit(tx, {
 return true;
 ```
 
-- [ ] **Step 7: Release 2 và resource `account` ở `apps/api`**
+- [x] **Step 7: Release 2 và resource `account` ở `apps/api`**
 
 `apps/api/src/administration/account.declarations.ts`:
 
@@ -1930,7 +1930,7 @@ export const productReleaseSource: ProductReleaseSource = {
 
 (`authorityLevel`, `systemGrants`, `removeSystemGrants` biến mất ở Task 4.)
 
-- [ ] **Step 8: CLI `tools/product.ts`**
+- [x] **Step 8: CLI `tools/product.ts`**
 
 Khối `bootstrap`: xóa thuộc tính `boundaries: […]`; thông điệp idempotent `'Operation already committed; marker and Root unchanged.'`. Khối `revoke-root`:
 
@@ -1942,7 +1942,7 @@ console.log(
 );
 ```
 
-- [ ] **Step 9: Chuyển các test hiện có (spec mục 9)**
+- [x] **Step 9: Chuyển các test hiện có (spec mục 9)**
 
 `test/product-database.integration-spec.ts`:
 
@@ -2408,7 +2408,7 @@ assert.equal(
 
 - Khối drift (dòng 281–296): `WHERE role_key=$1` với `Buffer.from('reviewer')`, khôi phục `label='Reviewer'`.
 
-- [ ] **Step 10: Chạy test**
+- [x] **Step 10: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root-guards.integration-spec.ts test/product-database.integration-spec.ts`
 Expected: PASS.
@@ -2419,7 +2419,7 @@ Expected: PASS.
 Run: `pnpm run test:unit -- test/system-release.spec.ts apps/api/test/structure.spec.ts` rồi `pnpm run test:e2e`
 Expected: PASS.
 
-- [ ] **Step 11: Kiểm tra rộng và commit**
+- [x] **Step 11: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write <mọi file của task> && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run test:integration`
 Expected: exit 0.
@@ -2469,7 +2469,7 @@ export function prepareProductRelease(
 // Release 2 hash ghim: e11f43e8199bf70fd4a2c8e552477b682222402510fd3d0cc35b98256f15afaa
 ```
 
-- [ ] **Step 1: Viết test fail**
+- [x] **Step 1: Viết test fail**
 
 Trong `test/system-release.spec.ts`: xóa test `system grants require exact declared permission/template and unique stable ownership`; trong test `a failing value codec …` xóa hai dòng `systemGrants: [], removeSystemGrants: []`; đổi hash ở test `product manifest hash …` thành `'e11f43e8199bf70fd4a2c8e552477b682222402510fd3d0cc35b98256f15afaa'` (declarations giữ `528137d7…`), comment `// Release 2 (ADR 0012): product roles are key + label, no system grant fields.`; thêm:
 
@@ -2500,12 +2500,12 @@ test('product release v2: roles are key and label, system.* is reserved, no syst
 `apps/api/test/structure.spec.ts`: release hash `'e11f43e8199bf70fd4a2c8e552477b682222402510fd3d0cc35b98256f15afaa'`.
 `test/package-boundaries.spec.ts`: thêm `'systemGrantHash'` vào `absent` của `composition`.
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:unit -- test/system-release.spec.ts apps/api/test/structure.spec.ts test/package-boundaries.spec.ts`
 Expected: FAIL — `roles` còn `authorityLevel`, `systemGrants` còn trên manifest, `system.root` chưa bị từ chối, hash vẫn `ba878a4b…`, `systemGrantHash` vẫn được export.
 
-- [ ] **Step 3: Implement trong `product-manifest.ts`**
+- [x] **Step 3: Implement trong `product-manifest.ts`**
 
 Imports từ `./manifest-reconciler.js`: `ReleaseRejectedError, releaseContentHash, validateReleaseContent, validateRoleKeys, type DefaultGrant, type ReleaseContentSource, type RelationSeed, type RejectReason, type SyncResult, type ValidatedReleaseContent` (bỏ `prepareRelease`, `ReleaseSource`, `VerifiedReleaseManifest`). Thay dòng 28–139 (types + `prepareProductRelease`) bằng các interface ở **Interfaces** và:
 
@@ -2561,7 +2561,7 @@ Trong `reconcile`: xóa `await reconcileSystemGrants(m, release);`. Xóa `system
 
 `apps/api/src/authorization/product-manifest.ts`: `roles: [{ key: 'reviewer', label: 'Reviewer' }]`, xóa `systemGrants`/`removeSystemGrants`.
 
-- [ ] **Step 4: Chuyển fixture release còn lại**
+- [x] **Step 4: Chuyển fixture release còn lại**
 
 - `test/product-values.integration-spec.ts`: `roles: []`, xóa `systemGrants`/`removeSystemGrants`.
 - `test/product-fence-io.integration-spec.ts`: `roles: [{ key: 'reviewer', label: 'Reviewer fixture' }]`, xóa hai trường.
@@ -2671,7 +2671,7 @@ assert.deepEqual(
 
 (2) `same release full drift fails; rollback avoids runtime seed takeover` — như cũ, label khôi phục `'Reviewer'`, insert runtime role `"INSERT INTO role_definition(role_key,managed_by,label) VALUES($1,'runtime','Runtime')"`, `collision` dùng `roles: [{ key: 'runtime', label: 'Root' }]` và `sequence: '3', predecessor: '2'`. (3) và (4): hai test bootstrap/marker đúng như bản Task 3. (5) `code-owned roles are runtime assignments; their grants leave only by explicit release removal` — như cũ với `roles = [{ key: 'reviewer', label: 'Reviewer' }]`, `fifth` = `sequence: '3', predecessor: '2'`, `sixth` = `'4'/'3'`, release thứ bảy `'5'/'4'`; xóa khối `assert.rejects(admin('INSERT INTO user_role…system.root…'), denied)` (role đó không còn; Root ngoài IAM được kiểm ở `product-root-guards`). (6) test offline actor như Task 3. Xóa test `system grant explicit content change/removal requires prior exact hash`.
 
-- [ ] **Step 5: Chạy test**
+- [x] **Step 5: Chạy test**
 
 Run: `pnpm run test:unit -- test/system-release.spec.ts apps/api/test/structure.spec.ts test/package-boundaries.spec.ts`
 Expected: PASS.
@@ -2679,7 +2679,7 @@ Expected: PASS.
 Run: `pnpm run test:integration -- test/product-system.integration-spec.ts test/product-system-regression.integration-spec.ts test/product-values.integration-spec.ts test/product-fence-io.integration-spec.ts test/product-authorization.integration-spec.ts test/product-genesis.integration-spec.ts test/product-root-guards.integration-spec.ts test/product-cli.integration-spec.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Kiểm tra rộng và commit**
+- [x] **Step 6: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write <mọi file của task> && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run test:e2e`
 Expected: exit 0.
@@ -2719,7 +2719,7 @@ export function prepareReleaseOne(
 ): ProductReleaseManifest;
 ```
 
-- [ ] **Step 1: Tham số `migrations` cho provisioning**
+- [x] **Step 1: Tham số `migrations` cho provisioning**
 
 ```ts
 /**
@@ -2742,7 +2742,7 @@ const migration = await new DataSource({
 }).initialize();
 ```
 
-- [ ] **Step 2: Đóng băng release 1 của `50d6053`**
+- [x] **Step 2: Đóng băng release 1 của `50d6053`**
 
 ```bash
 mkdir -p test/fixtures/release-one
@@ -2820,7 +2820,7 @@ export function prepareReleaseOne(
 }
 ```
 
-- [ ] **Step 3: Viết test nâng cấp**
+- [x] **Step 3: Viết test nâng cấp**
 
 Create `test/product-iam-migration.integration-spec.ts`:
 
@@ -3257,12 +3257,12 @@ test('a fresh database migrates to 012 and takes release 2 through genesis', asy
 });
 ```
 
-- [ ] **Step 4: Chạy test**
+- [x] **Step 4: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-iam-migration.integration-spec.ts`
 Expected: PASS. Nếu FAIL, sửa `012` hoặc fixture đóng băng theo spec (không đổi assertion); test hash đầu file bảo đảm fixture là release 1 thật.
 
-- [ ] **Step 5: Kiểm tra rộng và commit**
+- [x] **Step 5: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write packages/typeorm-postgres/src/product-database.ts test/fixtures/release-one test/product-iam-migration.integration-spec.ts && pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run test:integration -- test/product-database.integration-spec.ts`
 Expected: exit 0.
@@ -3286,7 +3286,7 @@ git commit -m "test: upgrade from the real release 1 through migration 012 for e
 - Consumes: guard `guard_root_kind`, `guard_root_not_iam_subject`, `guard_root_activation` và thông điệp `requires READ COMMITTED` (Task 3).
 - Produces: không.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 ```ts
 import assert from 'node:assert/strict';
@@ -3540,12 +3540,12 @@ test('facts and tokens written while a promotion holds the target wait, then are
 });
 ```
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root-concurrency.integration-spec.ts`
 Expected: PASS (guard đã có từ Task 3). Kiểm lại đúng nguyên nhân: tạm xóa ` FOR SHARE` trong `guardRootNotIamSubjectBody` → test cuối FAIL với `never waited for a lock`; khôi phục ngay.
 
-- [ ] **Step 3: Kiểm tra và commit**
+- [x] **Step 3: Kiểm tra và commit**
 
 Run: `pnpm exec prettier --write test/product-root-concurrency.integration-spec.ts && pnpm run lint && pnpm run typecheck`
 Expected: exit 0.
@@ -3588,7 +3588,7 @@ type RootOutcome = { readonly principalKind: 'root'; readonly outcome: 'ok' | 'a
 // Metadata Root: principalKind, outcome, resource/keyKind/key (key chỉ uuid/integer), targetUserId, resultingRevision theo ADR 0009.
 ```
 
-- [ ] **Step 1: Viết test fail**
+- [x] **Step 1: Viết test fail**
 
 Create `test/product-root.integration-spec.ts`:
 
@@ -4036,12 +4036,12 @@ test('IAM reads stay scoped and unaudited; a role named like Root grants nothing
 
 Trong `test/package-boundaries.spec.ts` thêm `'PRODUCT_FRESH_AUTH_SQL'` vào `composition.present`.
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root.integration-spec.ts`
 Expected: FAIL — import `PRODUCT_FRESH_AUTH_SQL` là `undefined` (test fresh), Root list trả `total: '0'`.
 
-- [ ] **Step 3: Union audit trong `product-audit.ts`**
+- [x] **Step 3: Union audit trong `product-audit.ts`**
 
 Thêm sau `type UserTarget`:
 
@@ -4120,7 +4120,7 @@ if ('target' in event && event.target && 'keyKind' in event.target) {
 
 và xóa `case 'data.update'` trong `switch` (logic đã chuyển lên khối trên; event IAM ra metadata y hệt).
 
-- [ ] **Step 4: Nhánh Root trong `product-authority.ts`**
+- [x] **Step 4: Nhánh Root trong `product-authority.ts`**
 
 Imports thêm `type UserTrustedInput` (core) và `type ProductAuditEvent` (`./product-audit.js`). Thay `SessionProjection` và thêm hằng:
 
@@ -4360,7 +4360,7 @@ return objectId !== undefined;
 
 `composition.ts`: `export { ProductAuthorization, PRODUCT_FRESH_AUTH_SQL, readProductAuthority } from './product-authority.js';`.
 
-- [ ] **Step 5: E2E theo hành vi mới**
+- [x] **Step 5: E2E theo hành vi mới**
 
 Trong `apps/api/test/product.e2e-spec.ts`, thay đoạn Root ở Task 3 bằng:
 
@@ -4386,7 +4386,7 @@ assert.equal(
 );
 ```
 
-- [ ] **Step 6: Chạy test**
+- [x] **Step 6: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root.integration-spec.ts test/product-audit.integration-spec.ts test/product-authorization.integration-spec.ts test/product-values.integration-spec.ts`
 Expected: PASS (event IAM trong `product-audit` vẫn khớp exact).
@@ -4394,7 +4394,7 @@ Expected: PASS (event IAM trong `product-audit` vẫn khớp exact).
 Run: `pnpm run test:unit -- test/package-boundaries.spec.ts` và `pnpm run test:e2e`
 Expected: PASS.
 
-- [ ] **Step 7: Kiểm tra rộng và commit**
+- [x] **Step 7: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write <mọi file của task> && pnpm run lint && pnpm run typecheck && pnpm run test:unit`
 Expected: exit 0 (ESLint không báo `planUnrestricted` trong `product-authority.ts`).
@@ -4419,7 +4419,7 @@ git commit -m "feat: Root bypass in access with SQL fresh-auth for writes and an
 - Consumes: `access(…, work(plan, tx, kind), rootEvent)` (Task 7); binding `iam_account` (Task 3).
 - Produces: `suspendUser(secret: string, target: string): Promise<boolean>` — `false` (404) khi target vắng mặt hoặc là Root (kể cả Root tự nhắm mình); `ProductAccessDenied` (403) khi IAM tự suspend hoặc id không canonical.
 
-- [ ] **Step 1: Viết test fail**
+- [x] **Step 1: Viết test fail**
 
 Thêm vào cuối `test/product-root.integration-spec.ts`:
 
@@ -4563,12 +4563,12 @@ assert.equal((await request(`/administration/users/${randomUUID()}/suspend`, 'PO
 
 và đổi tên test thành `'actual API boot, activation/login, scoped read/write, Root bypass with fresh writes and revoke/reset fail closed'`.
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root.integration-spec.ts`
 Expected: FAIL ở test Root — `s.suspendUser(fresh, root.id)` ném `ProductAccessDenied` thay vì trả `false` (thứ tự cũ chặn self trước lookup).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `suspendUser` (callback `work`):
 
@@ -4596,7 +4596,7 @@ Expected: FAIL ở test Root — `s.suspendUser(fresh, root.id)` ném `ProductAc
 
 `apps/api/src/openapi/product-openapi.ts`: summary `'Suspend an IAM user: Root, or a grant within a required boundary'`.
 
-- [ ] **Step 4: Chạy test**
+- [x] **Step 4: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-root.integration-spec.ts test/product-audit.integration-spec.ts`
 Expected: PASS.
@@ -4604,7 +4604,7 @@ Expected: PASS.
 Run: `pnpm run test:unit -- apps/api/test/structure.spec.ts` và `pnpm run test:e2e`
 Expected: PASS.
 
-- [ ] **Step 5: Kiểm tra rộng và commit**
+- [x] **Step 5: Kiểm tra rộng và commit**
 
 Run: `pnpm exec prettier --write <mọi file của task> && pnpm run lint && pnpm run typecheck && pnpm run test:unit`
 Expected: exit 0.
@@ -4627,7 +4627,7 @@ git commit -m "feat: suspend looks up iam_account first; Root and absent targets
 - Consumes: CLI `enroll`, `bootstrap`, `reissue-root`, `revoke-root` (Task 3); `ProductIdentityService` (composition).
 - Produces: không.
 
-- [ ] **Step 1: Viết test**
+- [x] **Step 1: Viết test**
 
 Imports thêm:
 
@@ -4724,12 +4724,12 @@ Sau khối kiểm `kind/state/marker/audit` của `revoke-root` (vẫn trong `tr
 
 (Khối `revoke`/`refused`/hai lần `revoke(...)`/kiểm DB hiện có dời vào trong `try` này, giữa đoạn login và đoạn mới; nội dung giữ như bản Task 3.)
 
-- [ ] **Step 2: Chạy test**
+- [x] **Step 2: Chạy test**
 
 Run: `pnpm run test:integration -- test/product-cli.integration-spec.ts`
 Expected: PASS. Kiểm lại đúng nguyên nhân bằng thao tác tạm: trong `revokeProductRoot` bỏ `,auth_epoch=auth_epoch+1` → assertion session cũ FAIL (resolve_session vẫn lọc `state='active'` nên session cũng chết — nếu test vẫn PASS, đó là do `state`; ghi nhận trong ledger, không nới assertion). Khôi phục ngay.
 
-- [ ] **Step 3: Kiểm tra và commit**
+- [x] **Step 3: Kiểm tra và commit**
 
 Run: `pnpm exec prettier --write test/product-cli.integration-spec.ts && pnpm run lint && pnpm run typecheck`
 Expected: exit 0.
@@ -4756,7 +4756,7 @@ git commit -m "test: offline Root lifecycle through the real CLI, login and audi
 - Consumes: toàn bộ Task 1–9.
 - Produces: tài liệu; không đổi code.
 
-- [ ] **Step 1: ADR 0012**
+- [x] **Step 1: ADR 0012**
 
 Create `docs/decisions/0012-iam-root-separation.md`:
 
@@ -4797,7 +4797,7 @@ Supersede: ADR 0007 (phần "Root không bypass"); ADR 0008 (Root là role `syst
 - Chưa đo timing giữa Root/absent ở suspend.
 ```
 
-- [ ] **Step 2: `AGENTS.md` (spec mục 8)**
+- [x] **Step 2: `AGENTS.md` (spec mục 8)**
 
 Root `AGENTS.md`, mục "Bất biến bảo mật":
 
@@ -4816,7 +4816,7 @@ Root `AGENTS.md`, mục "Bất biến bảo mật":
 
 `apps/api/AGENTS.md`, mục "Hiện trạng": `suspend user thấp cấp` → `suspend IAM user (Root, hoặc grant + boundary; resource \`account\` bind \`iam_account\`)`.
 
-- [ ] **Step 3: Docs khác**
+- [x] **Step 3: Docs khác**
 
 - `docs/prompt.md`: thêm dòng đầu `> **Prompt lịch sử.** Phần Root/rank của prompt này đã bị ADR 0012 (\`docs/decisions/0012-iam-root-separation.md\`) thay thế; không thực thi lại.` và một dòng trống; không sửa nội dung còn lại.
 - `docs/permission-boundaries.md`: mục 6 (dòng 102) `rank trước/sau, self/peer` → `affected set, self và boundary/deny (không có rank; ADR 0012)`; thêm mục cuối "Root" 3 câu: Root ngoài IAM, không binding boundary, bypass qua `planUnrestricted`; boundary/deny chỉ áp IAM principals.
@@ -4835,7 +4835,7 @@ kèm yêu cầu hồ sơ approval (reference, người duyệt, thời điểm, 
 
 - `docs/single-product-reuse-map.md`: dòng `release validator/reconciler` → `stable system grants` thay bằng `release v2 (role key+label), genesis`; dòng planner thêm `planUnrestricted (Root, ADR 0012)`.
 
-- [ ] **Step 4: Mutation check trên bản sao cô lập**
+- [x] **Step 4: Mutation check trên bản sao cô lập**
 
 ```bash
 git worktree add /private/tmp/base-auth-iam-mutation HEAD
@@ -4859,7 +4859,7 @@ Mỗi mutation: sửa đúng chỗ, chạy lệnh, xác nhận FAIL ở test hà
 
 Sau cùng: `git worktree remove /private/tmp/base-auth-iam-mutation --force`. Ghi từng kết quả thật (exit code, tên test fail) vào `docs/single-product-verification.md`.
 
-- [ ] **Step 5: Kiểm tra thủ công một lần: binary cũ trên schema mới**
+- [x] **Step 5: Kiểm tra thủ công một lần: binary cũ trên schema mới**
 
 ```bash
 git worktree add /private/tmp/base-auth-50d6053 50d6053
@@ -4900,11 +4900,11 @@ node /private/tmp/iam-compat-provision.ts | node /private/tmp/iam-compat-old-pro
 
 Expected: probe cũ ném `Product privilege drift …` hoặc `Product protection drift`. Ghi lệnh và kết quả (không ghi password) vào `docs/single-product-verification.md`; dọn: `docker stop iam-compat`, `git worktree remove /private/tmp/base-auth-50d6053 --force`, xóa hai script.
 
-- [ ] **Step 6: `docs/single-product-verification.md`**
+- [x] **Step 6: `docs/single-product-verification.md`**
 
 Giữ nguyên bằng chứng lịch sử (dòng mutation "Bypass Root" từng là lỗi). Thêm mục mới "IAM thuần / Root ngoài IAM (ADR 0012)" gồm: bảng lệnh gate với exit code và số test thật; bảng 10 mutation ở Step 4 với kết quả; kết quả kiểm tra thủ công Step 5; semantics mới (Root bypass có fresh-auth ghi và audit).
 
-- [ ] **Step 7: Full gate**
+- [x] **Step 7: Full gate**
 
 Run (từ repo root, từng lệnh, ghi exit code và số test thật):
 
@@ -4921,7 +4921,7 @@ pnpm run test:e2e
 
 Expected: mọi lệnh exit 0. Lỗi môi trường (Docker/Testcontainers timeout) báo riêng, chạy lại đúng nhóm và ghi cả hai kết quả; không gọi là pass khi chưa pass.
 
-- [ ] **Step 8: Cập nhật checkbox, ledger và commit**
+- [x] **Step 8: Cập nhật checkbox, ledger và commit**
 
 Đánh dấu checkbox đã có bằng chứng; điền ledger bên dưới.
 
@@ -4971,15 +4971,15 @@ git commit -m "docs: ADR 0012, invariants, runbook and verification for IAM with
 
 ## Ledger trạng thái task
 
-| Task                                                | Trạng thái   | Lệnh/bằng chứng mới | Rủi ro hoặc gate còn lại                                                                                           |
-| --------------------------------------------------- | ------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| T1 `protectedStateHash`, helper validation, genesis | Chưa bắt đầu | —                   | Literal hash legacy lấy từ dist `50d6053`; nếu HEAD khác, chụp lại trước refactor                                  |
-| T2 Core `planUnrestricted`, ESLint                  | Chưa bắt đầu | —                   | —                                                                                                                  |
-| T3 Migration `012`, guard, probe, đường ghi DB      | Chưa bắt đầu | —                   | Task lớn nhất; kiểm ACL owner (`is_grantable` của owner entry) trên PostgreSQL 18.4 thật                           |
-| T4 Contract release v2                              | Chưa bắt đầu | —                   | Hash release 2 `e11f43e8…` tính từ envelope; khác thì so envelope                                                  |
-| T5 Nâng cấp từ release 1 thật                       | Chưa bắt đầu | —                   | Fixture đóng băng phụ thuộc `git show 50d6053`                                                                     |
-| T6 Concurrency                                      | Chưa bắt đầu | —                   | Đồng bộ bằng `pg_blocking_pids`, không sleep đoán                                                                  |
-| T7 Bypass, fresh SQL, audit Root                    | Chưa bắt đầu | —                   | —                                                                                                                  |
-| T8 Account, suspend                                 | Chưa bắt đầu | —                   | OpenAPI hash `f0f1c5c5…` tính từ summary mới                                                                       |
-| T9 CLI Root                                         | Chưa bắt đầu | —                   | —                                                                                                                  |
-| T10 Docs, ADR 0012, mutation, gate                  | Chưa bắt đầu | —                   | Kiểm tra binary cũ trên schema mới là thủ công một lần; local không thay CI/production, không gọi production-ready |
+| Task                                                | Trạng thái                    | Lệnh/bằng chứng mới                                                                                                                                                                                                                                                                                                                                                          | Rủi ro hoặc gate còn lại                                                                                                                                                                                                                                                                |
+| --------------------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1 `protectedStateHash`, helper validation, genesis | Đã xong và review (`7404de6`) | unit 231/231, integration 48/48 lúc đó                                                                                                                                                                                                                                                                                                                                       | —                                                                                                                                                                                                                                                                                       |
+| T2 Core `planUnrestricted`, ESLint                  | Đã xong và review (`784363e`) | unit 234/234, lint/typecheck exit 0                                                                                                                                                                                                                                                                                                                                          | Selector ESLint không bắt truy cập computed `core['planUnrestricted']`; chỉ là ranh giới developer (ADR 0012)                                                                                                                                                                           |
+| T3 Migration `012`, guard, probe, đường ghi DB      | Đã xong và review (`4a37121`) | unit 234/234, integration 216/217 lúc đó; 1 fail là ca rate-limit flaky dưới tải đồng thời, pass khi chạy riêng                                                                                                                                                                                                                                                              | —                                                                                                                                                                                                                                                                                       |
+| T4 Contract release v2                              | Đã xong và review (`efc8c04`) | unit 234/234, integration 35/35, e2e 1/1; RED tái hiện hồi tố trong worktree cô lập (implementer viết code trước test)                                                                                                                                                                                                                                                       | —                                                                                                                                                                                                                                                                                       |
+| T5 Nâng cấp từ release 1 thật                       | Đã xong và review (`83bf134`) | RED: typecheck TS2554 và 5/7 fail `column "authority_level" does not exist`; GREEN 7/7; reviewer tái hiện RED trong worktree                                                                                                                                                                                                                                                 | Spec 4.3 yêu cầu holder giữ `state` pending/active/suspended; test chỉ kiểm `active`                                                                                                                                                                                                    |
+| T6 Concurrency                                      | Đã xong và review (`4859439`) | Mutation bỏ ` FOR SHARE` ở `guardRootNotIamSubjectBody` → 2/4 fail `never waited for a lock`; reviewer: tắt `EXISTS` facts → test 1 fail, bỏ ` FOR SHARE` ở `guardRootActivationBody` → 2/4 fail; full integration 226/226                                                                                                                                                   | Test 1 chỉ assert SQLSTATE 42501, không assert message                                                                                                                                                                                                                                  |
+| T7 Bypass, fresh SQL, audit Root                    | Đã xong và review (`953967f`) | RED 5/8; GREEN spec mới 8/8, bốn file 28/28, e2e 1/1; reviewer chạy 9 mutation, 2 không bị bắt (IAM `freshAuthentication` ép true; event suspend IAM cũng ghi cho Root) đã được T8 đóng; full integration 234/234                                                                                                                                                            | —                                                                                                                                                                                                                                                                                       |
+| T8 Account, suspend                                 | Đã xong và review (`55896b4`) | RED 1/10 (`Access denied` khi Root tự suspend), e2e `403 !== 404`; GREEN 18/18, structure 6/6, e2e 1/1; hai gap T7 nay bị mutation bắt; OpenAPI sha `f0f1c5c5…` khớp (chỉ đổi summary); full integration 236/236                                                                                                                                                             | Suspend no-op (target vắng mặt) vẫn tăng revision vì ADR 0009 gắn `resultingRevision` với mode `admin` (có từ trước T8; đổi cần ADR riêng). Chưa có test khẳng định IAM actor nhận event giống hệt cho target Root và vắng mặt (lập luận từ code)                                       |
+| T9 CLI Root                                         | Đã xong và review (`72367b6`) | CLI spec 2/2, ba lượt không flake; full integration 236/236                                                                                                                                                                                                                                                                                                                  | Tiền đề Step 2 đã cũ: bỏ `auth_epoch+1` trong `revokeProductRoot` làm chính `revoke-root` fail 42501 (`guard_root_lifecycle` đòi `NEW.auth_epoch>OLD.auth_epoch`). Session cũ có ba lớp độc lập (trigger, lọc `state='active'`, kiểm epoch); assertion session cũ chỉ fail khi bỏ cả ba |
+| T10 Docs, ADR 0012, mutation, gate                  | Đã xong (chờ review)          | ADR 0012, AGENTS, docs; 10/10 mutation bị bắt (exit 1, test đúng tên); probe `50d6053` trên schema `012` ném `Product privilege drift …`; gate: install/lint/typecheck/build exit 0, unit 234/234, integration 236/236, e2e 1/1; `format:check` exit 1 chỉ do 15 file untracked `.superpowers/sdd/` (loại trừ chúng: exit 0). Chi tiết `docs/single-product-verification.md` | Kiểm tra binary cũ trên schema mới là thủ công một lần; local không thay CI/production, không gọi production-ready                                                                                                                                                                      |

@@ -11,24 +11,24 @@ Lõi quyết định thuần: types, typed keys, AST, validate/plan/evaluate qua
 
 ## Bản đồ file
 
-| File                    | Trách nhiệm                                                                                  |
-| ----------------------- | -------------------------------------------------------------------------------------------- |
-| `types.ts`              | `TenantId`, `Key`, facts, `Expr`/`PlanExpr`, `Decision`, `TrustedInput`                      |
-| `runtime.ts`            | `createAuthorizationCore({ values })`: instance validate/plan/evaluate + scalar/key methods  |
-| `key-codec.ts`          | Helper thuần của khóa: `keyEquals`, `keyToString`, `MAX_KEY_BYTES`, byte length/code point   |
-| `expression.ts`         | Type-check/lower/simplify AST, `MAX_PATH_DEPTH` (8); normalize nhận từ instance              |
-| `ports/value-codecs.ts` | Interface `ScalarCodec`/`ValueCodecs` (chỉ type); implementation ở `packages/value-adapters` |
-| `declarations.ts`       | Kiểu `SystemDeclarations` (resource, action, policy, scope template, relation)               |
-| `policy-validator.ts`   | `validateDeclarations` → đóng băng + `canonical`; `canonicalJson` thuần                      |
-| `planner.ts`            | `planUser` → `UserAuthorizedPlan`; `plan` là wrapper compatibility tenant cũ; cùng algebra   |
-| `evaluator.ts`          | `evaluateUser` và `evaluate` dùng chung traversal AST; không thay SQL                        |
+| File                    | Trách nhiệm                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `types.ts`              | `TenantId`, `Key`, facts, `Expr`/`PlanExpr`, `Decision`, `TrustedInput`                                   |
+| `runtime.ts`            | `createAuthorizationCore({ values })`: instance validate/plan/evaluate + scalar/key methods               |
+| `key-codec.ts`          | Helper thuần của khóa: `keyEquals`, `keyToString`, `MAX_KEY_BYTES`, byte length/code point                |
+| `expression.ts`         | Type-check/lower/simplify AST, `MAX_PATH_DEPTH` (8); normalize nhận từ instance                           |
+| `ports/value-codecs.ts` | Interface `ScalarCodec`/`ValueCodecs` (chỉ type); implementation ở `packages/value-adapters`              |
+| `declarations.ts`       | Kiểu `SystemDeclarations` (resource, action, policy, scope template, relation)                            |
+| `policy-validator.ts`   | `validateDeclarations` → đóng băng + `canonical`; `canonicalJson` thuần                                   |
+| `planner.ts`            | `planUser`/`planUnrestricted` (chung `resolveTarget`) → `UserAuthorizedPlan`; `plan` là wrapper tenant cũ |
+| `evaluator.ts`          | `evaluateUser` và `evaluate` dùng chung traversal AST; không thay SQL                                     |
 
 ## Bất biến cần giữ khi sửa
 
 - `P = requiredScope AND (allow OR record allow) AND NOT (deny OR record deny)`; tenant/membership/policy/validator/obligation kiểm tra trước. Một rule hỏng → cả quyết định deny.
 - Permission boundary (ADR 0003, `docs/permission-boundaries.md`) đã lower vào cùng AST, AND ngoài mọi allow; không tự grant.
 - Contract một sản phẩm dùng `UserTrustedInput`, `UserAuthoritySnapshot.user`, `UserAuthorizedPlan.userId` và facts không tenant. Không thêm tenant giả hoặc flag bỏ isolation. `plan`/`evaluate` cũ chỉ giữ compatibility trong giai đoạn chuyển đổi và kiểm tenant riêng.
-- `system.root` là role thông thường trong lõi: không bypass policy/boundary/deny hoặc tự sinh grant.
+- Lõi không biết Root. `planUnrestricted` giữ mọi kiểm tra target/principal/user/validity của `planUser` cộng revision canonical, predicate `true`, không obligations; chỉ `ProductAuthorization.access` được gọi (ESLint `no-restricted-syntax`, test ở `test/package-boundaries.spec.ts`). Tên role, kể cả `system.root`, không tạo bypass.
 - JS `number` bị từ chối cho integer; decimal so bằng chuỗi; chuỗi so theo code point (khớp `COLLATE "C"`).
 - `not`/`exception` chỉ lõi tạo. Emergency exception không cấp quyền cho tới Task 12; emergency deny vẫn có hiệu lực.
 - `core.plan`/`core.planUser` chỉ nhận output của `core.validate` của **cùng instance** (WeakSet theo instance); `core.evaluate*` chỉ nhận plan do chính instance đó phát hành (`foreign_plan`). Không có engine/codec mặc định; free function scalar/plan/evaluate đã bỏ (ADR 0009).

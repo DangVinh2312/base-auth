@@ -23,8 +23,9 @@ Thêm export mới: chọn entrypoint theo bảng và cập nhật literal trong
 
 - `product-database.ts`, `migrations/product/`: schema một DB, real credentials data/identity/authority/sync/migration/bootstrap, protected rows/marker và narrow SECURITY DEFINER functions. Chưa mapping legacy data thì migrate từ chối, không đoán/gộp.
 - `product-transaction.ts`: fixed-purpose pools, singleton fence, READ COMMITTED, facts statements sau lock, timeout/retry/metrics hữu hạn. Pool capability không có thì fail closed, không fallback login.
-- `product-sql.ts`, `product-gateway.ts`, `product-authority.ts`: user plan, cùng policy/boundary/grant/deny predicate, projection, native keys và write action registration. API chỉ nhận service operations, không raw manager.
-- `product-manifest.ts`: immutable release, exact system grants, protected-state drift gate, persistent bootstrap. Boot không tạo user/assignment; runtime seed không takeover.
+- `product-sql.ts`, `product-gateway.ts`, `product-authority.ts`: user plan, cùng policy/boundary/grant/deny predicate, projection, native keys và write action registration; nhánh Root duy nhất trong `access` (`kind` từ `resolve_session`, fresh-auth SQL `PRODUCT_FRESH_AUTH_SQL`, audit Root trực tiếp). API chỉ nhận service operations, không raw manager.
+- `product-manifest.ts`: release product v2 (role `{ key, label }`, tiền tố `system.` dự trữ, không system grants), genesis khi sequence 0 + catalog rỗng, drift gate qua `protected-state.ts`, bootstrap `iam → root` (khóa target trước), revoke = suspend. Boot không tạo user/assignment; runtime seed không takeover.
+- Migration `012` (ADR 0012): `app_user.kind`, `iam_account`, năm guard Root SECURITY DEFINER owner `product_session_owner` (probe kiểm thân hàm, trigger và ACL owner chính xác); `down` không đảo ngược.
 - `product-identity.ts`, `product-oidc.ts`: hash/exchange ngoài fence, recheck versions/session/authority trong fence; không email link hoặc secret log. Limiter lấy advisory key qua `run(…, { serialize })` trước fence (ADR0010); purge session hết hạn là lệnh offline theo batch.
 - New tables/rights thay đổi phải cập nhật credential matrix, migration/privilege tests và quyết định thiết kế liên quan (nền hiện tại ADR 0008; thay quyết định đã chấp nhận thì thêm ADR superseding). Product source không import Nest hoặc app domain.
 

@@ -1,3 +1,5 @@
+> **Prompt lịch sử.** Phần Root/rank của prompt này đã bị ADR 0012 (`docs/decisions/0012-iam-root-separation.md`) thay thế; không thực thi lại.
+
 # Triển khai kiến trúc một sản phẩm: local + IdP, authorization nghiêm ngặt
 
 Bạn là Principal Engineer chịu trách nhiệm triển khai, không chỉ tư vấn hoặc viết kế hoạch.
