@@ -138,8 +138,8 @@ describe('typeorm-postgres public entrypoints', () => {
   }
 
   test('undeclared subpaths and private dist paths do not resolve', () => {
-    assert.throws(() => import.meta.resolve(`${pkg}/dist/product-sql.js`));
-    assert.throws(() => import.meta.resolve(`${pkg}/product-sql`));
+    assert.throws(() => import.meta.resolve(`${pkg}/dist/compilers/product-sql.compiler.js`));
+    assert.throws(() => import.meta.resolve(`${pkg}/compilers/product-sql.compiler`));
   });
 });
 
@@ -155,12 +155,12 @@ describe('ESLint import boundaries', () => {
 
   // One existing handler file per feature folder; lintText never writes to disk.
   const featureFiles = [
-    'apps/api/src/auth/auth.controller.ts',
-    'apps/api/src/documents/documents.controller.ts',
-    'apps/api/src/administration/users.controller.ts',
+    'apps/api/src/auth/controllers/auth.controller.ts',
+    'apps/api/src/document/document.controller.ts',
+    'apps/api/src/administration/user.controller.ts',
     'apps/api/src/health/health.controller.ts',
     'apps/api/src/openapi/openapi.controller.ts',
-    'apps/api/src/documents/documents.http-port.ts',
+    'apps/api/src/document/document.http-port.ts',
   ];
   const forbidden: Record<string, string> = {
     typeorm: "import { DataSource } from 'typeorm';",
@@ -169,17 +169,18 @@ describe('ESLint import boundaries', () => {
     composition: `import { ProductTransactionRunner } from '${pkg}/composition';`,
     operations: `import { provisionProductDatabase } from '${pkg}/operations';`,
     legacy: `import { TenantProvisioner } from '${pkg}/legacy';`,
-    'runtime provider': "import { ProductRuntime } from '../infrastructure/product-runtime.js';",
+    'runtime provider':
+      "import { ProductRuntime } from '../infrastructure/product-runtime.service.js';",
     'runtime module': "import { RuntimeModule } from '../infrastructure/runtime.module.js';",
-    'private dist': `import { x } from '${pkg}/dist/product-sql.js';`,
+    'private dist': `import { x } from '${pkg}/dist/compilers/product-sql.compiler.js';`,
     'private source (relative)':
-      "import { x } from '../../../../packages/typeorm-postgres/src/product-sql.js';",
+      "import { x } from '../../../../packages/typeorm-postgres/src/compilers/product-sql.compiler.js';",
     'private dist (relative)':
-      "import { x } from '../../../../packages/typeorm-postgres/dist/product-sql.js';",
+      "import { x } from '../../../../packages/typeorm-postgres/dist/compilers/product-sql.compiler.js';",
   };
   const allowed = [
     `import type { ProductPage } from '${pkg}';`,
-    "import { enforceCsrf } from '../infrastructure/http-security.js';",
+    "import { enforceCsrf } from '../infrastructure/http-security.helper.js';",
   ];
 
   const violations = async (filePath: string, code: string) => {
@@ -199,7 +200,7 @@ describe('ESLint import boundaries', () => {
   test('nested feature subfolders are restricted too', async () => {
     for (const file of [
       'apps/api/src/auth/nested/strategy.ts',
-      'apps/api/src/documents/deep/er/handler.ts',
+      'apps/api/src/document/deep/er/handler.ts',
     ]) {
       for (const code of Object.values(forbidden)) {
         assert.equal((await violations(file, code)).length, 1, `${file}: ${code}`);
@@ -210,7 +211,7 @@ describe('ESLint import boundaries', () => {
   test('document migrations stay exempt', async () => {
     const code = "import { DataSource } from 'typeorm';";
     assert.deepEqual(
-      await violations('apps/api/src/documents/migrations/product-document.ts', code),
+      await violations('apps/api/src/document/migrations/product-document.migration.ts', code),
       [],
     );
   });
@@ -222,7 +223,7 @@ describe('ESLint import boundaries', () => {
   });
 
   test('infrastructure keeps composition but cannot import operations or legacy', async () => {
-    const file = 'apps/api/src/infrastructure/product-runtime.ts';
+    const file = 'apps/api/src/infrastructure/product-runtime.service.ts';
     for (const code of [
       `import { ProductTransactionRunner } from '${pkg}/composition';`,
       "import { Pool } from 'pg';",
@@ -242,7 +243,7 @@ describe('ESLint import boundaries', () => {
       assert.deepEqual(await violations('tools/product.ts', code), [], code);
   });
 
-  test('only product-authority.ts may reach planUnrestricted', async () => {
+  test('only product-authority.service.ts may reach planUnrestricted', async () => {
     const restricted = async (filePath: string, code: string) => {
       const [result] = await eslint.lintText(`${code}\n`, { filePath: abs(filePath) });
       assert.ok(result);
@@ -254,17 +255,17 @@ describe('ESLint import boundaries', () => {
     const destructured =
       'declare const core: { planUnrestricted: unknown };\nconst { planUnrestricted } = core;\nexport { planUnrestricted };';
     for (const file of [
-      'packages/typeorm-postgres/src/product-gateway.ts',
-      'packages/typeorm-postgres/src/product-identity.ts',
-      'apps/api/src/documents/documents.controller.ts',
-      'apps/api/src/infrastructure/product-runtime.ts',
+      'packages/typeorm-postgres/src/gateways/product-data.gateway.ts',
+      'packages/typeorm-postgres/src/services/product-identity.service.ts',
+      'apps/api/src/document/document.controller.ts',
+      'apps/api/src/infrastructure/product-runtime.service.ts',
       'tools/product.ts',
       'test/product-root.integration-spec.ts',
     ])
       for (const code of [call, destructured])
         assert.equal((await restricted(file, code)).length, 1, `${file}: ${code}`);
     assert.deepEqual(
-      await restricted('packages/typeorm-postgres/src/product-authority.ts', call),
+      await restricted('packages/typeorm-postgres/src/services/product-authority.service.ts', call),
       [],
     );
   });

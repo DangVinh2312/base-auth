@@ -4,7 +4,7 @@ export {
   productDataSourceOptions,
   productMigrations,
   provisionProductDatabase,
-} from './product-database.js';
+} from './helpers/product-database.helper.js';
 
 export {
   bootstrapProductRoot,
@@ -13,7 +13,10 @@ export {
   type RootBootstrapInput,
   type RootReissueInput,
   type RootRevocationInput,
-} from './product-manifest.js';
+} from './services/product-manifest.service.js';
 
 // PRODUCT_OFFLINE_ACTOR is also in ./composition (runtime seeds use it); same binding, re-export only.
-export { appendProductAudit, PRODUCT_OFFLINE_ACTOR } from './product-audit.js';
+export {
+  appendProductAudit,
+  PRODUCT_OFFLINE_ACTOR,
+} from './repositories/product-audit.repository.js';

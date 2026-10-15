@@ -27,8 +27,8 @@ import {
 import {
   createProductAuthorizationCore,
   createProductRelease,
-} from '../apps/api/dist/authorization/product-manifest.js';
-import { ProductDocument1792108800002 } from '../apps/api/dist/documents/migrations/product-document.js';
+} from '../apps/api/dist/authorization/product.manifest.js';
+import { ProductDocument1792108800002 } from '../apps/api/dist/document/migrations/product-document.migration.js';
 import { adminConnection, requireEnv } from './env.ts';
 
 function connection(variable: string): PostgresConnectionSettings {

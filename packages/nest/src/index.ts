@@ -3,9 +3,9 @@ export {
   BootstrapModule,
   MANIFEST_SYNC,
   type ManifestSyncPort,
-} from './bootstrap-coordinator.js';
+} from './services/bootstrap-coordinator.service.js';
 
-export { ReadinessGate } from './readiness.js';
+export { ReadinessGate } from './services/readiness.service.js';
 
 export {
   ProductAuthorizationModule,
@@ -15,4 +15,4 @@ export {
   ProductRouteGuard,
   PRODUCT_REQUEST_AUTH,
   type ProductRequestAuth,
-} from './product-authorization.js';
+} from './product-authorization.module.js';

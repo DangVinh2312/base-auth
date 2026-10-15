@@ -32,8 +32,8 @@ import {
   productBindings,
   productDeclarations,
   productReleaseSource,
-} from '../apps/api/dist/authorization/product-manifest.js';
-import { ProductDocument1792108800002 } from '../apps/api/dist/documents/migrations/product-document.js';
+} from '../apps/api/dist/authorization/product.manifest.js';
+import { ProductDocument1792108800002 } from '../apps/api/dist/document/migrations/product-document.migration.js';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 const core = createProductAuthorizationCore();

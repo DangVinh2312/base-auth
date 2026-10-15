@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ProductPublic } from '@base-authorization/nest';
-import { productOpenApi } from './product-openapi.js';
+import { productOpenApi } from './product-openapi.schema.js';
 
 @Controller()
 export class OpenApiController {

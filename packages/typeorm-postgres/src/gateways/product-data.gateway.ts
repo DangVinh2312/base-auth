@@ -1,0 +1,240 @@
+import {
+  type UserAuthorizedPlan,
+  type FieldKind,
+  type Key,
+  type PlanExpr,
+} from '@base-authorization/core';
+import type { ObjectLiteral, SelectQueryBuilder } from 'typeorm';
+import {
+  type ProductBindingRegistry,
+  compileExpression,
+  compileNamed,
+  compilePlan,
+  keyPgTypes,
+  quoteIdentifier,
+  type ProductResourceBinding,
+} from '../compilers/product-sql.compiler.js';
+import type { ProductTransaction } from '../runners/product-transaction.runner.js';
+
+export interface ListQuery {
+  /** Subset of the AST on projected fields: and/or/eq/lt/lte/isNull with typed values. */
+  readonly filter?: unknown;
+  readonly orderBy?: string;
+  readonly direction?: 'asc' | 'desc';
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+export type Row = Readonly<Record<string, unknown>> & { readonly key: string };
+
+export interface Page {
+  readonly items: readonly Row[];
+  /** Matching rows in the same statement snapshot as `items` (window count); bigint as string. */
+  readonly total: string;
+}
+
+/** Caller input is malformed (HTTP 400); distinct from programming TypeErrors. */
+export class ProductInvalidRequest extends Error {}
+
+const limits = { defaultLimit: 20, maxLimit: 100, maxOffset: 10_000, maxFilterNodes: 32 };
+const orderedKinds: readonly FieldKind[] = ['integer', 'decimal', 'string', 'timestamp'];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Bounded reads through an authorized plan (list/detail/count and a QueryBuilder bridge).
+ * The predicate is applied before pagination; projection is an allowlist; values are bound.
+ */
+export class ProductDataGateway {
+  readonly #registry: ProductBindingRegistry;
+
+  constructor(registry: ProductBindingRegistry) {
+    this.#registry = registry;
+  }
+
+  async list(plan: UserAuthorizedPlan, query: ListQuery, tx: ProductTransaction): Promise<Page> {
+    const { binding, bound, where } = this.#prepare(plan, query.filter, tx);
+    const limit = query.limit ?? limits.defaultLimit;
+    const offset = query.offset ?? 0;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > limits.maxLimit)
+      throw new ProductInvalidRequest(`limit must be 1-${limits.maxLimit}`);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > limits.maxOffset)
+      throw new ProductInvalidRequest(`offset must be 0-${limits.maxOffset}`);
+    const direction = query.direction ?? 'asc';
+    if (direction !== 'asc' && direction !== 'desc')
+      throw new ProductInvalidRequest('direction must be asc or desc');
+    const key = `r.${quoteIdentifier(binding.keyColumn)}`;
+    const order =
+      query.orderBy === undefined
+        ? `${key} ${direction}`
+        : `${this.#projectedColumn(binding, query.orderBy)} ${direction}, ${key} ${direction}`;
+    const parameters = [...bound.parameters, limit, offset];
+    const lim = `CAST($${parameters.length - 1} AS int8)`;
+    const off = `CAST($${parameters.length} AS int8)`;
+    // One statement, so total and page share a snapshot under READ COMMITTED. A page past the end
+    // keeps only the last matching row as a marker carrying the total; it is not returned.
+    const rows = await tx.manager.query<Record<string, unknown>[]>(
+      `SELECT * FROM (SELECT ${this.#projection(binding)}, count(*) OVER () AS "$total", row_number() OVER (ORDER BY ${order}) AS "$n"` +
+        ` FROM ${quoteIdentifier(binding.table)} r WHERE ${bound.sql}${where}) p` +
+        ` WHERE ("$n" > ${off} AND "$n" <= ${off} + ${lim}) OR ("$n" = "$total" AND "$total" <= ${off})` +
+        ` ORDER BY "$n"`,
+      parameters,
+    );
+    const total = rows.length > 0 ? String(rows[0]!.$total) : '0';
+    const items = rows
+      .filter((row) => BigInt(String(row.$n)) > BigInt(offset))
+      .map((row) => {
+        const { $total, $n, ...fields } = row;
+        void $total;
+        void $n;
+        return fields as Row;
+      });
+    return { items, total };
+  }
+
+  async count(
+    plan: UserAuthorizedPlan,
+    query: Pick<ListQuery, 'filter'>,
+    tx: ProductTransaction,
+  ): Promise<string> {
+    const { binding, bound, where } = this.#prepare(plan, query.filter, tx);
+    const rows = await tx.manager.query<{ n: string }[]>(
+      `SELECT count(*)::text AS n FROM ${quoteIdentifier(binding.table)} r WHERE ${bound.sql}${where}`,
+      [...bound.parameters],
+    );
+    return rows[0]?.n ?? '0';
+  }
+
+  /** Same response for absent, foreign and not-visible records: null. */
+  async detail(plan: UserAuthorizedPlan, key: Key, tx: ProductTransaction): Promise<Row | null> {
+    const { binding, bound } = this.#prepare(plan, undefined, tx);
+    const declared = this.#registry.declarations.resources[plan.resource]!;
+    if (key.kind !== declared.keyKind)
+      throw new ProductInvalidRequest(`${plan.resource} keys are ${declared.keyKind}`);
+    const value = this.#registry.core.parseKey(key.kind, key.value).value;
+    const parameters = [...bound.parameters, value];
+    const rows = await tx.manager.query<Row[]>(
+      `SELECT ${this.#projection(binding)} FROM ${quoteIdentifier(binding.table)} r WHERE ${bound.sql}` +
+        ` AND r.${quoteIdentifier(binding.keyColumn)} = CAST($${parameters.length} AS ${keyPgTypes[key.kind]}) LIMIT 1`,
+      parameters,
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * QueryBuilder over an authorized derived table exposing only `key` and projected fields.
+   * Handler `.where()`/`.orWhere()` act on that table, so they cannot remove the predicate.
+   */
+  queryBuilder(
+    plan: UserAuthorizedPlan,
+    tx: ProductTransaction,
+    alias: string,
+  ): SelectQueryBuilder<ObjectLiteral> {
+    this.#checkTransaction(plan, tx);
+    return tx.manager.createQueryBuilder().from(this.subQuery(plan), alias);
+  }
+
+  /** Authorized derived table for joins: nested resources only through their own plan. */
+  subQuery(
+    plan: UserAuthorizedPlan,
+  ): (qb: SelectQueryBuilder<ObjectLiteral>) => SelectQueryBuilder<ObjectLiteral> {
+    const binding = this.#registry.resource(plan.resource);
+    const named = compileNamed(plan, this.#registry, 'r');
+    return (qb) =>
+      qb
+        .select(this.#projection(binding))
+        .from(binding.table, 'r')
+        .where(named.sql, named.parameters);
+  }
+
+  #checkTransaction(plan: UserAuthorizedPlan, tx: ProductTransaction): void {
+    if (plan.revision !== tx.revision)
+      throw new Error('Plan revision does not match the fenced transaction');
+  }
+
+  #prepare(plan: UserAuthorizedPlan, filter: unknown, tx: ProductTransaction) {
+    this.#checkTransaction(plan, tx);
+    const binding = this.#registry.resource(plan.resource);
+    const bound = compilePlan(plan, this.#registry);
+    if (filter === undefined) return { binding, bound, where: '' };
+    const parameters = [...bound.parameters];
+    const sql = compileExpression(
+      this.#filter(binding, plan.resource, filter),
+      this.#registry,
+      { kind: 'resource', alias: 'r', binding },
+      (value, pgType) => {
+        parameters.push(value);
+        return `CAST($${parameters.length} AS ${pgType})`;
+      },
+      () => {
+        throw new ProductInvalidRequest('Filters cannot traverse relations');
+      },
+    );
+    // Parenthesized and ANDed: an OR inside the filter cannot escape the authorization predicate.
+    return { binding, bound: { sql: bound.sql, parameters }, where: ` AND (${sql})` };
+  }
+
+  #filter(binding: ProductResourceBinding, resource: string, input: unknown): PlanExpr {
+    const fields = this.#registry.declarations.resources[resource]!.fields;
+    let nodes = 0;
+
+    const visit = (node: unknown): PlanExpr => {
+      if (++nodes > limits.maxFilterNodes) throw new ProductInvalidRequest('Filter is too large');
+      if (!isRecord(node)) throw new ProductInvalidRequest('Filter node must be an object');
+      if (
+        (node.op === 'and' || node.op === 'or') &&
+        Array.isArray(node.args) &&
+        node.args.length > 0
+      ) {
+        return { op: node.op, args: node.args.map(visit) };
+      }
+      const field =
+        typeof node.field === 'string' && binding.projection.includes(node.field)
+          ? fields[node.field]
+          : undefined;
+      if (!field)
+        throw new ProductInvalidRequest(`Filter field ${String(node.field)} is not readable`);
+      if (node.op === 'isNull') return { op: 'isNull', field: node.field as string };
+      if (
+        node.op === 'eq' ||
+        ((node.op === 'lt' || node.op === 'lte') && orderedKinds.includes(field.kind))
+      ) {
+        const value = this.#registry.core.normalizeValue(field.kind, node.value);
+        if (value === undefined)
+          throw new ProductInvalidRequest(
+            `Filter value for ${String(node.field)} must be a ${field.kind}`,
+          );
+        return { op: node.op, field: node.field as string, kind: field.kind, value };
+      }
+      throw new ProductInvalidRequest(`Unsupported filter operator ${JSON.stringify(node.op)}`);
+    };
+
+    return visit(input);
+  }
+
+  #projectedColumn(binding: ProductResourceBinding, field: string): string {
+    if (!binding.projection.includes(field))
+      throw new ProductInvalidRequest(`Field ${field} is not readable`);
+    return `r.${quoteIdentifier(binding.columns[field]!)}`;
+  }
+
+  /** key + allowlisted fields; integers and timestamps as canonical text (no JS number, no Date). */
+  #projection(binding: ProductResourceBinding): string {
+    const declared = this.#registry.declarations.resources[binding.resource]!;
+    const keyColumn = `r.${quoteIdentifier(binding.keyColumn)}`;
+    const key = declared.keyKind === 'integer' ? `CAST(${keyColumn} AS text)` : keyColumn;
+    const fields = binding.projection.map((field) => {
+      const column = this.#projectedColumn(binding, field);
+      const kind = declared.fields[field]!.kind;
+      const expression =
+        kind === 'integer' || kind === 'decimal'
+          ? `CAST(${column} AS text)`
+          : kind === 'timestamp'
+            ? `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+            : column;
+      return `${expression} AS "${field}"`;
+    });
+    return [`${key} AS "key"`, ...fields].join(', ');
+  }
+}

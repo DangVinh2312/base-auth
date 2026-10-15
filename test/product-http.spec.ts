@@ -7,10 +7,10 @@ import {
   enforceCsrf,
   cookieName,
   sessionSecret,
-} from '../apps/api/dist/infrastructure/http-security.js';
+} from '../apps/api/dist/infrastructure/http-security.helper.js';
 import { ProductErrorFilter } from '../apps/api/dist/infrastructure/product-error.filter.js';
-import { AuthController } from '../apps/api/dist/auth/auth.controller.js';
-import { ProductMetrics } from '../apps/api/dist/health/product-metrics.js';
+import { AuthController } from '../apps/api/dist/auth/controllers/auth.controller.js';
+import { ProductMetrics } from '../apps/api/dist/health/product-metrics.service.js';
 
 const env = {
   NODE_ENV: 'test',

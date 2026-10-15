@@ -20,11 +20,11 @@ import {
   productMigrations,
   provisionProductDatabase,
 } from '@base-authorization/typeorm-postgres/operations';
-import { ProductIamRoot1792108800012 } from '../packages/typeorm-postgres/dist/migrations/product/012-iam-root.js';
+import { ProductIamRoot1792108800012 } from '../packages/typeorm-postgres/dist/migrations/product/012-iam-root.migration.js';
 import {
   createProductAuthorizationCore,
   createProductRelease,
-} from '../apps/api/dist/authorization/product-manifest.js';
+} from '../apps/api/dist/authorization/product.manifest.js';
 import * as one from './fixtures/release-one/product-manifest.ts';
 import { prepareReleaseOne, releaseOneSource } from './fixtures/release-one/release.ts';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';

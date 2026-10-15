@@ -113,12 +113,15 @@ test('API runtime and offline CLI take their codecs from one composition', () =>
   const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
   // The only place that picks value codecs for the product; both entry points call it.
-  const manifest = read('../apps/api/src/authorization/product-manifest.ts');
+  const manifest = read('../apps/api/src/authorization/product.manifest.ts');
   assert.match(
     manifest,
     /createStandardValueCodecs\(\{ timestamp: createDayjsTimestampCodec\(\) \}\)/,
   );
-  for (const path of ['../apps/api/src/infrastructure/product-runtime.ts', '../tools/product.ts']) {
+  for (const path of [
+    '../apps/api/src/infrastructure/product-runtime.service.ts',
+    '../tools/product.ts',
+  ]) {
     const source = read(path);
     assert.match(source, /createProductAuthorizationCore\(\)/, path);
     assert.doesNotMatch(source, /createAuthorizationCore\(|createStandardValueCodecs\(/, path);

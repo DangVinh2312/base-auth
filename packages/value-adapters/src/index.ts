@@ -1,3 +1,3 @@
-export { createDayjsTimestampCodec } from './dayjs-timestamp.js';
+export { createDayjsTimestampCodec } from './codecs/dayjs-timestamp.codec.js';
 
-export { createStandardValueCodecs } from './standard-values.js';
+export { createStandardValueCodecs } from './codecs/standard-values.codec.js';

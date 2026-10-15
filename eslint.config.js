@@ -77,8 +77,8 @@ export default tseslint.config(
   {
     // Developer boundary for HTTP handlers (not process isolation): handlers see facade tokens and
     // adapter root contracts only. Composition lives in infrastructure/, offline work in tools/.
-    files: ['apps/api/src/{auth,documents,administration,health,openapi}/**/*.ts'],
-    ignores: ['apps/api/src/documents/migrations/**'],
+    files: ['apps/api/src/{auth,document,administration,health,openapi}/**/*.ts'],
+    ignores: ['apps/api/src/document/migrations/**'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -112,7 +112,10 @@ export default tseslint.config(
     // planUnrestricted is the Root branch of ProductAuthorization.access only (ADR 0012); core
     // unit tests exercise it directly. Developer boundary, not process isolation.
     files: ['**/*.ts'],
-    ignores: ['packages/typeorm-postgres/src/product-authority.ts', 'packages/core/test/**'],
+    ignores: [
+      'packages/typeorm-postgres/src/services/product-authority.service.ts',
+      'packages/core/test/**',
+    ],
     rules: {
       'no-restricted-syntax': [
         'error',

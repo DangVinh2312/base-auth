@@ -10,8 +10,8 @@ import {
   ProductTransactionRunner,
   verifyProductPrivileges,
 } from '@base-authorization/typeorm-postgres/composition';
-import { ProductInitial1792108800000 } from '../packages/typeorm-postgres/dist/migrations/product/001-initial.js';
-import { tokenConsumptionBody } from '../packages/typeorm-postgres/dist/migrations/product/008-system-activation.js';
+import { ProductInitial1792108800000 } from '../packages/typeorm-postgres/dist/migrations/product/001-initial.migration.js';
+import { tokenConsumptionBody } from '../packages/typeorm-postgres/dist/migrations/product/008-system-activation.migration.js';
 import {
   guardRootActivationBody,
   guardRootKindBody,
@@ -19,7 +19,7 @@ import {
   guardRootNotIamSubjectBody,
   productRowsIamBody,
   requireRootMarkerKindBody,
-} from '../packages/typeorm-postgres/dist/migrations/product/012-iam-root.js';
+} from '../packages/typeorm-postgres/dist/migrations/product/012-iam-root.migration.js';
 import { startPostgres, withClient, sqlState, type TestPostgres } from './setup-postgres.ts';
 
 let fixture: TestPostgres;

@@ -71,7 +71,7 @@ test('offline CLI provisions, forward migrates, syncs and bootstraps once withou
   assert.match(noRetention.stderr, /Product operation failed \(Error\)/);
   // The CLI publishes exactly the release the API runtime prepares (one codec composition).
   const { createProductAuthorizationCore, createProductRelease } =
-    await import('../apps/api/dist/authorization/product-manifest.js');
+    await import('../apps/api/dist/authorization/product.manifest.js');
   await withClient({ ...c, database: 'cli_fixture' }, async (client) => {
     const state = await client.query<{ hash: string }>(
       "SELECT encode(manifest_hash,'hex') hash FROM authz_state WHERE singleton",

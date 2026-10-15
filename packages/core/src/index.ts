@@ -12,19 +12,19 @@ export type {
   SystemDeclarations,
   ValidatedDeclarations,
   ValidationResult,
-} from './declarations.js';
+} from './authorization.declarations.js';
 
-export { refKey } from './declarations.js';
+export { refKey } from './authorization.declarations.js';
 
-export { IDENTITY_FIELDS, MAX_PATH_DEPTH } from './expression.js';
+export { IDENTITY_FIELDS, MAX_PATH_DEPTH } from './expression.helper.js';
 
-export { compareText, keyEquals, keyToString, MAX_KEY_BYTES, utf8ByteLength } from './key-codec.js';
+export { compareText, keyEquals, keyToString, MAX_KEY_BYTES, utf8ByteLength } from './key.codec.js';
 
-export type { Comparison, ScalarCodec, ValueCodecs } from './ports/value-codecs.js';
+export type { Comparison, ScalarCodec, ValueCodecs } from './ports/value-codecs.port.js';
 
-export { canonicalJson } from './policy-validator.js';
+export { canonicalJson } from './policy.validator.js';
 
-export { type AuthorizationCore, createAuthorizationCore } from './runtime.js';
+export { type AuthorizationCore, createAuthorizationCore } from './authorization.factory.js';
 
 export {
   type AuthoritySnapshot,
@@ -62,4 +62,4 @@ export {
   type UserExceptionFact,
   type UserCompleteFacts,
   type ValueRef,
-} from './types.js';
+} from './authorization.types.js';

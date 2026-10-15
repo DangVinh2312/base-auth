@@ -20,7 +20,7 @@ import {
   revokeProductRoot,
 } from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, type TestPostgres } from './setup-postgres.ts';
-import { productDeclarations } from '../apps/api/dist/authorization/product-manifest.js';
+import { productDeclarations } from '../apps/api/dist/authorization/product.manifest.js';
 import { core } from '../packages/core/test/fixtures.ts';
 
 let pg: TestPostgres;

@@ -42,7 +42,7 @@ test('stable dotted system role keys are valid manifest roles without wildcard p
 
 test('product release v2: roles are key and label, system.* is reserved, no system grant fields', async () => {
   const { productReleaseSource } =
-    await import('../apps/api/dist/authorization/product-manifest.js');
+    await import('../apps/api/dist/authorization/product.manifest.js');
   const prepared = prepareProductRelease(productReleaseSource, core);
   assert.deepEqual(prepared.roles, [{ key: 'reviewer', label: 'Reviewer' }]);
   for (const field of ['systemGrants', 'removeSystemGrants'])
@@ -64,7 +64,7 @@ test('product release v2: roles are key and label, system.* is reserved, no syst
 
 test('product manifest hash is unchanged by the codec refactor (data only, no adapter in hash)', async () => {
   const { createProductAuthorizationCore, createProductRelease } =
-    await import('../apps/api/dist/authorization/product-manifest.js');
+    await import('../apps/api/dist/authorization/product.manifest.js');
   // Release 2 (ADR 0012): product roles are key + label, no system grant fields.
   const expected = 'e11f43e8199bf70fd4a2c8e552477b682222402510fd3d0cc35b98256f15afaa';
   const first = createProductRelease(createProductAuthorizationCore());
@@ -79,7 +79,7 @@ test('product manifest hash is unchanged by the codec refactor (data only, no ad
 
 test('releases and declarations are only accepted by the core that prepared them', async () => {
   const { createProductAuthorizationCore, createProductRelease, productBindings } =
-    await import('../apps/api/dist/authorization/product-manifest.js');
+    await import('../apps/api/dist/authorization/product.manifest.js');
   const other = createProductAuthorizationCore();
   const release = createProductRelease(core);
   const runner = {} as ProductTransactionRunner; // never reached: provenance is checked first

@@ -3,11 +3,11 @@ import { APP_FILTER } from '@nestjs/core';
 import { ProductAuthorizationModule } from '@base-authorization/nest';
 import { AdministrationModule } from './administration/administration.module.js';
 import { AuthModule } from './auth/auth.module.js';
-import { DocumentsModule } from './documents/documents.module.js';
+import { DocumentModule } from './document/document.module.js';
 import { HealthModule } from './health/health.module.js';
-import { sessionSecret, type HttpRequest } from './infrastructure/http-security.js';
+import { sessionSecret, type HttpRequest } from './infrastructure/http-security.helper.js';
 import { ProductErrorFilter } from './infrastructure/product-error.filter.js';
-import type { ProductRuntime } from './infrastructure/product-runtime.js';
+import type { ProductRuntime } from './infrastructure/product-runtime.service.js';
 import { RuntimeModule } from './infrastructure/runtime.module.js';
 import { OpenApiController } from './openapi/openapi.controller.js';
 
@@ -29,7 +29,7 @@ export class AppModule {
           },
         }),
         // Each feature module sees only the facade tokens RuntimeModule exports.
-        ...[HealthModule, AuthModule, DocumentsModule, AdministrationModule].map((module) => ({
+        ...[HealthModule, AuthModule, DocumentModule, AdministrationModule].map((module) => ({
           module,
           imports: [runtimeModule],
         })),

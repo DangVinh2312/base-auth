@@ -24,7 +24,7 @@ Mục này mô tả cách ghép và mở rộng sau Foundation Hardening, API St
 ## Package dependency graph
 
 ```text
-apps/api (composition root: infrastructure/, auth/, documents/, administration/, health/, openapi/, authorization/)
+apps/api (composition root: infrastructure/, auth/, document/, administration/, health/, openapi/, authorization/)
 tools/product.ts (CLI offline)
   ├── core: createAuthorizationCore + types/ports (ValueCodecs, ScalarCodec)
   ├── value-adapters: Day.js timestamp + int64/decimal/uuid/string/boolean codecs
@@ -33,10 +33,10 @@ tools/product.ts (CLI offline)
 
 value-adapters ──type imports──> core
 core ──X──> Day.js / Moment / NestJS / TypeORM / pg / value-adapters
-feature handlers (auth/documents/administration/health/openapi) ──> chỉ facade token + Nest decorators
+feature handlers (auth/document/administration/health/openapi) ──> chỉ facade token + Nest decorators
 ```
 
-Core không có production dependency và không có default engine. Mã chọn adapter nằm ở một nơi: `createProductAuthorizationCore()` trong `apps/api/src/authorization/product-manifest.ts`; `infrastructure/product-runtime.ts` và `tools/product.ts` cùng gọi nó (`tools/provision.ts` legacy tự ghép lõi chuẩn để kiểm tenant id).
+Core không có production dependency và không có default engine. Mã chọn adapter nằm ở một nơi: `createProductAuthorizationCore()` trong `apps/api/src/authorization/product.manifest.ts`; `infrastructure/product-runtime.service.ts` và `tools/product.ts` cùng gọi nó (`tools/provision.ts` legacy tự ghép lõi chuẩn để kiểm tenant id).
 
 ## Composition copy/paste (Day.js adapter)
 
@@ -58,7 +58,7 @@ Yêu cầu của package dùng đoạn trên: dependency trực tiếp `@base-au
 
 ## Viết adapter thay thế và chạy conformance
 
-1. Implement `ScalarCodec<string>` (`packages/core/src/ports/value-codecs.ts`): `normalize(input: unknown): string | undefined` và `compare(left, right): -1 | 0 | 1`. Contract timestamp: chỉ UTC `YYYY-MM-DDTHH:mm:ss[.f{1..6}]Z`, năm `0001..9999`, output luôn sáu chữ số lẻ, giữ microsecond, từ chối ngày không tồn tại/giờ 24/giây 60/offset/thiếu Z/hơn 6 chữ số lẻ; không truncate/round, không `now()`, không clock hay timezone máy. Adapter chỉ đổi cách parse; nó không được tạo thêm kind hay SQL type.
+1. Implement `ScalarCodec<string>` (`packages/core/src/ports/value-codecs.port.ts`): `normalize(input: unknown): string | undefined` và `compare(left, right): -1 | 0 | 1`. Contract timestamp: chỉ UTC `YYYY-MM-DDTHH:mm:ss[.f{1..6}]Z`, năm `0001..9999`, output luôn sáu chữ số lẻ, giữ microsecond, từ chối ngày không tồn tại/giờ 24/giây 60/offset/thiếu Z/hơn 6 chữ số lẻ; không truncate/round, không `now()`, không clock hay timezone máy. Adapter chỉ đổi cách parse; nó không được tạo thêm kind hay SQL type.
 2. Conformance hiện **chưa là export dùng lại**: các case nằm trong `packages/value-adapters/test/value-codecs.spec.ts` (`timestampCases`, `timestampConformance(label, make)`). Với adapter thứ hai phải copy hoặc promote các case đó (ví dụ sang file test-helper không phải spec) rồi gọi `timestampConformance('moment', createMomentTimestampCodec)`. Test hiện kèm negative control: codec `Date.parse` lỏng phải fail các case 30/2, giờ 24, offset, thiếu Z, 7 chữ số lẻ, microsecond và năm 0001.
 3. Chạy: `pnpm run test:unit -- packages/value-adapters/test/value-codecs.spec.ts`, sau đó `pnpm run test:integration -- test/product-values.integration-spec.ts` (PostgreSQL thật: so SQL với `evaluateUser`, `.123456` không mất ba chữ số cuối, input sai bị từ chối trước SQL) và `pnpm run typecheck`.
 4. Đổi composition root ở `createProductAuthorizationCore()`; không sửa planner/compiler. Manifest hash không đổi khi đổi adapter (adapter không vào canonical JSON); `test/system-release.spec.ts` ghim hash.
@@ -66,13 +66,13 @@ Yêu cầu của package dùng đoạn trên: dependency trực tiếp `@base-au
 
 ## Walkthrough: thêm một resource
 
-Ví dụ theo `document` (xem `apps/api/src/documents/`). Thay `invoice` cho tên mới; không thêm field làm đổi authority (owner/team/rank/boundary/grant) vào writable field.
+Ví dụ theo `document` (xem `apps/api/src/document/`). Thay `invoice` cho tên mới; không thêm field làm đổi authority (owner/team/rank/boundary/grant) vào writable field.
 
 1. **Declaration fragment** `apps/api/src/<feature>/<resource>.declarations.ts`: `resources` (key, `keyKind`, `fields`, `actions` mỗi action có `policy` + `boundary`), `policies` (có `contextRequirements`, `requiredScope`, `obligations` như `audit@1`), `templates`, default grants (`ProductReleaseSource['defaultGrants']`) và `ProductStorageBindings['resources'][number]` (binding bên dưới). Chỉ dữ liệu; không tự prepare release.
 2. **Migration/privileges**: class migration trong `apps/api/src/<feature>/migrations/` (tên và timestamp không đổi sau khi áp dụng, số tiếp theo thực tế). Bảng cần `object_id uuid NOT NULL UNIQUE REFERENCES object_ref(object_id)`, owner/FK/CHECK, index theo khóa lọc, `GRANT` đúng cột cho `product_data` (SELECT và UPDATE theo cột nếu có action ghi) và `SELECT` cho `product_authority` nếu rule/relation dùng. Đăng ký class vào `migrate` trong `tools/product.ts` (cùng chỗ `ProductDocument1792108800002`). Runtime so khớp ACL chính xác: thêm các grant mong đợi vào `verifyProductPrivileges` trong `ProductRuntime.onApplicationBootstrap` (`table:<t>:SELECT`, `column:<t>.<c>:UPDATE`), nếu không boot sẽ fail vì grant dư. Thêm kiểm bảng tồn tại (`SELECT ... LIMIT 0`) trước `markReady`.
 3. **Binding**: `ProductStorageBindings.resources` (table, `objectIdColumn`, `keyColumn`, `columns`, `projection`) và, nếu cần, mutable field trong danh sách `ProductAuthorization` writable (`{resource, action, fields}`) ở runtime. Identifier chỉ lấy từ binding đã đăng ký; giá trị luôn bind.
 4. **Route + classification**: facade port nhỏ `<feature>.http-port.ts` (operation đã bind resource/action, không để body chọn permission), controller với `@ProductAuthorize('<resource>', '<action>')` hoặc classification khác, DTO validate, success shape và status thực tế; facade được dựng trong `infrastructure/runtime.module.ts` bằng method bound của service. Controller chỉ import facade token/types (ESLint chặn typeorm/composition/runtime). Thiếu classification thì boot fail trước runtime bootstrap.
-5. **Release/manifest**: thêm fragment vào `fragments` và `productReleaseSource` ở `authorization/product-manifest.ts`; bump sequence/predecessor/hash đúng quy tắc release (không sửa manifest đã áp dụng); `pnpm run manifest:sync`.
+5. **Release/manifest**: thêm fragment vào `fragments` và `productReleaseSource` ở `authorization/product.manifest.ts`; bump sequence/predecessor/hash đúng quy tắc release (không sửa manifest đã áp dụng); `pnpm run manifest:sync`.
 6. **Tests**: core (planner/evaluator + boundary/deny), PostgreSQL parity gateway (`test/*.integration-spec.ts`: list/detail/count/update dùng cùng AST, hidden và absent cùng 404), inventory route/OpenAPI trong `apps/api/test/structure.spec.ts`, ACL/probe trong `test/product-database.integration-spec.ts`, E2E nếu thay HTTP surface. Kiểm đủ boundary và deny ngoài mọi allow.
 
 ## Public API migration map
@@ -90,7 +90,7 @@ Ví dụ theo `document` (xem `apps/api/src/documents/`). Thay `invoice` cho tê
 | `ProductAuthorization(runner, bindings, validators, writable)`              | tham số thứ ba là `{ validators, obligations }` (typed registry, `productObligations` có `audit@1`)  |
 | `ProductIdentityService.audit(tx, userId, 'string')`                        | kind typed `ProductIdentityAuditKind`; writer chung `appendProductAudit` (`./operations`)            |
 | `@base-authorization/typeorm-postgres` root (runner, gateway, provision...) | root: errors/types/helpers an toàn; `./composition` (constructors); `./operations` (CLI); `./legacy` |
-| `apps/api/src/{product.controller, http-services, product-runtime,...}.ts`  | `auth/`, `documents/`, `administration/`, `health/`, `openapi/`, `infrastructure/`, `authorization/` |
+| `apps/api/src/{product.controller, http-services, product-runtime,...}.ts`  | `auth/`, `document/`, `administration/`, `health/`, `openapi/`, `infrastructure/`, `authorization/`  |
 | `apps/api/src/audit/audit-outbox.service.ts`                                | `apps/api/src/legacy/audit-outbox.service.ts` (không wire vào product runtime)                       |
 | `import ... from '@base-authorization/typeorm-postgres/dist/...'`           | không còn resolve (`ERR_PACKAGE_PATH_NOT_EXPORTED`); dùng entrypoint chính thức                      |
 

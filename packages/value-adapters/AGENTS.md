@@ -1,6 +1,6 @@
 # @base-authorization/value-adapters
 
-Implementation của codec giá trị (`ValueCodecs`, `ScalarCodec`) mà core khai báo ở `packages/core/src/ports/value-codecs.ts`. Đọc root `AGENTS.md` và `packages/core/AGENTS.md` trước; file này chỉ bổ sung phần riêng của package. Quyết định: `docs/decisions/0009-value-adapters-api-structure-and-audit-semantics.md`.
+Implementation của codec giá trị (`ValueCodecs`, `ScalarCodec`) mà core khai báo ở `packages/core/src/ports/value-codecs.port.ts`. Đọc root `AGENTS.md` và `packages/core/AGENTS.md` trước; file này chỉ bổ sung phần riêng của package. Quyết định: `docs/decisions/0009-value-adapters-api-structure-and-audit-semantics.md`.
 
 ## Ranh giới
 
@@ -12,10 +12,10 @@ Implementation của codec giá trị (`ValueCodecs`, `ScalarCodec`) mà core kh
 
 ## Bản đồ file
 
-| File                 | Trách nhiệm                                                                                         |
-| -------------------- | --------------------------------------------------------------------------------------------------- |
-| `dayjs-timestamp.ts` | Timestamp UTC strict (`YYYY-MM-DDTHH:mm:ss[.f{1..6}]Z`, năm 0001..9999); microsecond giữ dạng chuỗi |
-| `standard-values.ts` | int64, decimal, uuid, string, boolean + `createStandardValueCodecs` (đóng băng)                     |
+| File                              | Trách nhiệm                                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `codecs/dayjs-timestamp.codec.ts` | Timestamp UTC strict (`YYYY-MM-DDTHH:mm:ss[.f{1..6}]Z`, năm 0001..9999); microsecond giữ dạng chuỗi |
+| `codecs/standard-values.codec.ts` | int64, decimal, uuid, string, boolean + `createStandardValueCodecs` (đóng băng)                     |
 
 ## Test
 

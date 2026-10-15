@@ -10,9 +10,9 @@ Adapter NestJS: decorators, guard, route manifest, request context, readiness, b
 
 ## Hiện trạng
 
-- `src/readiness.ts`: `ReadinessGate`, mặc định chưa ready → `/health/ready` 503.
-- `src/bootstrap-coordinator.ts`: `BootstrapModule`/`BootstrapCoordinator` chạy manifest sync qua `ManifestSyncPort` (token `MANIFEST_SYNC` không export ra module ngoài) trong `onApplicationBootstrap`, trước `listen()`; tenant lỗi giữ not ready. Chưa ghép vào `apps/api`.
-- `src/product-authorization.ts`: `ProductAuthorizationModule.register({ declarations, requestAuth })` cài global guard và kiểm kê HTTP controller routes trong `onModuleInit` (xong trước mọi `onApplicationBootstrap`, kể cả hook của module sâu hơn như runtime sync/readiness). Mỗi handler (kể cả kế thừa) cần đúng một `@ProductPublic()`, `@ProductAuthenticated()` hoặc `@ProductAuthorize(resource, action)`; thiếu/mơ hồ hoặc permission chưa khai báo làm boot throw trước `listen()`.
+- `src/services/readiness.service.ts`: `ReadinessGate`, mặc định chưa ready → `/health/ready` 503.
+- `src/services/bootstrap-coordinator.service.ts`: `BootstrapModule`/`BootstrapCoordinator` chạy manifest sync qua `ManifestSyncPort` (token `MANIFEST_SYNC` không export ra module ngoài) trong `onApplicationBootstrap`, trước `listen()`; tenant lỗi giữ not ready. Chưa ghép vào `apps/api`.
+- `src/product-authorization.module.ts`: `ProductAuthorizationModule.register({ declarations, requestAuth })` cài global guard và kiểm kê HTTP controller routes trong `onModuleInit` (xong trước mọi `onApplicationBootstrap`, kể cả hook của module sâu hơn như runtime sync/readiness). Mỗi handler (kể cả kế thừa) cần đúng một `@ProductPublic()`, `@ProductAuthenticated()` hoặc `@ProductAuthorize(resource, action)`; thiếu/mơ hồ hoặc permission chưa khai báo làm boot throw trước `listen()`.
 - `ProductRequestAuth.authenticate(request)` chỉ kiểm session sớm. `ProductAuthorize` không thay gateway enforcement: service dữ liệu bắt buộc kiểm lại session/authority và cùng AST trong transaction giữ application fence. Guard không giữ transaction qua response.
 - Chỉ hỗ trợ HTTP Nest controller routes; không dùng raw adapter/router/middleware để phục vụ nghiệp vụ. Context khác HTTP bị guard deny. Legacy `BootstrapModule` không tự được chuyển sang product module.
 

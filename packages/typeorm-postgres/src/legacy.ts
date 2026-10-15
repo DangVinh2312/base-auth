@@ -4,7 +4,7 @@ export {
   identityDataSourceOptions,
   tenantDataSourceOptions,
   type PostgresConnectionSettings,
-} from './data-source-options.js';
+} from './helpers/data-source-options.helper.js';
 
 export {
   type ConnectionPurpose,
@@ -18,24 +18,24 @@ export {
   type TenantRoute,
   TenantRoutingError,
   TenantUnavailableError,
-} from './datasource-registry.js';
+} from './datasource.registry.js';
 
-export { runMigrations } from './migrations.js';
+export { runMigrations } from './helpers/migrations.helper.js';
 
 export {
   type MigrationResult,
   type ProvisionTenantInput,
   TenantProvisioner,
-} from './tenant-provisioner.js';
+} from './services/tenant-provisioner.service.js';
 
 export {
   type AuthorityFacts,
   type BoundaryBindingChange,
   readAuthorityFacts,
   writeBoundaryBinding,
-} from './authority-store.js';
+} from './repositories/authority-store.repository.js';
 
-export { DataGateway, type ListQuery, type Page, type Row } from './data-gateway.js';
+export { DataGateway, type ListQuery, type Page, type Row } from './gateways/data.gateway.js';
 
 export {
   BindingRegistry,
@@ -45,9 +45,9 @@ export {
   type DomainRelationBinding,
   type ResourceBinding,
   type StorageBindings,
-} from './sql-compiler.js';
+} from './compilers/sql.compiler.js';
 
-export { fulfillObligations, type ObligationHandler } from './obligations.js';
+export { fulfillObligations, type ObligationHandler } from './helpers/obligations.helper.js';
 
 export {
   type AuthorityRegistry,
@@ -59,7 +59,7 @@ export {
   TransactionConflictError,
   type TransactionMode,
   type TransactionOptions,
-} from './tenant-transaction.js';
+} from './runners/tenant-transaction.runner.js';
 
 export {
   type BoundaryBindingRemoval,
@@ -76,4 +76,4 @@ export {
   type SeedRemoval,
   type SyncResult,
   type VerifiedReleaseManifest,
-} from './manifest-reconciler.js';
+} from './services/manifest-reconciler.service.js';

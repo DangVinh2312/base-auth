@@ -20,12 +20,12 @@ import {
 } from '@base-authorization/typeorm-postgres/composition';
 import { AppModule } from '../dist/app.module.js';
 import { loadConfig } from '../dist/config/app.config.js';
-import { ProductRuntime } from '../dist/infrastructure/product-runtime.js';
+import { ProductRuntime } from '../dist/infrastructure/product-runtime.service.js';
 import {
   createProductAuthorizationCore,
   createProductRelease,
   productBindings,
-} from '../dist/authorization/product-manifest.js';
+} from '../dist/authorization/product.manifest.js';
 
 const purposes = ['data', 'identity', 'authority', 'sync'] as const;
 const config = loadConfig({
@@ -382,7 +382,7 @@ test('no module that declares controllers can resolve the raw runtime', async ()
     'AdministrationModule',
     'AppModule',
     'AuthModule',
-    'DocumentsModule',
+    'DocumentModule',
     'HealthModule',
   ]);
   for (const target of targets) {

@@ -25,7 +25,7 @@ import {
   productDataSourceOptions,
   provisionProductDatabase,
 } from '@base-authorization/typeorm-postgres/operations';
-import { createProductAuthorizationCore } from '../apps/api/dist/authorization/product-manifest.js';
+import { createProductAuthorizationCore } from '../apps/api/dist/authorization/product.manifest.js';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 // The codec composition the API runtime and the CLI use.

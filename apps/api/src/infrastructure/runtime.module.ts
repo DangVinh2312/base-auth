@@ -5,9 +5,9 @@ import {
   type AdministrationHttpPort,
 } from '../administration/administration.http-port.js';
 import { AUTH_HTTP_PORT, type AuthHttpPort } from '../auth/auth.http-port.js';
-import { DOCUMENTS_HTTP_PORT, type DocumentsHttpPort } from '../documents/documents.http-port.js';
-import { METRICS_SNAPSHOT, type MetricsSnapshot } from '../health/product-metrics.js';
-import { ProductRuntime } from './product-runtime.js';
+import { DOCUMENT_HTTP_PORT, type DocumentHttpPort } from '../document/document.http-port.js';
+import { METRICS_SNAPSHOT, type MetricsSnapshot } from '../health/product-metrics.service.js';
+import { ProductRuntime } from './product-runtime.service.js';
 
 /**
  * Owns the runtime (pools, release, transaction runner) as a private provider so Nest runs its
@@ -62,9 +62,9 @@ export class RuntimeModule {
           }),
         },
         {
-          provide: DOCUMENTS_HTTP_PORT,
+          provide: DOCUMENT_HTTP_PORT,
 
-          useFactory: (): DocumentsHttpPort => ({
+          useFactory: (): DocumentHttpPort => ({
             config,
 
             list: (secret) => authorization.list(secret, 'document', 'read'),
@@ -88,7 +88,7 @@ export class RuntimeModule {
         ReadinessGate,
         METRICS_SNAPSHOT,
         AUTH_HTTP_PORT,
-        DOCUMENTS_HTTP_PORT,
+        DOCUMENT_HTTP_PORT,
         ADMINISTRATION_HTTP_PORT,
       ],
     };

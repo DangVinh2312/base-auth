@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { ConfigError, loadConfig } from './config/app.config.js';
-import { ProductRuntime } from './infrastructure/product-runtime.js';
+import { ProductRuntime } from './infrastructure/product-runtime.service.js';
 
 let runtime: ProductRuntime | undefined;
 try {

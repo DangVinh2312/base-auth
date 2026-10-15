@@ -23,7 +23,7 @@ import {
   createProductAuthorizationCore,
   productDeclarations,
   productReleaseSource,
-} from '../apps/api/dist/authorization/product-manifest.js';
+} from '../apps/api/dist/authorization/product.manifest.js';
 import { sqlState, startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 const core = createProductAuthorizationCore();

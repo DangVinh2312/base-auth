@@ -21,12 +21,12 @@ import { NestFactory } from '@nestjs/core';
 import { startPostgres } from '../../../test/setup-postgres.ts';
 import { AppModule } from '../dist/app.module.js';
 import { loadConfig } from '../dist/config/app.config.js';
-import { ProductRuntime } from '../dist/infrastructure/product-runtime.js';
-import { ProductDocument1792108800002 } from '../dist/documents/migrations/product-document.js';
+import { ProductRuntime } from '../dist/infrastructure/product-runtime.service.js';
+import { ProductDocument1792108800002 } from '../dist/document/migrations/product-document.migration.js';
 import {
   createProductAuthorizationCore,
   createProductRelease,
-} from '../dist/authorization/product-manifest.js';
+} from '../dist/authorization/product.manifest.js';
 
 const core = createProductAuthorizationCore();
 const productRelease = createProductRelease(core);
