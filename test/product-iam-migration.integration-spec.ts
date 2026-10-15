@@ -3,7 +3,10 @@ import { after, before, test } from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import type { IdentityId } from '@base-authorization/core';
-import type { ProductDatabasePurpose } from '@base-authorization/typeorm-postgres';
+import {
+  ProductAuthenticationError,
+  type ProductDatabasePurpose,
+} from '@base-authorization/typeorm-postgres';
 import {
   ProductIdentityService,
   ProductManifestReconciler,
@@ -255,6 +258,78 @@ test('a Root holder keeps state and credential and loses every IAM fact; other h
     );
   } finally {
     await db.close();
+  }
+});
+
+test('a pending or suspended Root holder keeps its state and credential through 012 (spec 4.3)', async () => {
+  const kindAndState = (db: ReleaseOne, id: string) =>
+    db.migration.query('SELECT kind,state FROM app_user WHERE id=$1', [id]);
+  const pendingDb = await releaseOneDatabase('upgrade_holder_pending');
+  try {
+    const target = await pending(pendingDb, 'pending-holder@example.test');
+    const { activationSecret } = await one.bootstrapProductRoot(
+      pendingDb.runner,
+      pendingDb.release,
+      {
+        operationId: randomUUID(),
+        userId: target,
+        method: 'local',
+        boundaries: rootBoundary,
+      },
+    );
+    assert.ok(activationSecret);
+    await pendingDb.upgrade();
+    assert.deepEqual(await kindAndState(pendingDb, target), [{ kind: 'root', state: 'pending' }]);
+    assert.equal((await syncReleaseTwo(pendingDb)).changed, true);
+    // The activation proof issued by release 1 still finishes the pending Root.
+    const identity = new ProductIdentityService(
+      pendingDb.runner,
+      await createProductPasswordHasher(new Set()),
+    );
+    await identity.activate(activationSecret, password, 'pending-holder');
+    assert.ok(
+      (await identity.login('pending-holder@example.test', password, 'pending-holder')).secret,
+    );
+  } finally {
+    await pendingDb.close();
+  }
+  const suspendedDb = await releaseOneDatabase('upgrade_holder_suspended');
+  try {
+    const target = await pending(suspendedDb, 'suspended-holder@example.test');
+    const { activationSecret } = await one.bootstrapProductRoot(
+      suspendedDb.runner,
+      suspendedDb.release,
+      { operationId: randomUUID(), userId: target, method: 'local', boundaries: rootBoundary },
+    );
+    assert.ok(activationSecret);
+    const identity = new ProductIdentityService(
+      suspendedDb.runner,
+      await createProductPasswordHasher(new Set()),
+    );
+    await identity.activate(activationSecret, password, 'suspended-holder');
+    await suspendedDb.runner.run('admin', (tx) =>
+      tx.manager.query(
+        `UPDATE app_user SET state='suspended',auth_epoch=auth_epoch+1 WHERE id=$1`,
+        [target],
+      ),
+    );
+    await suspendedDb.upgrade();
+    assert.deepEqual(await kindAndState(suspendedDb, target), [
+      { kind: 'root', state: 'suspended' },
+    ]);
+    assert.deepEqual(
+      await suspendedDb.migration.query(
+        'SELECT count(*)::int n FROM local_credential WHERE user_id=$1',
+        [target],
+      ),
+      [{ n: 1 }],
+    );
+    await assert.rejects(
+      identity.login('suspended-holder@example.test', password, 'suspended-holder'),
+      ProductAuthenticationError,
+    );
+  } finally {
+    await suspendedDb.close();
   }
 });
 

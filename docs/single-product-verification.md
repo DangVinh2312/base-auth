@@ -53,10 +53,15 @@ Chuỗi đích của cả 10 mutation khớp nguyên văn code tại `72367b6` (
 - Kết quả: DB ở migration `ProductIamRoot1792108800012`; probe cũ ném `Product privilege drift for data: unexpected [], missing [column:app_user.authority_level:SELECT]`. Binary cũ không khởi động trên schema mới (đúng kỳ vọng `Product privilege drift …`). Exit code của hai tiến trình trong pipe không được ghi lại; bằng chứng là thông điệp lỗi ở trên. Không chạy lại vì provision lần nữa sinh password mới không khớp role đã tạo.
 - Đã dọn: `docker stop iam-compat`, `git worktree remove … --force`, xóa hai script.
 
+## Bổ sung sau review: holder pending/suspended (spec 4.3)
+
+- Test `a pending or suspended Root holder keeps its state and credential through 012 (spec 4.3)` trong `test/product-iam-migration.integration-spec.ts`: holder pending giữ `pending` và proof kích hoạt của release 1 vẫn hoàn tất được sau 012; holder suspended giữ `suspended`, giữ `local_credential` và không đăng nhập được.
+- `pnpm run test:integration -- test/product-iam-migration.integration-spec.ts`: exit 0, 8/8. Mutation (012 bước 6 thêm `state='active'` khi đặt `kind='root'`): exit 1, 7/8, chỉ test trên fail (`state: 'active'` thay vì `'pending'`); đã khôi phục (`git diff --exit-code` exit 0).
+- Sau khôi phục: `format:check`, lint, typecheck exit 0; unit 234/234.
+
 ## Gates chưa được chứng nhận (ADR 0012)
 
 - CI GitHub chưa chạy cho branch này; kết quả trên là local.
-- Spec 4.3 yêu cầu holder giữ nguyên `state` pending/active/suspended khi nâng cấp; test hiện chỉ kiểm `active`.
 - Chưa đo timing Root/absent ở suspend; chưa có test khẳng định IAM actor nhận event giống hệt cho target Root và target vắng mặt (lập luận từ code).
 - Reauth OIDC trong suite `product-root` dựng bằng `reauthenticated_at` do DB đặt, không qua IdP thật (spec deviation 8).
 - Repair gỡ suspend Root và nâng cấp production chưa diễn tập; runbook ở `docs/single-product-operations.md` mục 8–9.
