@@ -63,10 +63,14 @@ export function productDataSourceOptions(
     migrations: productMigrations,
   };
 }
-/** Offline provisioning only; this credential must never be wired into the API. */
+/**
+ * Offline provisioning only; this credential must never be wired into the API. `migrations` is
+ * the forward list to run (default: all). Upgrade rehearsals pass a prefix, e.g. up to 011.
+ */
 export async function provisionProductDatabase(
   admin: PostgresConnectionSettings,
   passwords: Readonly<Record<ProductDatabasePurpose, string>>,
+  migrations: readonly (typeof productMigrations)[number][] = productMigrations,
 ): Promise<Record<ProductDatabasePurpose, PostgresConnectionSettings>> {
   const source = await new DataSource(productDataSourceOptions(admin)).initialize();
   const connections = {} as Record<ProductDatabasePurpose, PostgresConnectionSettings>;
@@ -149,9 +153,10 @@ export async function provisionProductDatabase(
     await source.query(
       'GRANT product_fence_owner,product_session_owner TO product_migration WITH ADMIN OPTION',
     );
-    const migration = await new DataSource(
-      productDataSourceOptions(connections.migration),
-    ).initialize();
+    const migration = await new DataSource({
+      ...productDataSourceOptions(connections.migration),
+      migrations: [...migrations],
+    }).initialize();
     try {
       await migration.runMigrations({ transaction: 'each' });
     } finally {
