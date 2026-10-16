@@ -2,24 +2,27 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
-import type { IdentityId } from '@base-authorization/core';
-import { type ProductDatabasePurpose } from '@base-authorization/typeorm-postgres';
+import type { IdentityId } from '../apps/api/dist/authorization/core/authorization.types.js';
 import {
-  ProductTransactionRunner,
-  ProductManifestReconciler,
-  prepareProductRelease,
-  ProductIdentityService,
-  createProductPasswordHasher,
-} from '@base-authorization/typeorm-postgres/composition';
-import {
+  type ProductDatabasePurpose,
   provisionProductDatabase,
   productDataSourceOptions,
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
+import {
+  ProductManifestReconciler,
+  prepareProductRelease,
   bootstrapProductRoot,
   reissueRootActivation,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import {
+  ProductIdentityService,
+  createProductPasswordHasher,
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 import { productDeclarations } from '../apps/api/dist/authorization/product.manifest.js';
-import { core } from '../packages/core/test/fixtures.ts';
+import { core } from './core/fixtures.ts';
 
 let fixture: TestPostgres;
 let fixtureNumber = 0;

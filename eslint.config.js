@@ -5,7 +5,20 @@ import formatConfig from './eslint.format.config.js';
 const driverImports = [
   {
     group: ['typeorm', 'typeorm/*', 'pg', 'pg-*'],
-    message: 'Storage drivers belong to typeorm-postgres.',
+    message: 'Storage drivers belong to services/database, never HTTP handlers or the pure core.',
+  },
+];
+
+const offlineImports = [
+  {
+    group: ['**/product-manifest.service*'],
+    importNames: ['bootstrapProductRoot', 'revokeProductRoot', 'reissueRootActivation'],
+    message: 'Root lifecycle commands are offline tools only.',
+  },
+  {
+    group: ['**/product-database.helper*'],
+    importNames: ['provisionProductDatabase', 'productDataSourceOptions', 'productMigrations'],
+    message: 'Provisioning and migration are offline tools only.',
   },
 ];
 
@@ -32,42 +45,39 @@ export default tseslint.config(
     ...tseslint.configs.disableTypeChecked,
   },
   {
-    files: ['packages/core/src/**/*.ts'],
+    // Offline functions stay in the same app source, but HTTP runtime cannot import them.
+    files: ['apps/api/src/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
-          patterns: [
-            ...driverImports,
-            {
-              group: ['@nestjs/*', 'express', '@base-authorization/*', 'node:*'],
-              message:
-                'Core is pure: no framework, driver, platform I/O or other workspace package.',
-            },
-          ],
+          patterns: offlineImports,
         },
       ],
     },
   },
   {
-    files: ['packages/nest/**/*.ts'],
-    rules: { 'no-restricted-imports': ['error', { patterns: driverImports }] },
-  },
-  {
-    // Infrastructure composes through ./composition only; operations/legacy are offline/legacy.
-    files: ['apps/api/src/infrastructure/**/*.ts'],
+    files: ['apps/api/src/authorization/core/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
           patterns: [
+            {
+              regex: '^(?:[^.]|\\.\\./)',
+              message: 'Authorization core uses only its own pure source modules.',
+            },
             {
               group: [
-                '@base-authorization/typeorm-postgres/operations',
-                '@base-authorization/typeorm-postgres/legacy',
+                '**/values/**',
+                '**/services/**',
+                '**/enforcement/**',
+                '**/database/**',
+                '**/auth/**',
+                '**/audit/**',
               ],
               message:
-                'API infrastructure imports only the root contracts and ./composition; operations is for tools/, legacy is retired tenancy.',
+                'Authorization core must remain independent of application services and adapters.',
             },
           ],
         },
@@ -75,10 +85,15 @@ export default tseslint.config(
     },
   },
   {
-    // Developer boundary for HTTP handlers (not process isolation): handlers see facade tokens and
-    // adapter root contracts only. Composition lives in infrastructure/, offline work in tools/.
+    files: ['apps/api/src/authorization/enforcement/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: [...driverImports, ...offlineImports] }],
+    },
+  },
+  {
+    // HTTP handlers receive bound operations; services may use TypeORM directly.
     files: ['apps/api/src/{auth,document,administration,health,openapi}/**/*.ts'],
-    ignores: ['apps/api/src/document/migrations/**'],
+    ignores: ['apps/api/src/document/migrations/**', 'apps/api/src/auth/services/**'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -86,9 +101,32 @@ export default tseslint.config(
           patterns: [
             ...driverImports,
             {
-              group: ['@base-authorization/typeorm-postgres/*'],
+              group: [
+                '**/database/**',
+                '**/audit/**',
+                '**/authorization/services/**',
+                '**/authorization/helpers/**',
+                '**/product-data.gateway*',
+                '**/product-sql.compiler*',
+              ],
+              allowTypeImports: true,
               message:
-                'Handlers use root contracts and facade tokens; composition/operations/legacy and private paths are for infrastructure and tools.',
+                'HTTP handlers use bound facade operations; implementation types may be imported without runtime access.',
+            },
+            {
+              group: [
+                '**/auth/services/**',
+                '**/services/product-identity.service*',
+                '**/services/product-oidc.service*',
+              ],
+              allowTypeImports: true,
+              allowImportNames: [
+                'rateLimitClient',
+                'canonicalLoginEmail',
+                'ProductAuthenticationError',
+                'ProductAuthenticationUnavailable',
+              ],
+              message: 'Identity service operations are private; inject AUTH_HTTP_PORT.',
             },
             {
               group: [
@@ -98,23 +136,19 @@ export default tseslint.config(
               ],
               message: 'The runtime provider is private to RuntimeModule; inject a facade token.',
             },
-            {
-              group: ['**/packages/*/src/**', '**/packages/*/dist/**'],
-              message:
-                'Import packages by public entrypoint, never by private source or dist path.',
-            },
           ],
         },
       ],
     },
   },
   {
-    // planUnrestricted is the Root branch of ProductAuthorization.access only (ADR 0012); core
-    // unit tests exercise it directly. Developer boundary, not process isolation.
+    // Root access uses the factory-issued plan only (ADR 0012); the factory owns the raw planner.
+    // Core unit tests exercise both directly. Developer boundary, not process isolation.
     files: ['**/*.ts'],
     ignores: [
-      'packages/typeorm-postgres/src/services/product-authority.service.ts',
-      'packages/core/test/**',
+      'apps/api/src/authorization/services/product-authority.service.ts',
+      'apps/api/src/authorization/core/authorization.factory.ts',
+      'test/core/**',
     ],
     rules: {
       'no-restricted-syntax': [
@@ -126,6 +160,17 @@ export default tseslint.config(
         {
           selector: "ObjectPattern > Property[key.name='planUnrestricted']",
           message: 'Only ProductAuthorization.access may plan unrestricted access (ADR 0012).',
+        },
+        {
+          selector: "ImportSpecifier[imported.name='planUnrestricted']",
+          message:
+            'The unrestricted planner is internal to the core factory and authority service.',
+        },
+        {
+          selector:
+            "ExportNamedDeclaration[source] > ExportSpecifier[local.name='planUnrestricted']",
+          message:
+            'The unrestricted planner is internal to the core factory and authority service.',
         },
       ],
     },

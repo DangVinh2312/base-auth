@@ -1,5 +1,8 @@
-import { ProductAuthorize } from '@base-authorization/nest';
-import type { ProductPage, ProductRow } from '@base-authorization/typeorm-postgres';
+import { ProductAuthorize } from '../authorization/enforcement/product-authorization.module.js';
+import type {
+  Page as ProductPage,
+  Row as ProductRow,
+} from '../authorization/product-data.gateway.js';
 import {
   Body,
   Controller,

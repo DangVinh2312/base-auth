@@ -1,8 +1,8 @@
 import type {
   ProductIdentityService,
-  ProductOidcService,
   ProductSessionIdentity,
-} from '@base-authorization/typeorm-postgres';
+} from './services/product-identity.service.js';
+import type { ProductOidcService } from './services/product-oidc.service.js';
 import type { AppConfig } from '../config/app.config.js';
 
 export const AUTH_HTTP_PORT = Symbol('AUTH_HTTP_PORT');

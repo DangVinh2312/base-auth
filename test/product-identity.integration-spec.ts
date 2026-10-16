@@ -8,29 +8,29 @@ import * as oidc from 'openid-client';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
-import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
 import {
   ProductAuthenticationError,
-  TransactionConflictError,
-} from '@base-authorization/typeorm-postgres';
-import {
-  PRODUCT_OFFLINE_ACTOR,
   ProductIdentityService,
   createProductPasswordHasher,
   newSessionSecret,
   purgeExpiredSessions,
   sessionDigest,
-} from '@base-authorization/typeorm-postgres/composition';
-import { type ProductOidcProvider } from '@base-authorization/typeorm-postgres';
-import { ProductOidcService } from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+import { TransactionConflictError } from '../apps/api/dist/database/helpers/transaction-errors.helper.js';
+import { PRODUCT_OFFLINE_ACTOR } from '../apps/api/dist/audit/product-audit.repository.js';
+
 import {
-  ProductAuthorization,
-  ProductBindingRegistry,
-  ProductManifestReconciler,
-  productObligations,
-} from '@base-authorization/typeorm-postgres/composition';
-import type { IdentityId } from '@base-authorization/core';
+  type ProductOidcProvider,
+  ProductOidcService,
+} from '../apps/api/dist/auth/services/product-oidc.service.js';
+
+import { ProductAuthorization } from '../apps/api/dist/authorization/services/product-authority.service.js';
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
+import { ProductManifestReconciler } from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import { productObligations } from '../apps/api/dist/authorization/helpers/product-obligations.helper.js';
+import type { IdentityId } from '../apps/api/dist/authorization/core/authorization.types.js';
 import {
   createProductAuthorizationCore,
   createProductRelease,

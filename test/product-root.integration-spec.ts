@@ -2,31 +2,37 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
-import type { IdentityId } from '@base-authorization/core';
+import type { IdentityId } from '../apps/api/dist/authorization/core/authorization.types.js';
 import {
   ProductAccessDenied,
-  ProductInvalidRequest,
-  type ProductDatabasePurpose,
-} from '@base-authorization/typeorm-postgres';
-import {
   PRODUCT_FRESH_AUTH_SQL,
   ProductAuthorization,
-  ProductBindingRegistry,
-  ProductIdentityService,
-  ProductManifestReconciler,
-  ProductTransactionRunner,
-  createProductPasswordHasher,
-  prepareProductRelease,
-  productObligations,
-  sessionDigest,
-  type ProductObligationRegistry,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/authorization/services/product-authority.service.js';
+import { ProductInvalidRequest } from '../apps/api/dist/authorization/product-data.gateway.js';
 import {
-  appendProductAudit,
-  bootstrapProductRoot,
+  type ProductDatabasePurpose,
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
+
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
+import {
+  ProductIdentityService,
+  createProductPasswordHasher,
+  sessionDigest,
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+import {
+  ProductManifestReconciler,
+  prepareProductRelease,
+  bootstrapProductRoot,
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
+import {
+  productObligations,
+  type ProductObligationRegistry,
+} from '../apps/api/dist/authorization/helpers/product-obligations.helper.js';
+import { appendProductAudit } from '../apps/api/dist/audit/product-audit.repository.js';
+
 import {
   createProductAuthorizationCore,
   productBindings,

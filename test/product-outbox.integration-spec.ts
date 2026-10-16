@@ -4,17 +4,20 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, beforeEach, test } from 'node:test';
 import { DataSource } from 'typeorm';
-import type { ProductAuditEnvelope, ProductAuditSink } from '@base-authorization/typeorm-postgres';
 import {
+  type ProductAuditEnvelope,
+  type ProductAuditSink,
   ProductAuditOutbox,
-  ProductTransactionRunner,
-  verifyProductPrivileges,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/audit/product-outbox.service.js';
+
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
 import {
-  appendProductAudit,
+  verifyProductPrivileges,
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
+import { appendProductAudit } from '../apps/api/dist/audit/product-audit.repository.js';
+
 import { sqlState, startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 type Purpose = 'data' | 'identity' | 'authority' | 'sync' | 'bootstrap' | 'migration' | 'outbox';

@@ -1,6 +1,7 @@
 import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
-import { ProductPublic, ReadinessGate } from '@base-authorization/nest';
-import { METRICS_SNAPSHOT, type MetricsSnapshot } from './product-metrics.service.js';
+import { ProductPublic } from '../authorization/enforcement/product-authorization.module.js';
+import { ReadinessGate } from './services/readiness.service.js';
+import { METRICS_SNAPSHOT, type MetricsSnapshot } from './services/product-metrics.service.js';
 
 @Controller('health')
 export class HealthController {

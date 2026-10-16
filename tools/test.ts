@@ -1,15 +1,10 @@
-// Runs a node:test suite against built packages. Usage: node tools/test.ts <suite> [files...]
+// Runs a node:test suite against the built app. Usage: node tools/test.ts <suite> [files...]
 import { spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 
 const suites: Record<string, { patterns: string[]; flags: string[] }> = {
   unit: {
-    patterns: [
-      'test/**/*.spec.ts',
-      'test/**/*.smoke-spec.ts',
-      'packages/*/test/**/*.spec.ts',
-      'apps/api/test/**/*.spec.ts',
-    ],
+    patterns: ['test/**/*.spec.ts', 'test/**/*.smoke-spec.ts', 'apps/api/test/**/*.spec.ts'],
     flags: [],
   },
   e2e: { patterns: ['apps/api/test/**/*.e2e-spec.ts'], flags: ['--test-timeout=300000'] },

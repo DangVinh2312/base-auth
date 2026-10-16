@@ -1,4 +1,4 @@
-import type { PostgresConnectionSettings } from '@base-authorization/typeorm-postgres';
+import type { PostgresConnectionSettings } from '../apps/api/dist/database/postgres-connection.types.js';
 
 /** Reads a required variable; error messages name the variable, never its value. */
 export function requireEnv(name: string): string {
@@ -23,8 +23,4 @@ export function adminConnection(): PostgresConnectionSettings {
     password: decodeURIComponent(url.password),
     database: decodeURIComponent(url.pathname.slice(1)) || 'postgres',
   };
-}
-
-export function identityDatabaseName(): string {
-  return process.env.IDENTITY_DATABASE_NAME || 'authz_identity';
 }

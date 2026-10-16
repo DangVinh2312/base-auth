@@ -1,61 +1,61 @@
 import assert from 'node:assert/strict';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { after, before, describe, test } from 'node:test';
-import type { AuthorizedPlan, RuleFact } from '@base-authorization/core';
+import type {
+  UserAuthorizedPlan,
+  RuleFact,
+} from '../apps/api/dist/authorization/core/authorization.types.js';
 import {
-  BindingRegistry,
+  ProductBindingRegistry,
   compilePlan,
-  type TenantConnectionLease,
-} from '@base-authorization/typeorm-postgres/legacy';
+} from '../apps/api/dist/authorization/product-sql.compiler.js';
 import {
   alice,
   bob,
   carol,
   fixtureDeclarations,
-  type GatewayEnvironment,
+  type CompilerEnvironment,
   readPlan,
   rule,
-  startGatewayEnvironment,
+  startCompilerEnvironment,
   storageBindings,
   submissionFacts,
-  tenantA,
-  tenantB,
   core,
 } from './fixtures/resources.ts';
 
-const { canonicalTimestamp, evaluate } = core;
+const { canonicalTimestamp, evaluateUser } = core;
 
 const read = 'submission.read';
 const me = { kind: 'identity', identity: alice } as const;
 
 describe('SQL compiler matches the evaluator on PostgreSQL', () => {
-  let env: GatewayEnvironment;
-  let lease: TenantConnectionLease;
-  let bindings: BindingRegistry;
+  let env: CompilerEnvironment;
+  let bindings: ProductBindingRegistry;
 
   before(async () => {
-    env = await startGatewayEnvironment();
-    lease = await env.registry.acquire(tenantA, 'data');
-    bindings = new BindingRegistry(core, fixtureDeclarations(), storageBindings);
+    env = await startCompilerEnvironment();
+    bindings = new ProductBindingRegistry(core, fixtureDeclarations(), storageBindings);
   });
   after(async () => {
-    await lease?.release();
     await env?.stop();
   });
 
-  const sqlIds = async (plan: AuthorizedPlan) => {
+  const sqlIds = async (plan: UserAuthorizedPlan) => {
     const bound = compilePlan(plan, bindings);
-    const rows = await lease.dataSource.query<{ id: string }[]>(
+    const rows = await env.data.query<{ id: string }[]>(
       `SELECT r.id FROM submission r WHERE ${bound.sql} ORDER BY r.id`,
       [...bound.parameters],
     );
     return rows.map((row) => row.id);
   };
 
-  const evaluatorIds = (plan: AuthorizedPlan) => {
-    const now = canonicalTimestamp(new Date().toISOString())!;
-    return env.fixtures.A.submissions
-      .filter((row) => evaluate(plan, submissionFacts(env.fixtures.A, row, now)).effect === 'allow')
+  const evaluatorIds = (plan: UserAuthorizedPlan) => {
+    const now = canonicalTimestamp(new Date().toISOString());
+    assert.ok(now);
+    return env.fixture.submissions
+      .filter(
+        (row) => evaluateUser(plan, submissionFacts(env.fixture, row, now)).effect === 'allow',
+      )
       .map((row) => row.id)
       .sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
   };
@@ -136,7 +136,7 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
 
   for (const scenario of scenarios) {
     test(scenario.name, async () => {
-      const plan = readPlan(tenantA, scenario.rules, {
+      const plan = readPlan(scenario.rules, {
         roles: scenario.roles,
         identity: scenario.identity,
         action: scenario.action,
@@ -148,29 +148,25 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
   }
 
   test('required scope excludes a record allow on a non-pending record', async () => {
-    const ids = await sqlIds(readPlan(tenantA, [], { action: 'approve' }));
+    const ids = await sqlIds(readPlan([], { action: 'approve' }));
     assert.deepEqual(ids, [], 'row 5 has an approve record allow but is not pending');
   });
 
   test('values never appear in SQL text; the injection target table survives', async () => {
-    const plan = readPlan(tenantA, [
+    const plan = readPlan([
       rule(read, 'allow', 'titleIs', { title: "'; DROP TABLE submission; --" }),
     ]);
     const bound = compilePlan(plan, bindings);
     assert.doesNotMatch(bound.sql, /DROP|Reilly|reviewer|submission\.read/);
     await sqlIds(plan);
-    const [count] = await lease.dataSource.query<{ n: string }[]>(
+    const [count] = await env.data.query<{ n: string }[]>(
       'SELECT count(*)::text AS n FROM submission',
     );
-    assert.equal(count?.n, String(env.fixtures.A.submissions.length));
-  });
-
-  test('a plan for tenant B selects nothing in tenant A', async () => {
-    assert.deepEqual(await sqlIds(readPlan(tenantB, [rule(read, 'allow', 'all')])), []);
+    assert.equal(count?.n, String(env.fixture.submissions.length));
   });
 
   test('an expired plan selects nothing (checked with the database statement clock)', async () => {
-    const plan = readPlan(tenantA, [rule(read, 'allow', 'all')], {
+    const plan = readPlan([rule(read, 'allow', 'all')], {
       validUntil: new Date(Date.now() + 300).toISOString(),
     });
     await sleep(1_500);
@@ -179,7 +175,6 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
 
   test('ReBAC on a uuid-keyed resource (mySites)', async () => {
     const plan = readPlan(
-      tenantA,
       [rule('site.read', 'allow', 'mySites', {}, { kind: 'identity', identity: bob })],
       {
         resource: 'site',
@@ -188,7 +183,7 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
       },
     );
     const bound = compilePlan(plan, bindings);
-    const rows = await lease.dataSource.query<{ id: string }[]>(
+    const rows = await env.data.query<{ id: string }[]>(
       `SELECT r.id FROM site r WHERE ${bound.sql}`,
       [...bound.parameters],
     );
@@ -225,10 +220,10 @@ describe('SQL compiler matches the evaluator on PostgreSQL', () => {
         index: 'tag_pkey',
       },
     ];
-    await lease.dataSource.transaction(async (manager) => {
+    await env.data.transaction(async (manager) => {
       await manager.query('SET LOCAL enable_seqscan = off');
       for (const c of cases) {
-        const plan = readPlan(tenantA, [rule(`${c.resource}.read`, 'allow', c.template)], {
+        const plan = readPlan([rule(`${c.resource}.read`, 'allow', c.template)], {
           resource: c.resource,
         });
         const bound = compilePlan(plan, bindings);

@@ -1,29 +1,33 @@
 import { open, unlink } from 'node:fs/promises';
 import { DataSource } from 'typeorm';
-import type { IdentityId } from '@base-authorization/core';
+import type { IdentityId } from '../apps/api/dist/authorization/core/authorization.types.js';
+import { ReleaseRejectedError } from '../apps/api/dist/authorization/helpers/release-content.helper.js';
 import {
-  ReleaseRejectedError,
   canonicalLoginEmail,
-  type PostgresConnectionSettings,
-  type ProductDatabasePurpose,
-} from '@base-authorization/typeorm-postgres';
-import {
-  ProductTransactionRunner,
-  ProductManifestReconciler,
   ProductIdentityService,
   createProductPasswordHasher,
-  PRODUCT_OFFLINE_ACTOR,
-  productObligations,
   purgeExpiredSessions,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+import type { PostgresConnectionSettings } from '../apps/api/dist/database/postgres-connection.types.js';
 import {
+  type ProductDatabasePurpose,
   productDataSourceOptions,
   provisionProductDatabase,
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
+import {
+  ProductManifestReconciler,
   bootstrapProductRoot,
   revokeProductRoot,
   reissueRootActivation,
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+
+import {
+  PRODUCT_OFFLINE_ACTOR,
   appendProductAudit,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/audit/product-audit.repository.js';
+import { productObligations } from '../apps/api/dist/authorization/helpers/product-obligations.helper.js';
+
 import {
   createProductAuthorizationCore,
   createProductRelease,

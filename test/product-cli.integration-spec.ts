@@ -6,14 +6,15 @@ import { mkdtemp, readFile, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DataSource } from 'typeorm';
-import { ProductAuthenticationError } from '@base-authorization/typeorm-postgres';
 import {
-  PRODUCT_OFFLINE_ACTOR,
+  ProductAuthenticationError,
   ProductIdentityService,
-  ProductTransactionRunner,
   createProductPasswordHasher,
-} from '@base-authorization/typeorm-postgres/composition';
-import { productDataSourceOptions } from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+import { PRODUCT_OFFLINE_ACTOR } from '../apps/api/dist/audit/product-audit.repository.js';
+
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
+import { productDataSourceOptions } from '../apps/api/dist/database/helpers/product-database.helper.js';
 import { startPostgres, withClient } from './setup-postgres.ts';
 
 test('offline CLI provisions, forward migrates, syncs and bootstraps once without printing activation secret', async (t) => {

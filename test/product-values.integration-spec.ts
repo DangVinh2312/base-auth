@@ -3,28 +3,38 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { DataSource, type EntityManager } from 'typeorm';
-import type { Expr, UserCompleteFacts, UserId } from '@base-authorization/core';
+import type {
+  Expr,
+  UserCompleteFacts,
+  UserId,
+} from '../apps/api/dist/authorization/core/authorization.types.js';
 import {
   ProductAccessDenied,
-  ProductInvalidRequest,
-  type ProductReleaseSource,
-  ReleaseRejectedError,
-} from '@base-authorization/typeorm-postgres';
-import {
   ProductAuthorization,
-  ProductBindingRegistry,
+  readProductAuthority,
+} from '../apps/api/dist/authorization/services/product-authority.service.js';
+import {
+  ProductInvalidRequest,
   ProductDataGateway,
+} from '../apps/api/dist/authorization/product-data.gateway.js';
+import {
+  type ProductReleaseSource,
   ProductManifestReconciler,
+  prepareProductRelease,
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import { ReleaseRejectedError } from '../apps/api/dist/authorization/helpers/release-content.helper.js';
+
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
+
+import {
   type ProductTransaction,
   ProductTransactionRunner,
-  prepareProductRelease,
-  readProductAuthority,
-  sessionDigest,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/database/product-transaction.runner.js';
+import { sessionDigest } from '../apps/api/dist/auth/services/product-identity.service.js';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
 import { createProductAuthorizationCore } from '../apps/api/dist/authorization/product.manifest.js';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 

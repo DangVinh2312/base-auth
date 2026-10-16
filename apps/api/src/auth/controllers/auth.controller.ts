@@ -1,4 +1,7 @@
-import { ProductAuthenticated, ProductPublic } from '@base-authorization/nest';
+import {
+  ProductAuthenticated,
+  ProductPublic,
+} from '../../authorization/enforcement/product-authorization.module.js';
 import {
   Body,
   Controller,

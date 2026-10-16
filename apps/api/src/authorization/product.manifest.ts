@@ -1,18 +1,14 @@
-import {
-  type AuthorizationCore,
-  createAuthorizationCore,
-  type SystemDeclarations,
-} from '@base-authorization/core';
+import { type AuthorizationCore, createAuthorizationCore } from './core/authorization.factory.js';
+import type { SystemDeclarations } from './core/authorization.declarations.js';
 import {
   type ProductReleaseManifest,
   type ProductReleaseSource,
-  type ProductStorageBindings,
-} from '@base-authorization/typeorm-postgres';
-import { prepareProductRelease } from '@base-authorization/typeorm-postgres/composition';
-import {
-  createDayjsTimestampCodec,
-  createStandardValueCodecs,
-} from '@base-authorization/value-adapters';
+  prepareProductRelease,
+} from './services/product-manifest.service.js';
+import type { ProductStorageBindings } from './product-sql.compiler.js';
+
+import { createDayjsTimestampCodec } from './values/codecs/dayjs-timestamp.codec.js';
+import { createStandardValueCodecs } from './values/codecs/standard-values.codec.js';
 import { accountBinding, accountDeclarations } from '../administration/account.declarations.js';
 import {
   documentBinding,

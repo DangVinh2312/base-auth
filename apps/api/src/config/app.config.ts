@@ -1,5 +1,5 @@
 import type { LogLevel } from '@nestjs/common';
-import type { ProductOidcProviderConfig } from '@base-authorization/typeorm-postgres';
+import type { ProductOidcProviderConfig } from '../auth/services/product-oidc.service.js';
 
 export interface AppConfig {
   readonly nodeEnv: 'development' | 'test' | 'production';

@@ -5,7 +5,7 @@
 - Đây là dự án độc lập: NestJS, TypeORM, PostgreSQL; không import/copy nghiệp vụ từ repo khác.
 - Chuyển đổi một sản phẩm theo `docs/authz-single-product-architecture.md`, ADR 0005–0007 và `docs/superpowers/plans/2026-10-13-single-product-transition.md`. Kiến trúc/plan cũ là lịch sử tái sử dụng, không ràng buộc duy trì tenancy.
 - Trạng thái task lấy từ checkbox trong kế hoạch và ADR `docs/decisions/`; bước chưa đánh dấu là chưa có bằng chứng hoàn thành.
-- Mỗi package/app có `AGENTS.md` riêng (`packages/core`, `packages/nest`, `packages/typeorm-postgres`, `apps/api`): đọc file của module trước khi sửa module đó.
+- Source nằm trong một app `apps/api`; đọc `apps/api/AGENTS.md` và `AGENTS.md` của module con nếu có trước khi sửa. Cấu trúc mới theo `docs/decisions/0013-single-app-modules.md`; các đường dẫn package trong ADR/plan cũ là lịch sử.
 - Giữ thay đổi nhỏ, hoàn tất phạm vi được yêu cầu; không triển khai toàn bộ kế hoạch nếu người dùng chỉ yêu cầu một phần.
 - Không sửa file ngoài task, ghi đè thay đổi của người dùng, tự commit/push/publish/deploy nếu chưa được yêu cầu.
 - Quyết định ảnh hưởng tenant isolation, identity hoặc dữ liệu cần ghi ADR; không tự đổi spec bằng một config flag.
@@ -24,11 +24,11 @@
 ## Package manager và workspace
 
 - Chỉ dùng pnpm. Phiên bản lấy từ `package.json#packageManager`; dùng Node 24 theo `.nvmrc` và `engines`.
-- Workspace khai báo trong `pnpm-workspace.yaml`: `apps/*`, `packages/*`; giữ một `pnpm-lock.yaml` ở root.
+- Workspace khai báo trong `pnpm-workspace.yaml`: `apps/*`, hiện chỉ có `apps/api`; giữ một `pnpm-lock.yaml` ở root.
 - Không tạo `package-lock.json` hoặc `yarn.lock`, không dùng npm/yarn/npx để install hoặc scaffold.
 - Dùng `pnpm exec <tool>` cho dependency local; khi cần generator chưa có, dùng `pnpm dlx <package>@<exact-version>`. Không cài CLI global hoặc dùng `@latest` trong quy trình tái lập.
 - Thêm dependency tại package sở hữu: `pnpm --filter <package> add <dependency>`; tooling root dùng `pnpm add -Dw <dependency>`.
-- Internal dependencies dùng `workspace:*`, khai báo trực tiếp; không dựa vào hoisting hoặc import private source xuyên package.
+- App khai báo trực tiếp runtime dependencies; root khai báo tooling/test dependencies. Module trong app import tương đối trực tiếp tới file sở hữu, đuôi `.js`; không tạo lại package/SDK nội bộ hoặc dựa vào hoisting.
 - Cập nhật lockfile cùng dependency changes; chỉ commit khi được yêu cầu. CI dùng `pnpm install --frozen-lockfile`; không hand-edit lockfile.
 - pnpm settings nằm trong `pnpm-workspace.yaml`. Chỉ tạo `.npmrc` khi cần registry/auth và không commit token.
 - Không tắt strict peer checks để che xung đột. Build scripts của dependency chỉ bật khi đã biết vì sao cần và được giới hạn đúng package.
@@ -36,7 +36,7 @@
 ## Coding convention
 
 - Theo `tsconfig.base.json`, `eslint.config.js` và `.prettierrc.json` hiện tại: strict TypeScript, ESM/NodeNext, single quotes, trailing commas, LF. Import tương đối trong TypeScript dùng đuôi `.js`; dùng `import type` cho type-only imports.
-- File source dùng `<tên-kebab-case>.<vai-trò>.ts`: `.service.ts` cho điều phối nghiệp vụ, `.helper.ts` cho hàm tiện ích, `.repository.ts` cho truy cập dữ liệu; các vai trò khác dùng `.controller.ts`, `.module.ts`, `.gateway.ts`, `.compiler.ts`, `.registry.ts`, `.runner.ts`, `.codec.ts`, `.validator.ts`, `.planner.ts`, `.evaluator.ts`, `.factory.ts`, `.port.ts`, `.types.ts`, `.declarations.ts`, `.schema.ts`, `.manifest.ts`, `.migration.ts`, `.entity.ts`, `.filter.ts`, `.config.ts` theo trách nhiệm thực tế. Giữ tên entrypoint cố định (`index.ts`, `main.ts`, `composition.ts`, `operations.ts`, `legacy.ts`), CLI và fixtures lịch sử. Tests giữ `.spec.ts`/`.integration-spec.ts`/`.e2e-spec.ts`; types/classes dùng PascalCase, functions/variables dùng camelCase. Không đổi tên hàng loạt ngoài phạm vi task.
+- File source dùng `<tên-kebab-case>.<vai-trò>.ts`: `.service.ts` cho điều phối nghiệp vụ, `.helper.ts` cho hàm tiện ích, `.repository.ts` cho truy cập dữ liệu; các vai trò khác dùng `.controller.ts`, `.module.ts`, `.gateway.ts`, `.compiler.ts`, `.registry.ts`, `.runner.ts`, `.codec.ts`, `.validator.ts`, `.planner.ts`, `.evaluator.ts`, `.factory.ts`, `.port.ts`, `.types.ts`, `.declarations.ts`, `.schema.ts`, `.manifest.ts`, `.migration.ts`, `.entity.ts`, `.filter.ts`, `.config.ts` theo trách nhiệm thực tế. Giữ `main.ts`, CLI và fixtures lịch sử; module và tests import trực tiếp file sở hữu, không tạo barrel của package cũ. Tests giữ `.spec.ts`/`.integration-spec.ts`/`.e2e-spec.ts`; types/classes dùng PascalCase, functions/variables dùng camelCase. Không đổi tên hàng loạt ngoài phạm vi task.
 - Tên module/domain dùng số ít, nhất quán giữa folder, file và class: `document/`, `document.module.ts`, `DocumentModule`, `document.controller.ts`, `DocumentController`; tương tự `user.controller.ts`, `UserController`. Quy tắc đặt tên code không đổi HTTP routes, tên bảng, policy keys hay dữ liệu đã lưu.
 - Khi một module/package có từ hai file cùng vai trò, gom chúng vào folder vai trò số nhiều bên trong module/package: `services/`, `helpers/`, `repositories/`, `controllers/`, `gateways/`, `compilers/`, `runners/`, `codecs/`, `entities/`, `migrations/`, `ports/`… File bên trong vẫn giữ hậu tố, ví dụ `services/product-authority.service.ts`, `helpers/product-database.helper.ts`. Một file thì đặt trực tiếp trong module; không tạo folder rỗng hoặc gom file từ nhiều feature module vào một folder chung. Nhóm đã có sẵn không cần tháo khi còn một file. Các folder hạ tầng/workspace (`apps`, `packages`, `test`, `tools`) và tên package public giữ nguyên.
 - Dùng interface cho port thay implementation; dùng type/discriminated union cho dữ liệu và trạng thái. Public contracts phải có kiểu input/output rõ, không trả implementation detail chỉ vì tiện cho caller.
@@ -49,18 +49,18 @@
 
 ## Ranh giới kiến trúc
 
-- `packages/core`: pure types, AST, validation, planning/evaluation; không NestJS, TypeORM, SQL driver, network hoặc tên domain.
-- `packages/nest`: decorators, guards, route manifest, context, readiness; phụ thuộc core ports, không phụ thuộc entity nghiệp vụ.
-- `packages/value-adapters`: codec giá trị thuần (`ScalarCodec`/`ValueCodecs` do core khai báo; Day.js timestamp strict); phụ thuộc core (type) và thư viện giá trị, core không import package này.
-- `packages/typeorm-postgres`: compiler SQL, data gateway, authority store, transactions, migrations và fixed-purpose product pools (tenant pools chỉ legacy).
-- `apps/api`: ghép các adapter; authn/admin và domain demo nằm ở đây. D2/D3 là fixtures kiểm chứng khả năng tái sử dụng.
+- `apps/api/src/authorization/core`: pure types, AST, validation, planning/evaluation; không NestJS, TypeORM, SQL driver, network hoặc tên domain.
+- `authorization/enforcement`: decorators, guards và route inventory; readiness ở `health/`; không truy cập database.
+- `authorization/values`: codec giá trị thuần (`ScalarCodec`/`ValueCodecs` do core khai báo; Day.js timestamp strict); phụ thuộc core (type) và thư viện giá trị, core không import ngược.
+- `authorization/services`, `authorization/helpers`, compiler/gateway: lập và thực thi quyền, sync manifest, obligations; `auth/services`: identity/session/OIDC; `audit`: writer/outbox; `database`: transaction runner, configuration/probes và migrations.
+- Các feature HTTP hiện có nằm trong cùng app. ADR 0014 đã bỏ tenant implementation/compatibility và CLI cũ; không tạo lại tenant contracts hoặc runtime. D2/D3 là fixtures kiểm chứng khả năng tái sử dụng.
 - Tách đọc/ghi/cache khi trách nhiệm khác nhau; không tạo cache service khi chưa có cache.
-- Package public API qua entrypoint khai báo trong `package.json#exports` (`src/index.ts`, và với `typeorm-postgres` thêm `./composition`, `./operations`, `./legacy`); không deep-import private source. Không export credentials, raw connection hoặc bypass authorization cho handler; handler chỉ import root + facade token (ESLint chặn phần còn lại). Đây là ranh giới cho developer, không phải process isolation.
+- Không có package entrypoints `composition`/`operations`/`legacy`; import trực tiếp module sở hữu. Không export credentials, raw connection hoặc bypass authorization cho handler; handler nhận facade operations đã bind. Services dùng TypeORM trực tiếp khi cần; không tạo port cho mọi service/repository. ESLint và `test/module-boundaries.spec.ts` kiểm ranh giới module; đây là ranh giới developer, không phải process isolation.
 - `tsconfig.base.json` chỉ chứa defaults chung. Chốt module format/decorator metadata khi scaffold và test build thật; core không cần decorator metadata.
 
 ## Ports và adapters
 
-- Kế hoạch `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`: giai đoạn A (T0–T7, T11) đã triển khai trong working tree (`createAuthorizationCore`, `packages/value-adapters`, API theo capability, entrypoints, audit typed; bằng chứng ở checkbox/ledger và `docs/single-product-verification.md`); giai đoạn B: T8 xong; T9 và T10 xong phần độc lập, phần phụ thuộc policy/provider bị chặn (ADR 0010–0011, ledger §6). Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
+- Kế hoạch `docs/superpowers/plans/2026-10-14-foundation-hardening-and-adapters.md`: giai đoạn A (T0–T7, T11) đã triển khai trong working tree (`createAuthorizationCore`, codecs tại `authorization/values`, API theo capability, audit typed; topology package/entrypoints đã thay bởi ADR 0013, bằng chứng ở checkbox/ledger và `docs/single-product-verification.md`); giai đoạn B: T8 xong; T9 và T10 xong phần độc lập, phần phụ thuộc policy/provider bị chặn (ADR 0010–0011, ledger §6). Chỉ triển khai task được yêu cầu, không tự migrate toàn repo khi sửa một lỗi nhỏ.
 - Kế hoạch `docs/superpowers/plans/2026-10-15-iam-root-separation.md` (ADR 0012): IAM không rank, Root ngoài IAM, migration `012`; trạng thái theo checkbox/ledger của plan.
 - Core sở hữu contract thuần; adapter sở hữu thư viện/driver; composition root chọn implementation. Không import Day.js/Moment, NestJS, DB hoặc HTTP client vào core, không để kiểu riêng của thư viện rò vào port.
 - Chỉ thêm port khi có capability cần thay implementation; không biến mọi helper thành plugin. Không cài nhiều thư viện cùng chức năng chỉ để minh họa khả năng thay thế.

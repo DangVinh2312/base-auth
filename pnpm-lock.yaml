@@ -109,18 +109,18 @@ importers:
 
   .:
     devDependencies:
-      '@base-authorization/core':
-        specifier: workspace:*
-        version: link:packages/core
-      '@base-authorization/typeorm-postgres':
-        specifier: workspace:*
-        version: link:packages/typeorm-postgres
-      '@base-authorization/value-adapters':
-        specifier: workspace:*
-        version: link:packages/value-adapters
       '@eslint/js':
         specifier: 10.0.1
         version: 10.0.1(eslint@10.12.0)
+      '@nestjs/common':
+        specifier: 12.1.2
+        version: 12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core':
+        specifier: 12.1.2
+        version: 12.1.2(@nestjs/common@12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.1.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/platform-express':
+        specifier: 12.1.2
+        version: 12.1.2(@nestjs/common@12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.1.2)
       '@testcontainers/postgresql':
         specifier: 12.2.0
         version: 12.2.0
@@ -130,6 +130,9 @@ importers:
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1
+      dayjs:
+        specifier: 1.11.23
+        version: 1.11.23
       eslint:
         specifier: 10.12.0
         version: 10.12.0
@@ -142,9 +145,9 @@ importers:
       prettier:
         specifier: 3.9.10
         version: 3.9.10
-      testcontainers:
-        specifier: 12.2.0
-        version: 12.2.0
+      reflect-metadata:
+        specifier: 0.2.2
+        version: 0.2.2
       typeorm:
         specifier: 1.1.2
         version: 1.1.2(pg@8.23.1)
@@ -157,18 +160,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@base-authorization/core':
-        specifier: workspace:*
-        version: link:../../packages/core
-      '@base-authorization/nest':
-        specifier: workspace:*
-        version: link:../../packages/nest
-      '@base-authorization/typeorm-postgres':
-        specifier: workspace:*
-        version: link:../../packages/typeorm-postgres
-      '@base-authorization/value-adapters':
-        specifier: workspace:*
-        version: link:../../packages/value-adapters
       '@nestjs/common':
         specifier: 12.1.2
         version: 12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -178,59 +169,27 @@ importers:
       '@nestjs/platform-express':
         specifier: 12.1.2
         version: 12.1.2(@nestjs/common@12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.1.2)
-      reflect-metadata:
-        specifier: 0.2.2
-        version: 0.2.2
-      rxjs:
-        specifier: 7.8.2
-        version: 7.8.2
-      typeorm:
-        specifier: 1.1.2
-        version: 1.1.2(pg@8.23.1)
-
-  packages/core: {}
-
-  packages/nest:
-    dependencies:
-      '@nestjs/common':
-        specifier: 12.1.2
-        version: 12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      '@nestjs/core':
-        specifier: 12.1.2
-        version: 12.1.2(@nestjs/common@12.1.2(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.1.2)(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      reflect-metadata:
-        specifier: 0.2.2
-        version: 0.2.2
-      rxjs:
-        specifier: 7.8.2
-        version: 7.8.2
-
-  packages/typeorm-postgres:
-    dependencies:
-      '@base-authorization/core':
-        specifier: workspace:*
-        version: link:../core
       argon2:
         specifier: 0.45.1
         version: 0.45.1
+      dayjs:
+        specifier: 1.11.23
+        version: 1.11.23
       openid-client:
         specifier: 6.8.8
         version: 6.8.8
       pg:
         specifier: 8.23.1
         version: 8.23.1
+      reflect-metadata:
+        specifier: 0.2.2
+        version: 0.2.2
+      rxjs:
+        specifier: 7.8.2
+        version: 7.8.2
       typeorm:
         specifier: 1.1.2
         version: 1.1.2(pg@8.23.1)
-
-  packages/value-adapters:
-    dependencies:
-      '@base-authorization/core':
-        specifier: workspace:*
-        version: link:../core
-      dayjs:
-        specifier: 1.11.23
-        version: 1.11.23
 
 packages:
 

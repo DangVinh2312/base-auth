@@ -5,24 +5,26 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { DataSource, type Logger } from 'typeorm';
-import type { UserId } from '@base-authorization/core';
+import type { UserId } from '../apps/api/dist/authorization/core/authorization.types.js';
+import { ProductAuthorization } from '../apps/api/dist/authorization/services/product-authority.service.js';
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
 import {
-  ProductAuthorization,
-  ProductBindingRegistry,
   ProductIdentityService,
-  ProductManifestReconciler,
-  ProductTransactionRunner,
   createProductPasswordHasher,
-  prepareProductRelease,
-  productObligations,
   sessionDigest,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+import {
+  ProductManifestReconciler,
+  prepareProductRelease,
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
+import { productObligations } from '../apps/api/dist/authorization/helpers/product-obligations.helper.js';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
-import { core } from './fixtures/resources.ts';
+import { core } from './core/fixtures.ts';
 
 const datasetRows = 10_000;
 const extraActions = Array.from({ length: 38 }, (_, i) => `act${String(i).padStart(2, '0')}`);

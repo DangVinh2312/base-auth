@@ -5,12 +5,10 @@ import {
   HttpException,
   Logger,
 } from '@nestjs/common';
-import {
-  ProductAuthenticationError,
-  ProductAccessDenied,
-  ProductInvalidRequest,
-  TransactionConflictError,
-} from '@base-authorization/typeorm-postgres';
+import { ProductAuthenticationError } from '../auth/services/product-identity.service.js';
+import { ProductAccessDenied } from '../authorization/services/product-authority.service.js';
+import { ProductInvalidRequest } from '../authorization/product-data.gateway.js';
+import { TransactionConflictError } from '../database/helpers/transaction-errors.helper.js';
 
 const logger = new Logger('ProductErrorFilter');
 @Catch()

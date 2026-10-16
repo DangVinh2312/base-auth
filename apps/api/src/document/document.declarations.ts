@@ -1,8 +1,6 @@
-import type { SystemDeclarations } from '@base-authorization/core';
-import type {
-  ProductReleaseSource,
-  ProductStorageBindings,
-} from '@base-authorization/typeorm-postgres';
+import type { SystemDeclarations } from '../authorization/core/authorization.declarations.js';
+import type { ProductReleaseSource } from '../authorization/services/product-manifest.service.js';
+import type { ProductStorageBindings } from '../authorization/product-sql.compiler.js';
 
 /** Document capability fragment: data only, composed into the release in authorization/. */
 export const documentDeclarations: Pick<

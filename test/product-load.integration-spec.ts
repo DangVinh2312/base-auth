@@ -3,19 +3,20 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { DataSource, type Logger } from 'typeorm';
+import { TransactionConflictError } from '../apps/api/dist/database/helpers/transaction-errors.helper.js';
 import {
-  TransactionConflictError,
   type ProductTransactionOptions,
-} from '@base-authorization/typeorm-postgres';
+  ProductTransactionRunner,
+} from '../apps/api/dist/database/product-transaction.runner.js';
 import {
   ProductIdentityService,
-  ProductTransactionRunner,
   createProductPasswordHasher,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/auth/services/product-identity.service.js';
+
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
 
 let postgres: TestPostgres;

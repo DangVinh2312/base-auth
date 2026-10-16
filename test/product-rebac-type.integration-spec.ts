@@ -2,16 +2,14 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { DataSource } from 'typeorm';
-import {
-  ProductBindingRegistry,
-  ProductDataGateway,
-  ProductTransactionRunner,
-} from '@base-authorization/typeorm-postgres/composition';
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
+import { ProductDataGateway } from '../apps/api/dist/authorization/product-data.gateway.js';
+import { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
-import { alice, input, rule, snapshot, validated, core } from '../packages/core/test/fixtures.ts';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
+import { alice, input, rule, snapshot, validated, core } from './core/fixtures.ts';
 import { startPostgres, withClient } from './setup-postgres.ts';
 
 const { planUser } = core;
@@ -98,23 +96,15 @@ test('identity edges cannot grant through a business row pointing at another reg
       },
     });
     await runner.run('read', async (tx) => {
-      const {
-        tenant: oldTenant,
-        membership,
-        ...authority
-      } = snapshot({ declarations, revision: tx.revision });
-      void oldTenant;
-      const { tenant: oldRequestTenant, ...request } = input();
-      void oldRequestTenant;
+      const authority = snapshot({ declarations, revision: tx.revision });
       const decision = planUser(
         {
-          ...request,
+          ...input(),
           now: new Date().toISOString(),
           validUntil: new Date(Date.now() + 1500).toISOString(),
         },
         {
           ...authority,
-          user: membership && { id: membership.identity, state: membership.state },
           rules: [
             rule(
               'submission.read',

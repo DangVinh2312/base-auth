@@ -1,4 +1,7 @@
-import type { ProductPage, ProductRow } from '@base-authorization/typeorm-postgres';
+import type {
+  Page as ProductPage,
+  Row as ProductRow,
+} from '../authorization/product-data.gateway.js';
 import type { AppConfig } from '../config/app.config.js';
 
 export const DOCUMENT_HTTP_PORT = Symbol('DOCUMENT_HTTP_PORT');

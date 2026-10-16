@@ -1,4 +1,4 @@
-import { ReadinessGate } from '@base-authorization/nest';
+import { ReadinessGate } from '../health/services/readiness.service.js';
 import { Module, type DynamicModule } from '@nestjs/common';
 import {
   ADMINISTRATION_HTTP_PORT,
@@ -6,7 +6,10 @@ import {
 } from '../administration/administration.http-port.js';
 import { AUTH_HTTP_PORT, type AuthHttpPort } from '../auth/auth.http-port.js';
 import { DOCUMENT_HTTP_PORT, type DocumentHttpPort } from '../document/document.http-port.js';
-import { METRICS_SNAPSHOT, type MetricsSnapshot } from '../health/product-metrics.service.js';
+import {
+  METRICS_SNAPSHOT,
+  type MetricsSnapshot,
+} from '../health/services/product-metrics.service.js';
 import { ProductRuntime } from './product-runtime.service.js';
 
 /**

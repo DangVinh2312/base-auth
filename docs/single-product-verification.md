@@ -1,5 +1,7 @@
 # IAM thuần / Root ngoài IAM (ADR 0012)
 
+> Implementation tenant và frozen release 1 compatibility fixtures đã bỏ theo [ADR 0014](decisions/0014-remove-legacy-runtime.md). Các kết quả/suites ghi ngày bên dưới là lịch sử của working tree lúc chạy; kiểm chứng sau xóa legacy nằm trong [ledger hiện hành](superpowers/plans/2026-10-16-remove-legacy.md).
+
 Ngày: 2026-10-15. Môi trường: Node 24.20.0, pnpm 12.3.4, Docker 29.8.2, PostgreSQL 18.4 disposable (Testcontainers), macOS. Branch `feat/iam-root-separation`, HEAD `72367b6` (Task 1–9 đã commit) cộng thay đổi docs của Task 10 chưa commit lúc chạy; không staging/production, không push/deploy. Kết quả là lượt chạy local, không thay CI hoặc kiểm chứng production và không nâng trạng thái production-ready. Plan và ledger: `docs/superpowers/plans/2026-10-15-iam-root-separation.md`.
 
 ## Semantics mới

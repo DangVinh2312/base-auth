@@ -1,4 +1,4 @@
-import { ProductAuthorize } from '@base-authorization/nest';
+import { ProductAuthorize } from '../authorization/enforcement/product-authorization.module.js';
 import { Controller, HttpCode, Inject, NotFoundException, Param, Post, Req } from '@nestjs/common';
 import {
   type HttpRequest,

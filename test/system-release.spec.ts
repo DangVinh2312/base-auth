@@ -1,44 +1,18 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { createAuthorizationCore, type IdentityId } from '@base-authorization/core';
-import { ReleaseRejectedError } from '@base-authorization/typeorm-postgres';
+import { createAuthorizationCore } from '../apps/api/dist/authorization/core/authorization.factory.js';
+import type { IdentityId } from '../apps/api/dist/authorization/core/authorization.types.js';
+import { ReleaseRejectedError } from '../apps/api/dist/authorization/helpers/release-content.helper.js';
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
 import {
-  ProductBindingRegistry,
   ProductManifestReconciler,
-  type ProductTransactionRunner,
   prepareProductRelease,
-} from '@base-authorization/typeorm-postgres/composition';
-import {
-  ManifestReconciler,
-  PostgresAuthority,
-  prepareRelease,
-  type TenantTransactionRunner,
-} from '@base-authorization/typeorm-postgres/legacy';
-import {
-  createDayjsTimestampCodec,
-  createStandardValueCodecs,
-} from '@base-authorization/value-adapters';
-import { core, declarations } from '../packages/core/test/fixtures.ts';
-
-test('stable dotted system role keys are valid manifest roles without wildcard permissions', () => {
-  const release = prepareRelease(
-    {
-      sequence: '1',
-      predecessor: '0',
-      declarations: declarations(),
-      roles: [{ key: 'system.root', label: 'Root', authorityLevel: 1000 }],
-      defaultGrants: [],
-      seeds: [],
-      removeSeeds: [],
-      boundaryBindings: [],
-      removeBoundaryBindings: [],
-    },
-    core,
-  );
-  assert.equal(release.roles[0]?.key, 'system.root');
-  assert.deepEqual(release.defaultGrants, []);
-});
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import type { ProductTransactionRunner } from '../apps/api/dist/database/product-transaction.runner.js';
+import { createDayjsTimestampCodec } from '../apps/api/dist/authorization/values/codecs/dayjs-timestamp.codec.js';
+import { createStandardValueCodecs } from '../apps/api/dist/authorization/values/codecs/standard-values.codec.js';
+import { core, declarations } from './core/fixtures.ts';
 
 test('product release v2: roles are key and label, system.* is reserved, no system grant fields', async () => {
   const { productReleaseSource } =
@@ -60,6 +34,18 @@ test('product release v2: roles are key and label, system.* is reserved, no syst
         /reserved/.test(error.message),
       key,
     );
+});
+
+test('product releases reject duplicate role keys and blank labels', async () => {
+  const { productReleaseSource } =
+    await import('../apps/api/dist/authorization/product.manifest.js');
+  const role = { key: 'reviewer', label: 'Reviewer' };
+  for (const roles of [[role, role], [{ ...role, label: '   ' }]]) {
+    assert.throws(
+      () => prepareProductRelease({ ...productReleaseSource, roles }, core),
+      (error) => error instanceof ReleaseRejectedError && error.reason === 'invalid_release',
+    );
+  }
 });
 
 test('product manifest hash is unchanged by the codec refactor (data only, no adapter in hash)', async () => {
@@ -96,37 +82,6 @@ test('releases and declarations are only accepted by the core that prepared them
     /this authorization core/,
   );
   assert.ok(new ProductBindingRegistry(core, release.declarations, productBindings));
-  // A legacy release from one core is refused by a reconciler bound to another.
-  const legacy = prepareRelease(
-    {
-      sequence: '1',
-      predecessor: '0',
-      declarations: declarations(),
-      roles: [],
-      defaultGrants: [],
-      seeds: [],
-      removeSeeds: [],
-      boundaryBindings: [],
-      removeBoundaryBindings: [],
-    },
-    core,
-  );
-  await assert.rejects(
-    new ManifestReconciler({} as TenantTransactionRunner, {
-      ...options,
-      capabilities: legacy.declarations.capabilities,
-      core: other,
-    }).reconcile(core.parseTenantId('00000000-0000-4000-8000-00000000000a'), legacy),
-    (error) => error instanceof ReleaseRejectedError && error.reason === 'invalid_release',
-  );
-  assert.throws(
-    () =>
-      new PostgresAuthority(other, {} as TenantTransactionRunner, legacy.declarations, {
-        validators: {},
-        obligationHandlers: [],
-      }),
-    /this authorization core/,
-  );
 });
 
 test('a failing value codec rejects a release with the normal release error', () => {
@@ -159,87 +114,5 @@ test('a failing value codec rejects a release with the normal release error', ()
         failing,
       ),
     (error) => error instanceof ReleaseRejectedError && error.reason === 'invalid_release',
-  );
-});
-
-test('legacy release hash and validation are unchanged by the product/legacy split', () => {
-  const source = {
-    sequence: '1',
-    predecessor: '0',
-    declarations: declarations(),
-    roles: [
-      { key: 'reviewer', label: 'Reviewer', authorityLevel: 10 },
-      { key: 'system.root', label: 'Root', authorityLevel: 1000 },
-    ],
-    defaultGrants: [
-      {
-        permission: 'submission.read',
-        role: 'reviewer',
-        template: { key: 'all', version: 1 },
-        parameters: {},
-      },
-    ],
-    seeds: [],
-    removeSeeds: [],
-    boundaryBindings: [],
-    removeBoundaryBindings: [],
-  };
-  // Computed from the 50d6053 build, before the split: the legacy envelope stays byte-for-byte.
-  assert.equal(
-    prepareRelease(source, core).hash,
-    'b8fef6264647e605444e39f908addf9822cbed066c57323fd556c0354301361b',
-  );
-  for (const authorityLevel of [-1, 1001, 1.5])
-    assert.throws(
-      () =>
-        prepareRelease(
-          {
-            ...source,
-            roles: [{ key: 'reviewer', label: 'Reviewer', authorityLevel }],
-            defaultGrants: [],
-          },
-          core,
-        ),
-      /authority level/,
-    );
-  assert.throws(
-    () => prepareRelease({ ...source, roles: [...source.roles, source.roles[0]!] }, core),
-    /role reviewer/,
-  );
-  assert.throws(
-    () =>
-      prepareRelease(
-        { ...source, roles: [{ key: 'reviewer', label: ' ', authorityLevel: 10 }] },
-        core,
-      ),
-    /label/,
-  );
-  // Several faults at once: the first error is the same as before the split.
-  assert.throws(
-    () =>
-      prepareRelease(
-        {
-          ...source,
-          roles: [
-            { key: 'a', label: ' ', authorityLevel: 10 },
-            { key: 'b', label: 'B', authorityLevel: -1 },
-          ],
-          defaultGrants: [{ ...source.defaultGrants[0]!, role: 'missing' }],
-        },
-        core,
-      ),
-    /role a label/,
-  );
-  assert.throws(
-    () =>
-      prepareRelease(
-        {
-          ...source,
-          roles: [{ key: 'a', label: 'A', authorityLevel: -1 }],
-          defaultGrants: [{ ...source.defaultGrants[0]!, role: 'missing' }],
-        },
-        core,
-      ),
-    /role a authority level/,
   );
 });

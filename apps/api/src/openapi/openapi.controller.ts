@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { ProductPublic } from '@base-authorization/nest';
+import { ProductPublic } from '../authorization/enforcement/product-authorization.module.js';
 import { productOpenApi } from './product-openapi.schema.js';
 
 @Controller()

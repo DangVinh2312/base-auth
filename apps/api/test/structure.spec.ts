@@ -13,11 +13,9 @@ import {
 } from '@nestjs/common';
 import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants.js';
 import { DiscoveryService, NestFactory } from '@nestjs/core';
-import {
-  ProductIdentityService,
-  ProductOidcService,
-  ProductTransactionRunner,
-} from '@base-authorization/typeorm-postgres/composition';
+import { ProductIdentityService } from '../dist/auth/services/product-identity.service.js';
+import { ProductOidcService } from '../dist/auth/services/product-oidc.service.js';
+import { ProductTransactionRunner } from '../dist/database/product-transaction.runner.js';
 import { AppModule } from '../dist/app.module.js';
 import { loadConfig } from '../dist/config/app.config.js';
 import { ProductRuntime } from '../dist/infrastructure/product-runtime.service.js';
@@ -185,12 +183,10 @@ const expectedOperations = [
   'changePassword',
   'currentSession',
   'detail',
-  'isTenantReady',
   'list',
   'login',
   'logout',
   'markReady',
-  'markTenantReady',
   'reauthenticate',
   'requestPasswordReset',
   'resetPassword',

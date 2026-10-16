@@ -1,25 +1,29 @@
-import { ProductMetrics } from '../health/product-metrics.service.js';
-import { type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
+import { ProductMetrics } from '../health/services/product-metrics.service.js';
+import type { OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { ReadinessGate } from '@base-authorization/nest';
+import { ReadinessGate } from '../health/services/readiness.service.js';
 import {
   type ProductReleaseManifest,
-  type ProductSessionIdentity,
-} from '@base-authorization/typeorm-postgres';
-import {
-  ProductTransactionRunner,
   ProductManifestReconciler,
-  ProductAuthorization,
-  ProductBindingRegistry,
+} from '../authorization/services/product-manifest.service.js';
+import {
+  type ProductSessionIdentity,
   ProductIdentityService,
+  createProductPasswordHasher,
+} from '../auth/services/product-identity.service.js';
+import { ProductTransactionRunner } from '../database/product-transaction.runner.js';
+
+import { ProductAuthorization } from '../authorization/services/product-authority.service.js';
+import { ProductBindingRegistry } from '../authorization/product-sql.compiler.js';
+
+import {
   ProductOidcService,
   createProductOidcProvider,
-  createProductPasswordHasher,
-  verifyProductPrivileges,
-  productObligations,
-  PRODUCT_OFFLINE_ACTOR,
-} from '@base-authorization/typeorm-postgres/composition';
-import type { AuthorizationCore } from '@base-authorization/core';
+} from '../auth/services/product-oidc.service.js';
+import { verifyProductPrivileges } from '../database/helpers/product-database.helper.js';
+import { productObligations } from '../authorization/helpers/product-obligations.helper.js';
+import { PRODUCT_OFFLINE_ACTOR } from '../audit/product-audit.repository.js';
+import type { AuthorizationCore } from '../authorization/core/authorization.factory.js';
 import {
   createProductAuthorizationCore,
   createProductRelease,

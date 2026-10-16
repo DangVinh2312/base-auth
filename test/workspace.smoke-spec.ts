@@ -75,21 +75,12 @@ test('local-only configuration needs no IdP and rejects offline credentials with
   assert.doesNotMatch(result.stderr + result.stdout, /do-not-print-me|leaky_user/);
 });
 
-test('importing @base-authorization/core loads no framework, ORM, driver or value library', () => {
-  const manifest = JSON.parse(
-    readFileSync(new URL('../packages/core/package.json', import.meta.url), 'utf8'),
-  ) as {
-    dependencies?: object;
-    peerDependencies?: object;
-  };
-  assert.equal(manifest.dependencies, undefined);
-  assert.equal(manifest.peerDependencies, undefined);
-
+test('importing the authorization core loads no framework, ORM, driver or value library', () => {
   const probe = `
     import { registerHooks } from 'node:module';
     const loaded = [];
     registerHooks({ resolve(specifier, context, next) { const r = next(specifier, context); loaded.push(r.url); return r; } });
-    const core = await import('@base-authorization/core');
+    const core = await import('./apps/api/dist/authorization/core/authorization.factory.js');
     console.log(JSON.stringify({ exports: Object.keys(core), loaded }));
   `;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
@@ -98,10 +89,10 @@ test('importing @base-authorization/core loads no framework, ORM, driver or valu
   });
   assert.equal(result.status, 0, result.stderr);
   const { exports, loaded } = JSON.parse(result.stdout) as { exports: string[]; loaded: string[] };
-  assert.ok(exports.length > 0, 'core must expose a public API');
-  assert.ok(loaded.some((url) => url.includes('/packages/core/dist/')));
+  assert.ok(exports.length > 0, 'core factory must expose its constructor');
+  assert.ok(loaded.some((url) => url.includes('/apps/api/dist/authorization/core/')));
   const forbidden = loaded.filter((url) =>
-    /node_modules\/(@nestjs|typeorm|pg|pg-[a-z]+|reflect-metadata|express|dayjs|moment)\/|\/packages\/value-adapters\//.test(
+    /node_modules\/(@nestjs|typeorm|pg|pg-[a-z]+|reflect-metadata|express|dayjs|moment)\/|\/authorization\/values\//.test(
       url,
     ),
   );

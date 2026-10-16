@@ -9,19 +9,5 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
   },
-  "include": ["src"],
-  "references": [
-    {
-      "path": "../../packages/core"
-    },
-    {
-      "path": "../../packages/value-adapters"
-    },
-    {
-      "path": "../../packages/nest"
-    },
-    {
-      "path": "../../packages/typeorm-postgres"
-    }
-  ]
+  "include": ["src"]
 }

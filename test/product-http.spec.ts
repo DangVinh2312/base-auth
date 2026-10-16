@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { loadConfig } from '../apps/api/dist/config/app.config.js';
-import { ProductInvalidRequest, rateLimitClient } from '@base-authorization/typeorm-postgres';
+import { ProductInvalidRequest } from '../apps/api/dist/authorization/product-data.gateway.js';
+import { rateLimitClient } from '../apps/api/dist/auth/services/product-identity.service.js';
 import {
   bodyFields,
   enforceCsrf,
@@ -10,7 +11,7 @@ import {
 } from '../apps/api/dist/infrastructure/http-security.helper.js';
 import { ProductErrorFilter } from '../apps/api/dist/infrastructure/product-error.filter.js';
 import { AuthController } from '../apps/api/dist/auth/controllers/auth.controller.js';
-import { ProductMetrics } from '../apps/api/dist/health/product-metrics.service.js';
+import { ProductMetrics } from '../apps/api/dist/health/services/product-metrics.service.js';
 
 const env = {
   NODE_ENV: 'test',

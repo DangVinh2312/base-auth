@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { UserAuthoritySnapshot } from '@base-authorization/core';
 import {
   ProductBindingRegistry,
-  compileProductPlan as compilePlan,
-} from '@base-authorization/typeorm-postgres/composition';
-import { declarations, snapshot, input, core } from '../packages/core/test/fixtures.ts';
+  compilePlan,
+} from '../apps/api/dist/authorization/product-sql.compiler.js';
+import { declarations, snapshot, input, core } from './core/fixtures.ts';
 
 const { planUser, validate } = core;
 
@@ -35,17 +34,7 @@ test('product SQL uses native keys and bound values without any tenant contract'
       siteManagers: { table: 'site_manager', sourceColumn: 'site_id', targetColumn: 'user_id' },
     },
   });
-  const legacy = snapshot();
-  const { tenant, membership, ...facts } = legacy;
-  void tenant;
-  const userFacts: UserAuthoritySnapshot = {
-    ...facts,
-    declarations: d.declarations,
-    user: membership ? { id: membership.identity, state: membership.state } : undefined,
-  };
-  const { tenant: old, ...request } = input();
-  void old;
-  const decision = planUser(request, userFacts);
+  const decision = planUser(input(), snapshot({ declarations: d.declarations }));
   assert.equal(decision.effect, 'allow');
   if (decision.effect !== 'allow') return;
   const sql = compilePlan(decision.plan, registry);

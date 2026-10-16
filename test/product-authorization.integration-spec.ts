@@ -2,24 +2,31 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import { DataSource } from 'typeorm';
-import type { UserCompleteFacts, UserId } from '@base-authorization/core';
+import type {
+  UserCompleteFacts,
+  UserId,
+} from '../apps/api/dist/authorization/core/authorization.types.js';
 import {
   ProductAuthorization,
-  ProductBindingRegistry,
-  ProductDataGateway,
+  readProductAuthority,
+} from '../apps/api/dist/authorization/services/product-authority.service.js';
+import { ProductBindingRegistry } from '../apps/api/dist/authorization/product-sql.compiler.js';
+import { ProductDataGateway } from '../apps/api/dist/authorization/product-data.gateway.js';
+import {
   ProductManifestReconciler,
+  prepareProductRelease,
+} from '../apps/api/dist/authorization/services/product-manifest.service.js';
+import {
   ProductTransactionRunner,
   type ProductTransaction,
-  prepareProductRelease,
-  readProductAuthority,
-  sessionDigest,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/database/product-transaction.runner.js';
+import { sessionDigest } from '../apps/api/dist/auth/services/product-identity.service.js';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
-} from '@base-authorization/typeorm-postgres/operations';
+} from '../apps/api/dist/database/helpers/product-database.helper.js';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
-import { core } from './fixtures/resources.ts';
+import { core } from './core/fixtures.ts';
 
 const { evaluateUser, parseKey, planUser } = core;
 

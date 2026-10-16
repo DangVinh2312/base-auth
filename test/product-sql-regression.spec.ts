@@ -1,24 +1,23 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  createAuthorizationCore,
-  type ScalarCodec,
-  type ValueCodecs,
-} from '@base-authorization/core';
+import { createAuthorizationCore } from '../apps/api/dist/authorization/core/authorization.factory.js';
+import type {
+  ScalarCodec,
+  ValueCodecs,
+} from '../apps/api/dist/authorization/core/ports/value-codecs.port.js';
 import {
   ProductInvalidRequest,
-  type ProductStorageBindings,
-} from '@base-authorization/typeorm-postgres';
-import {
-  ProductBindingRegistry,
   ProductDataGateway,
-  compileProductPlan,
-  type ProductTransaction,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/authorization/product-data.gateway.js';
 import {
-  createDayjsTimestampCodec,
-  createStandardValueCodecs,
-} from '@base-authorization/value-adapters';
+  type ProductStorageBindings,
+  ProductBindingRegistry,
+  compilePlan as compileProductPlan,
+} from '../apps/api/dist/authorization/product-sql.compiler.js';
+
+import type { ProductTransaction } from '../apps/api/dist/database/product-transaction.runner.js';
+import { createDayjsTimestampCodec } from '../apps/api/dist/authorization/values/codecs/dayjs-timestamp.codec.js';
+import { createStandardValueCodecs } from '../apps/api/dist/authorization/values/codecs/standard-values.codec.js';
 import {
   alice,
   declarations as source,
@@ -27,7 +26,7 @@ import {
   snapshot,
   validated,
   core,
-} from '../packages/core/test/fixtures.ts';
+} from './core/fixtures.ts';
 
 const { planUser } = core;
 
@@ -86,13 +85,8 @@ test('product identity relation SQL checks source object registry type as well a
     resources,
     domains: { siteManagers: domain },
   });
-  const { tenant: oldTenant, membership, ...authority } = snapshot({ declarations });
-  void oldTenant;
-  const { tenant: requestTenant, ...request } = input();
-  void requestTenant;
-  const decision = planUser(request, {
-    ...authority,
-    user: membership && { id: membership.identity, state: membership.state },
+  const decision = planUser(input(), {
+    ...snapshot({ declarations }),
     rules: [
       rule('submission.read', { kind: 'identity', identity: alice }, 'allow', 'assignedToMe@1'),
     ],
@@ -131,19 +125,11 @@ test('gateway filters and keys are normalized by the registry core, not a privat
       siteManagers: { table: 'site_manager', sourceColumn: 'site_id', targetColumn: 'user_id' },
     },
   });
-  const {
-    tenant: _tenant,
-    membership: _membership,
-    ...facts
-  } = snapshot({
+  const facts = snapshot({
     declarations: result.declarations,
     rules: [rule('submission.read', { kind: 'role', role: 'reviewer' }, 'allow', 'all@1')],
   });
-  void _tenant;
-  void _membership;
-  const { tenant: _t, ...request } = input();
-  void _t;
-  const decision = spied.planUser(request, { ...facts, user: { id: alice, state: 'active' } });
+  const decision = spied.planUser(input(), facts);
   assert.equal(decision.effect, 'allow');
   if (decision.effect !== 'allow') return;
   const sent: unknown[][] = [];

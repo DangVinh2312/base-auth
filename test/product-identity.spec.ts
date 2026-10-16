@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { canonicalLoginEmail } from '@base-authorization/typeorm-postgres';
 import {
+  canonicalLoginEmail,
   createProductPasswordHasher,
   sessionDigest,
-} from '@base-authorization/typeorm-postgres/composition';
+} from '../apps/api/dist/auth/services/product-identity.service.js';
 
 test('password profile counts code points, preserves spaces and rejects blocklist', async () => {
   const hasher = await createProductPasswordHasher(new Set(['compromised password']));

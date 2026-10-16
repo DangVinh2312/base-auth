@@ -62,26 +62,31 @@ flowchart TD
   Tx --> Audit[Transactional audit outbox]
 ```
 
-Cấu trúc mục tiêu khi thực sự chuyển đổi:
+Cấu trúc source một app sau chuyển đổi 2026-10-16 ([ADR 0013](decisions/0013-single-app-modules.md)); import implementation trực tiếp, không SDK/package nội bộ:
 
 ```text
-src/
-  authentication/
-    credentials/   # Login, password change/reset, reauthentication
-    providers/     # Local credentials / OIDC verification
-    sessions/      # Session lifecycle, cookie, CSRF
-    persistence/
+apps/api/src/
+  auth/
+    controllers/   # HTTP và session cookie/CSRF
+    services/      # Password/session/recovery và OIDC
   authorization/
-    declarations/  # Product resources/actions/policies/boundaries/relations
-    core/          # Types, validation, planner, evaluator
-    persistence/   # Authority repository, SQL compiler, transactions
-    enforcement/   # Decorators, route scanner, gateway
-    administration/
-  modules/         # Product business modules
-  database/migrations/
+    core/          # Pure types, validation, planner, evaluator
+    values/        # Strict codecs
+    enforcement/   # Nest decorators, route inventory và guard
+    services/      # Authority và manifest sync
+    helpers/       # Shared release validation, drift hashes, obligations
+    product-sql.compiler.ts
+    product-data.gateway.ts
+    product.manifest.ts
+  administration/  # HTTP/declarations quản trị
+  document/        # Nghiệp vụ, declarations/bindings và migration ứng dụng
+  database/        # Fixed-purpose transaction runner, probes/config, migrations
+  audit/           # Atomic writer và outbox delivery
+  health/          # Readiness, metrics
+  infrastructure/  # Runtime composition, HTTP security/error mapping
 ```
 
-Không bắt buộc di chuyển file ngay: ba package hiện tại có thể được giữ trong giai đoạn chuyển đổi để tái sử dụng tests. Đích đến là các module có dependency rõ ràng, không phải xuất bản SDK. Core không import Nest/TypeORM/SQL; module nghiệp vụ không truy cập credential repository hoặc authority writer.
+Các package private đã được thay bằng module trong app; không tạo interface/port cho mọi service/repository. Core không import Nest/TypeORM/SQL; HTTP handlers không truy cập credential repository hoặc authority writer. Services dùng TypeORM trực tiếp theo trách nhiệm. Capability facades giới hạn operations của handler vẫn giữ; ESLint/tests kiểm ranh giới nội bộ, không phải process isolation. Bằng chứng từng check nằm trong [kế hoạch chuyển đổi](superpowers/plans/2026-10-16-single-app-modules.md).
 
 Một DB không đồng nghĩa một connection với mọi quyền. Có các DB role giới hạn: data, identity, authority, manifest-sync và migration; mỗi role cần pool/DataSource riêng nếu ứng dụng sử dụng credential riêng. Không còn tạo pool theo tenant. Manifest-sync chỉ được inject vào bootstrap/CLI; migration credential chỉ ở deploy tooling. Đây là phân quyền tối thiểu trong cùng tiến trình, không phải sandbox chống tiến trình Node bị chiếm hoàn toàn.
 
