@@ -1,8 +1,5 @@
 import type { AuthorizationCore } from './authorization.factory.js';
 import type {
-  AuthorizedPlan,
-  CompleteFacts,
-  Decision,
   FactObject,
   IdentityId,
   PlanExpr,
@@ -25,42 +22,11 @@ type Current =
  * Decides one record against a plan with complete facts. Used for record checks and differential
  * tests against SQL; it does not replace query enforcement. Malformed or missing facts deny.
  */
-export function evaluate(
-  core: AuthorizationCore,
-  plan: AuthorizedPlan,
-  facts: CompleteFacts,
-): Decision {
-  try {
-    if (facts.tenant !== plan.tenant) return { effect: 'deny', internalReason: 'tenant_mismatch' };
-    return evaluatePlan(core, plan, {
-      ...facts,
-      edges: facts.edges.filter((edge) => edge.tenant === plan.tenant),
-      exceptions: facts.exceptions.filter((exception) => exception.tenant === plan.tenant),
-    });
-  } catch {
-    return { effect: 'deny', internalReason: 'internal_error' };
-  }
-}
-
 export function evaluateUser(
   core: AuthorizationCore,
   plan: UserAuthorizedPlan,
   facts: UserCompleteFacts,
 ): UserDecision {
-  return evaluatePlan(core, plan, facts);
-}
-
-function evaluatePlan<P extends AuthorizedPlan | UserAuthorizedPlan>(
-  core: AuthorizationCore,
-  plan: P,
-  facts: UserCompleteFacts,
-):
-  | { readonly effect: 'deny'; readonly internalReason: string }
-  | {
-      readonly effect: 'allow';
-      readonly plan: P;
-      readonly obligations: P['obligations'];
-    } {
   try {
     const time = (value: string) => core.canonicalTimestamp(value) ?? invalid('invalid_time');
 

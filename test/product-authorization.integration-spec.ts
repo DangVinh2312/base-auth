@@ -19,7 +19,7 @@ import {
   provisionProductDatabase,
 } from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
-import { core } from './fixtures/resources.ts';
+import { core } from '../packages/core/test/fixtures.ts';
 
 const { evaluateUser, parseKey, planUser } = core;
 

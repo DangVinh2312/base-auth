@@ -54,7 +54,7 @@ export interface PermissionPolicy {
 }
 
 /**
- * Permission boundary (ADR 0003): a code-owned limit bound to a membership per permission. Entries
+ * Permission boundary (ADR 0003): a code-owned limit bound to a user per permission. Entries
  * only restrict — ANDed outside every allow, record allows included — and never grant.
  */
 export interface PermissionBoundary {
@@ -67,8 +67,6 @@ export interface PermissionBoundary {
     readonly requiredScope: Expr;
   }[];
 }
-
-export type BoundaryRef = RelationRef;
 
 /** Reviewed scope template. Parameters are typed values bound per rule; no code, no SQL. */
 export interface ScopeTemplate {

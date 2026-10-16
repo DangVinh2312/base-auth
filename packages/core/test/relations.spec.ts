@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import {
-  type CompleteFacts,
-  type EdgeFact,
+  type UserCompleteFacts,
+  type UserEdgeFact,
   type Expr,
   type FactObject,
   type RelationDeclaration,
@@ -18,12 +18,10 @@ import {
   rule,
   snapshot,
   submission,
-  tenantA,
-  tenantB,
   validated,
 } from './fixtures.ts';
 
-const { evaluate, plan, validate } = core;
+const { evaluateUser: evaluate, planUser: plan, validate } = core;
 
 const s1 = submission('54000000-0000-4000-8000-000000000001', '1');
 const siteA: FactObject = {
@@ -36,10 +34,9 @@ const siteA: FactObject = {
 const edge = (
   key: string,
   source: string,
-  target: EdgeFact['target'],
-  extra: Partial<EdgeFact> = {},
-): EdgeFact => ({
-  tenant: tenantA,
+  target: UserEdgeFact['target'],
+  extra: Partial<UserEdgeFact> = {},
+): UserEdgeFact => ({
   relation: { key, version: 1 },
   source,
   target,
@@ -48,13 +45,13 @@ const edge = (
   ...extra,
 });
 
-const submissionSite = (extra: Partial<EdgeFact> = {}) =>
+const submissionSite = (extra: Partial<UserEdgeFact> = {}) =>
   edge('submission.site', s1.objectId, { kind: 'object', objectId: siteA.objectId }, extra);
 
-const siteManager = (identity = alice, extra: Partial<EdgeFact> = {}) =>
+const siteManager = (identity = alice, extra: Partial<UserEdgeFact> = {}) =>
   edge('site.manager', siteA.objectId, { kind: 'identity', identity }, extra);
 
-function managedSite(f: CompleteFacts): 'allow' | 'deny' {
+function managedSite(f: UserCompleteFacts): 'allow' | 'deny' {
   const rules = [
     rule('submission.read', { kind: 'role', role: 'manager' }, 'allow', 'managedSite@1'),
   ];
@@ -63,7 +60,7 @@ function managedSite(f: CompleteFacts): 'allow' | 'deny' {
   return decision.effect === 'allow' ? evaluate(decision.plan, f).effect : 'deny';
 }
 
-const graph = (edges: EdgeFact[]) => facts(s1, { objects: [s1, siteA], edges });
+const graph = (edges: UserEdgeFact[]) => facts(s1, { objects: [s1, siteA], edges });
 
 test('submission.site → site.manager grants the site manager only', () => {
   assert.equal(managedSite(graph([submissionSite(), siteManager()])), 'allow');
@@ -71,12 +68,7 @@ test('submission.site → site.manager grants the site manager only', () => {
   assert.equal(managedSite(graph([siteManager()])), 'deny');
 });
 
-test('every edge checks tenant and validity window, including the middle step', () => {
-  assert.equal(managedSite(graph([submissionSite({ tenant: tenantB }), siteManager()])), 'deny');
-  assert.equal(
-    managedSite(graph([submissionSite(), siteManager(alice, { tenant: tenantB })])),
-    'deny',
-  );
+test('every edge checks its validity window, including the middle step', () => {
   assert.equal(
     managedSite(
       graph([submissionSite({ expiresAt: '2026-10-13T10:00:00.000000Z' }), siteManager()]),

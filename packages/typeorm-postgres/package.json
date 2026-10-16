@@ -15,10 +15,6 @@
     "./operations": {
       "types": "./dist/operations.d.ts",
       "default": "./dist/operations.js"
-    },
-    "./legacy": {
-      "types": "./dist/legacy.d.ts",
-      "default": "./dist/legacy.js"
     }
   },
   "dependencies": {

@@ -142,9 +142,6 @@ importers:
       prettier:
         specifier: 3.9.10
         version: 3.9.10
-      testcontainers:
-        specifier: 12.2.0
-        version: 12.2.0
       typeorm:
         specifier: 1.1.2
         version: 1.1.2(pg@8.23.1)

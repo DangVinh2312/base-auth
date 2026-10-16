@@ -19,6 +19,7 @@ import {
 } from '@base-authorization/typeorm-postgres/operations';
 import { NestFactory } from '@nestjs/core';
 import { startPostgres } from '../../../test/setup-postgres.ts';
+import { waitForHttpStartup } from '../../../test/http-startup.helper.ts';
 import { AppModule } from '../dist/app.module.js';
 import { loadConfig } from '../dist/config/app.config.js';
 import { ProductRuntime } from '../dist/infrastructure/product-runtime.service.js';
@@ -41,7 +42,7 @@ async function freePort() {
 }
 
 async function stop(child: ChildProcess) {
-  if (child.exitCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill('SIGTERM');
   await new Promise<void>((resolve) => child.once('exit', () => resolve()));
 }
@@ -152,14 +153,9 @@ test('actual API boot, activation/login, scoped read/write, Root bypass with fre
 
   let running = launch();
   child = running.processChild;
-  let live: Response | undefined;
-  for (let i = 0; i < 150 && !live; i++) {
-    if (child.exitCode !== null) assert.fail(`Startup failed: ${running.output()}`);
-    live = await fetch(`${origin}/health/live`).catch(() => undefined);
-    if (!live) await new Promise((r) => setTimeout(r, 50));
-  }
-  assert.equal(live?.status, 200);
-  assert.equal(live?.headers.get('cache-control'), 'no-store');
+  const live = await waitForHttpStartup(child, `${origin}/health/live`, t.signal);
+  assert.equal(live.status, 200);
+  assert.equal(live.headers.get('cache-control'), 'no-store');
   assert.equal((await fetch(`${origin}/health/ready`)).status, 200);
   const jar = new Map<string, string>();
   let csrf = '';

@@ -7,30 +7,15 @@ import {
   core,
   declarations,
   facts,
-  input,
+  input as userInput,
   rule,
-  snapshot,
+  snapshot as userSnapshot,
   submission,
   validated,
 } from './fixtures.ts';
 
-function userInput() {
-  const { tenant: _tenant, ...value } = input();
-  void _tenant;
-  return value;
-}
-
-function userSnapshot() {
-  const { tenant: _tenant, membership: _membership, ...value } = snapshot();
-  void _tenant;
-  void _membership;
-  return { ...value, user: { id: alice, state: 'active' as const } };
-}
-
 function userFacts(amount = '10.00') {
-  const { tenant: _tenant, ...value } = facts(submission('record', '1', { amount }));
-  void _tenant;
-  return { ...value, edges: [], exceptions: [] };
+  return facts(submission('record', '1', { amount }));
 }
 
 test('user authorization exports a tenant-free plan and shares policy, boundary and deny algebra', () => {

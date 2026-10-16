@@ -17,7 +17,7 @@ import {
   type RelationSeed,
   type SyncResult,
   type RejectReason,
-} from './manifest-reconciler.service.js';
+} from '../helpers/release-content.helper.js';
 import { ProductTransactionRunner } from '../runners/product-transaction.runner.js';
 import {
   appendProductAudit,

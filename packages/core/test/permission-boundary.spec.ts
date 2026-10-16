@@ -3,20 +3,20 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
-  type AuthoritySnapshot,
+  type UserAuthoritySnapshot,
   type BoundaryBindingFact,
-  type ExceptionFact,
+  type UserExceptionFact,
   type Expr,
   type FactObject,
-  type PermissionBoundary,
   type RuleFact,
+  type UserTrustedInput,
+  type PermissionBoundary,
   type SystemDeclarations,
-  type TrustedInput,
   type ValidatedDeclarations,
 } from '@base-authorization/core';
-import { alice, bob, core, later, now, tenantA, tenantB } from './fixtures.ts';
+import { alice, bob, core, later, now } from './fixtures.ts';
 
-const { evaluate, plan, validate } = core;
+const { evaluateUser: evaluate, planUser: plan, validate } = core;
 
 const lit = (value: string) => ({ from: 'literal', value }) as const;
 
@@ -176,12 +176,11 @@ const permissions = [
   permission('customer.export', baseline, 'optional'),
 ];
 
-function snapshot(overrides: Partial<AuthoritySnapshot> = {}): AuthoritySnapshot {
+function snapshot(overrides: Partial<UserAuthoritySnapshot> = {}): UserAuthoritySnapshot {
   return {
-    tenant: tenantA,
     revision: '3',
     declarations,
-    membership: { identity: alice, state: 'active' },
+    user: { id: alice, state: 'active' },
     roles: ['admin'],
     permissions,
     rules: [],
@@ -227,8 +226,7 @@ const rule = (
   parameters,
 });
 
-const input = (resource: string, action: string, extra: Partial<TrustedInput> = {}) => ({
-  tenant: tenantA,
+const input = (resource: string, action: string, extra: Partial<UserTrustedInput> = {}) => ({
   principal: { id: alice, assurance: 2 },
   resource,
   action,
@@ -272,8 +270,7 @@ const recordException = (
   record: FactObject,
   permission: string,
   effect: 'allow' | 'deny' = 'allow',
-): ExceptionFact => ({
-  tenant: tenantA,
+): UserExceptionFact => ({
   objectId: record.objectId,
   permission,
   subject: { kind: 'identity', identity: alice },
@@ -286,15 +283,14 @@ const recordException = (
 
 /** Plan with authority facts, then decide one record with complete facts. */
 function decide(
-  request: TrustedInput,
-  facts: AuthoritySnapshot,
+  request: UserTrustedInput,
+  facts: UserAuthoritySnapshot,
   record: FactObject,
-  exceptions: ExceptionFact[] = [],
+  exceptions: UserExceptionFact[] = [],
 ): 'allow' | 'deny' {
   const decision = plan(request, facts);
   if (decision.effect === 'deny') return 'deny';
   return evaluate(decision.plan, {
-    tenant: tenantA,
     now,
     record,
     objects: [record],
@@ -303,7 +299,7 @@ function decide(
   }).effect;
 }
 
-const planReason = (request: TrustedInput, facts: AuthoritySnapshot) => {
+const planReason = (request: UserTrustedInput, facts: UserAuthoritySnapshot) => {
   const decision = plan(request, facts);
   return decision.effect === 'deny' ? decision.internalReason : 'allow';
 };
@@ -516,7 +512,7 @@ describe('permission boundary decisions', () => {
 
   test('missing or invalid boundary facts fail closed', () => {
     const rules = [rule('contract.approve', 'allContracts')];
-    const cases: [string, Partial<AuthoritySnapshot>, string][] = [
+    const cases: [string, Partial<UserAuthoritySnapshot>, string][] = [
       [
         'unknown version',
         { boundaries: [binding('contract.approve', 'approvalAmount', 9)] },
@@ -623,14 +619,6 @@ describe('permission boundary decisions', () => {
       context: { amount: '1', currency: 'VND', boundary: 'none', roleKey: 'reviewer' },
     });
     assert.equal(decide(forged, facts, contract('200000000')), 'deny');
-  });
-
-  test('another tenant is denied whatever the boundary', () => {
-    const facts = snapshot({
-      rules: [rule('customer.export', 'allCustomers')],
-      boundaries: [binding('customer.export', 'regionalExport')],
-    });
-    assert.equal(decide({ ...exportCustomers, tenant: tenantB }, facts, customer('north')), 'deny');
   });
 
   test('property (seeded): a bound boundary never enlarges the allowed set', () => {

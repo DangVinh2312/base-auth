@@ -8,14 +8,10 @@ import {
 } from './expression.helper.js';
 import type { AuthorizationCore } from './authorization.factory.js';
 import type {
-  AuthorizedPlan,
-  AuthoritySnapshot,
-  Decision,
   FieldKind,
   PlanExpr,
   RuleFact,
   Scalar,
-  TrustedInput,
   UserAuthorizedPlan,
   UserAuthoritySnapshot,
   UserDecision,
@@ -30,7 +26,7 @@ const deny = (reason: string): never => {
 };
 
 /** One mapping for every planner entry point: denials, configuration faults and the rest. */
-function denied(error: unknown): Extract<Decision, { effect: 'deny' }> {
+function denied(error: unknown): Extract<UserDecision, { effect: 'deny' }> {
   if (error instanceof Denied) return { effect: 'deny', internalReason: error.message };
   if (error instanceof ConfigurationError)
     return { effect: 'deny', internalReason: `configuration: ${error.message}` };
@@ -78,39 +74,8 @@ function resolveTarget(
  * P = policy.requiredScope AND boundary.requiredScope AND (allow scopes OR record allow)
  *     AND NOT (deny scopes OR record deny).
  * The permission boundary (ADR 0003) is one more AND outside every allow; it never grants.
- * Tenant and membership are hard boundaries checked first. Any missing, unknown or malformed fact
- * or configuration denies; nothing is skipped or truncated. Pure: no I/O, inputs are not mutated.
+ * Any missing, unknown or malformed fact or configuration denies; inputs are not mutated.
  */
-export function plan(
-  core: AuthorizationCore,
-  input: TrustedInput,
-  snapshot: AuthoritySnapshot,
-): Decision {
-  try {
-    if (!core.isValidated(snapshot.declarations)) deny('unvalidated_declarations');
-    if (!core.isCanonicalUuid(input.tenant) || input.tenant !== snapshot.tenant)
-      deny('tenant_mismatch');
-    const membership = snapshot.membership ?? deny('inactive_membership');
-    if (membership.identity !== input.principal.id || membership.state !== 'active')
-      deny('inactive_membership');
-    const decision = buildPlan(core, input, {
-      ...snapshot,
-      user: { id: membership.identity, state: membership.state },
-    });
-    if (decision.effect === 'deny') return decision;
-    const { userId, ...common } = decision.plan;
-    const authorized: AuthorizedPlan = deepFreeze({
-      ...common,
-      tenant: input.tenant,
-      identity: userId,
-    });
-    return { effect: 'allow', plan: authorized, obligations: authorized.obligations };
-  } catch (error) {
-    return denied(error);
-  }
-}
-
-/** Product entry point: no tenant routing or membership is involved. */
 export function planUser(
   core: AuthorizationCore,
   input: UserTrustedInput,

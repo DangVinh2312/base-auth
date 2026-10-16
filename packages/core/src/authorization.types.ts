@@ -1,10 +1,10 @@
 import type { ValidatedDeclarations } from './authorization.declarations.js';
 
-/** Branded tenant id. The brand prevents programming mistakes only; it is not a security boundary. */
-export type TenantId = string & { readonly tenantId: unique symbol };
-
-/** Branded global identity id (canonical lowercase UUID). Not a security boundary either. */
+/** Branded global identity id (canonical lowercase UUID). Not a security boundary. */
 export type IdentityId = string & { readonly identityId: unique symbol };
+
+/** Product user id; UUID validation is still required at trusted adapter boundaries. */
+export type UserId = IdentityId;
 
 export type KeyKind = 'integer' | 'uuid' | 'string';
 
@@ -68,9 +68,8 @@ export interface Obligation {
   readonly handler: string;
 }
 
-export interface AuthorizedPlan {
-  readonly tenant: TenantId;
-  readonly identity: IdentityId;
+export interface UserAuthorizedPlan {
+  readonly userId: UserId;
   readonly resource: string;
   readonly action: string;
   readonly permission: string;
@@ -80,11 +79,11 @@ export interface AuthorizedPlan {
   readonly obligations: readonly Obligation[];
 }
 
-export type Decision =
+export type UserDecision =
   | { readonly effect: 'deny'; readonly internalReason: string }
   | {
       readonly effect: 'allow';
-      readonly plan: AuthorizedPlan;
+      readonly plan: UserAuthorizedPlan;
       readonly obligations: readonly Obligation[];
     };
 
@@ -94,8 +93,7 @@ export interface TrustedPrincipal {
 }
 
 /** Built by trusted adapters only (verified session, validated routing, authority clock). */
-export interface TrustedInput {
-  readonly tenant: TenantId;
+export interface UserTrustedInput {
   readonly principal: TrustedPrincipal;
   readonly resource: string;
   readonly action: string;
@@ -133,7 +131,7 @@ export interface PermissionFact {
   readonly lifecycle: Lifecycle;
 }
 
-/** The membership's boundary binding for one permission, with the stored definition lifecycle. */
+/** The user's boundary binding for one permission, with the stored definition lifecycle. */
 export interface BoundaryBindingFact {
   readonly identity: IdentityId;
   readonly permission: string;
@@ -152,17 +150,16 @@ export interface RuleFact {
   readonly parameters: Readonly<Record<string, Scalar>>;
 }
 
-/** Authority facts read inside the tenant transaction, plus the adapter's handler registry. */
-export interface AuthoritySnapshot {
-  readonly tenant: TenantId;
+/** Authority facts read inside the application transaction, plus the adapter's handler registry. */
+export interface UserAuthoritySnapshot {
   readonly revision: string;
   readonly declarations: ValidatedDeclarations;
-  readonly membership:
-    { readonly identity: IdentityId; readonly state: 'active' | 'suspended' } | undefined;
+  readonly user:
+    { readonly id: UserId; readonly state: 'active' | 'suspended' | 'pending' } | undefined;
   readonly roles: readonly string[];
   readonly permissions: readonly PermissionFact[];
   readonly rules: readonly RuleFact[];
-  /** Permission boundary bindings of this membership, read under the same fence/revision. */
+  /** Permission boundary bindings of this user, read under the same fence/revision. */
   readonly boundaries: readonly BoundaryBindingFact[];
   readonly registry: {
     readonly validators: Readonly<Record<string, ContextValidator>>;
@@ -179,8 +176,7 @@ export interface FactObject {
   readonly fields: Readonly<Record<string, FieldValue>>;
 }
 
-export interface EdgeFact {
-  readonly tenant: TenantId;
+export interface UserEdgeFact {
   readonly relation: RelationRef;
   readonly source: string;
   readonly target:
@@ -190,8 +186,7 @@ export interface EdgeFact {
   readonly expiresAt: string | null;
 }
 
-export interface ExceptionFact {
-  readonly tenant: TenantId;
+export interface UserExceptionFact {
   readonly objectId: string;
   readonly permission: string;
   readonly subject: RuleFact['subject'];
@@ -203,42 +198,10 @@ export interface ExceptionFact {
 }
 
 /** Everything needed to decide one record; missing facts make the evaluator deny. */
-export interface CompleteFacts {
-  readonly tenant: TenantId;
+export interface UserCompleteFacts {
   readonly now: string;
   readonly record: FactObject;
   readonly objects: readonly FactObject[];
-  readonly edges: readonly EdgeFact[];
-  readonly exceptions: readonly ExceptionFact[];
-}
-
-/** Product user id; UUID validation is still required at trusted adapter boundaries. */
-export type UserId = IdentityId;
-
-export type UserTrustedInput = Omit<TrustedInput, 'tenant'>;
-
-export type UserAuthoritySnapshot = Omit<AuthoritySnapshot, 'tenant' | 'membership'> & {
-  readonly user:
-    { readonly id: UserId; readonly state: 'active' | 'suspended' | 'pending' } | undefined;
-};
-
-export type UserAuthorizedPlan = Omit<AuthorizedPlan, 'tenant' | 'identity'> & {
-  readonly userId: UserId;
-};
-
-export type UserDecision =
-  | Extract<Decision, { effect: 'deny' }>
-  | {
-      readonly effect: 'allow';
-      readonly plan: UserAuthorizedPlan;
-      readonly obligations: readonly Obligation[];
-    };
-
-export type UserEdgeFact = Omit<EdgeFact, 'tenant'>;
-
-export type UserExceptionFact = Omit<ExceptionFact, 'tenant'>;
-
-export type UserCompleteFacts = Omit<CompleteFacts, 'tenant' | 'edges' | 'exceptions'> & {
   readonly edges: readonly UserEdgeFact[];
   readonly exceptions: readonly UserExceptionFact[];
-};
+}

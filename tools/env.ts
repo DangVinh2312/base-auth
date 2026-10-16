@@ -24,7 +24,3 @@ export function adminConnection(): PostgresConnectionSettings {
     database: decodeURIComponent(url.pathname.slice(1)) || 'postgres',
   };
 }
-
-export function identityDatabaseName(): string {
-  return process.env.IDENTITY_DATABASE_NAME || 'authz_identity';
-}

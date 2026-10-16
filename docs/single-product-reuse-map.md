@@ -1,21 +1,19 @@
 # Single-product reuse map
 
-| Existing implementation            | Reused/adapted result                                                                                                                             | Evidence                                                                               |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| core AST/validator/key codecs      | Same definitions/key precision/collation; user contracts added without fake tenant                                                                | 79 core tests including legacy regression                                              |
-| planner/evaluator                  | Shared algebra/traversal; `planUser/evaluateUser` omit tenant; `planUnrestricted` (Root, ADR 0012); historical wrappers retain real tenant checks | User boundary/policy/deny/Root/ReBAC tests; boundary and Root mutations caught         |
-| generic boundary delta             | User/permission binding, exact version/lifecycle, outside all allows                                                                              | Product SQL/evaluator parity, boundary tightening/revoke                               |
-| compiler/gateway/filter/projection | Product SQL adapted from same repo implementation; native binds, source type/version, validity and revision checks                                | Product auth suite + type/validity regressions; legacy collation suite retained        |
-| fenced runner/retry/obligations    | Application singleton, fresh session+facts under same transaction, bounded retries and metrics                                                    | Real shared/exclusive locks,55P03, write/read-action and audit tests                   |
-| release validator/reconciler       | Existing validator/canonical preparation and sync operations reused; release v2 (role key+label), genesis + full materialized drift gate added    | Late Root/old catalog, races, collision, omission drift, removal, persistent bootstrap |
-| identity/tenant migrations         | Historical files untouched; new product path + forward protections/versioning                                                                     | Fresh DB, product fixture upgrade, safe legacy/refusal fixtures                        |
-| tenant provisioner/registry        | Kept only for legacy parity/tools, absent from new AppModule                                                                                      | Full old PG regression still runs; product uses fixed-purpose logins                   |
-| Nest readiness/boot                | Same readiness instance; real AppModule privilege/sync before listener; route inventory/guard added                                               | Real Nest startup tests + HTTP E2E drift startup rejection                             |
-| API health/config/audit            | Health retained; product config/log sanitization, audit effects and minimal document/suspend routes                                               | Unit/smoke/HTTP E2E                                                                    |
-| Existing test harness              | pnpm + tsc + node:test + Testcontainers kept, E2E suite added only with actual tests                                                              | Full suites run locally; CI remote unrun                                               |
-| Authentication                     | New Argon2id/openid-client where no implementation existed                                                                                        | Local reset/link races, real signed token/JWKS fixture, opaque sessions                |
+| Existing implementation            | Reused/adapted result                                                                                                                          | Evidence                                                                                     |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| core AST/validator/key codecs      | Same definitions/key precision/collation; user contracts added without fake tenant                                                             | Core user/algebra/codec/provenance regressions                                               |
+| planner/evaluator                  | Shared algebra/traversal; `planUser/evaluateUser` omit tenant; `planUnrestricted` (Root, ADR 0012); tenant wrappers removed (ADR 0013)         | User boundary/policy/deny/Root/ReBAC tests; boundary and Root mutations caught               |
+| generic boundary delta             | User/permission binding, exact version/lifecycle, outside all allows                                                                           | Product SQL/evaluator parity, boundary tightening/revoke                                     |
+| compiler/gateway/filter/projection | Product SQL adapted from same repo implementation; native binds, source type/version, validity and revision checks                             | Product auth suite + type/validity regressions; compiler/collation suites use product schema |
+| fenced runner/retry/obligations    | Application singleton, fresh session+facts under same transaction, bounded retries and metrics                                                 | Real shared/exclusive locks,55P03, write/read-action and audit tests                         |
+| release validator/reconciler       | Existing validator/canonical preparation and sync operations reused; release v2 (role key+label), genesis + full materialized drift gate added | Late Root/old catalog, races, collision, omission drift, removal, persistent bootstrap       |
+| Nest readiness/boot                | Same readiness instance; real AppModule privilege/sync before listener; route inventory/guard added                                            | Real Nest startup tests + HTTP E2E drift startup rejection                                   |
+| API health/config/audit            | Health retained; product config/log sanitization, audit effects and minimal document/suspend routes                                            | Unit/smoke/HTTP E2E                                                                          |
+| Existing test harness              | pnpm + tsc + node:test + Testcontainers kept, E2E suite added only with actual tests                                                           | Full suites run locally; CI remote unrun                                                     |
+| Authentication                     | New Argon2id/openid-client where no implementation existed                                                                                     | Local reset/link races, real signed token/JWKS fixture, opaque sessions                      |
 
-No source or business logic copied from another repository. `base-auth/docs/prompt.md` was read as the task brief only. Layout/packages and locked versions retained; only required auth libraries/direct runtime dependencies added. Legacy code will be removable after real migration/parity decisions; it is not tenant routing in the new runtime.
+No source or business logic copied from another repository. `base-auth/docs/prompt.md` was read as the task brief only. Layout/packages and locked versions retained; only required auth libraries/direct runtime dependencies added. Tenant implementation/contracts/CLI and frozen release 1 fixtures removed before deployment (ADR 0013); package topology retained.
 
 # Mở rộng và tái sử dụng sau giai đoạn A (2026-10-14)
 
@@ -28,7 +26,7 @@ apps/api (composition root: infrastructure/, auth/, document/, administration/, 
 tools/product.ts (CLI offline)
   ├── core: createAuthorizationCore + types/ports (ValueCodecs, ScalarCodec)
   ├── value-adapters: Day.js timestamp + int64/decimal/uuid/string/boolean codecs
-  ├── typeorm-postgres: `.` (errors/types), ./composition, ./operations (chỉ CLI), ./legacy
+  ├── typeorm-postgres: `.` (errors/types), ./composition, ./operations (chỉ CLI)
   └── nest: ProductAuthorize, route inventory, guard (không import thư viện giá trị)
 
 value-adapters ──type imports──> core
@@ -36,7 +34,7 @@ core ──X──> Day.js / Moment / NestJS / TypeORM / pg / value-adapters
 feature handlers (auth/document/administration/health/openapi) ──> chỉ facade token + Nest decorators
 ```
 
-Core không có production dependency và không có default engine. Mã chọn adapter nằm ở một nơi: `createProductAuthorizationCore()` trong `apps/api/src/authorization/product.manifest.ts`; `infrastructure/product-runtime.service.ts` và `tools/product.ts` cùng gọi nó (`tools/provision.ts` legacy tự ghép lõi chuẩn để kiểm tenant id).
+Core không có production dependency và không có default engine. Mã chọn adapter nằm ở một nơi: `createProductAuthorizationCore()` trong `apps/api/src/authorization/product.manifest.ts`; `infrastructure/product-runtime.service.ts` và `tools/product.ts` cùng gọi nó.
 
 ## Composition copy/paste (Day.js adapter)
 
@@ -77,25 +75,23 @@ Ví dụ theo `document` (xem `apps/api/src/document/`). Thay `invoice` cho tên
 
 ## Public API migration map
 
-| Trước (free function / import)                                              | Sau                                                                                                  |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `validate`, `isValidated`                                                   | `core.validate(declarations)`, `core.isValidated(declarations)` (provenance theo instance)           |
-| `plan`, `evaluate` (legacy, tenant thật)                                    | `core.plan(...)`, `core.evaluate(...)`; plan do instance khác phát hành bị `foreign_plan`            |
-| `planUser`, `evaluateUser`                                                  | `core.planUser(...)`, `core.evaluateUser(...)`                                                       |
-| `normalizeValue`, `compareValues`, `canonicalTimestamp`, `canonicalInt64`   | cùng tên, là method của `AuthorizationCore`, delegate tới codec                                      |
-| `parseKey`, `isCanonicalUuid`, `parseTenantId`                              | method của `AuthorizationCore` (UUID canonical vẫn chỉ lowercase)                                    |
-| `prepareRelease(source)`, `prepareProductRelease(source)`, constant release | `prepareRelease(source, core)`, `prepareProductRelease(source, core)`, `createProductRelease(core)`  |
-| `new BindingRegistry(decl, bindings)`, `ProductBindingRegistry(...)`        | thêm `core` làm tham số đầu                                                                          |
-| `ProductManifestReconciler`/`ManifestReconciler` options                    | thêm `options.core`; `reissueRootActivation(..., core)`, `revokeProductRoot(..., core)`              |
-| `ProductAuthorization(runner, bindings, validators, writable)`              | tham số thứ ba là `{ validators, obligations }` (typed registry, `productObligations` có `audit@1`)  |
-| `ProductIdentityService.audit(tx, userId, 'string')`                        | kind typed `ProductIdentityAuditKind`; writer chung `appendProductAudit` (`./operations`)            |
-| `@base-authorization/typeorm-postgres` root (runner, gateway, provision...) | root: errors/types/helpers an toàn; `./composition` (constructors); `./operations` (CLI); `./legacy` |
-| `apps/api/src/{product.controller, http-services, product-runtime,...}.ts`  | `auth/`, `document/`, `administration/`, `health/`, `openapi/`, `infrastructure/`, `authorization/`  |
-| `apps/api/src/audit/audit-outbox.service.ts`                                | `apps/api/src/legacy/audit-outbox.service.ts` (không wire vào product runtime)                       |
-| `import ... from '@base-authorization/typeorm-postgres/dist/...'`           | không còn resolve (`ERR_PACKAGE_PATH_NOT_EXPORTED`); dùng entrypoint chính thức                      |
+| Trước (free function / import)                                              | Sau                                                                                                 |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `validate`, `isValidated`                                                   | `core.validate(declarations)`, `core.isValidated(declarations)` (provenance theo instance)          |
+| `planUser`, `evaluateUser`                                                  | `core.planUser(...)`, `core.evaluateUser(...)`                                                      |
+| `normalizeValue`, `compareValues`, `canonicalTimestamp`, `canonicalInt64`   | cùng tên, là method của `AuthorizationCore`, delegate tới codec                                     |
+| `parseKey`, `isCanonicalUuid`                                               | method của `AuthorizationCore` (UUID canonical vẫn chỉ lowercase)                                   |
+| `prepareProductRelease(source)`, constant release                           | `prepareProductRelease(source, core)`, `createProductRelease(core)`                                 |
+| `new ProductBindingRegistry(decl, bindings)`                                | thêm `core` làm tham số đầu                                                                         |
+| `ProductManifestReconciler` options                                         | thêm `options.core`; `reissueRootActivation(..., core)`, `revokeProductRoot(..., core)`             |
+| `ProductAuthorization(runner, bindings, validators, writable)`              | tham số thứ ba là `{ validators, obligations }` (typed registry, `productObligations` có `audit@1`) |
+| `ProductIdentityService.audit(tx, userId, 'string')`                        | kind typed `ProductIdentityAuditKind`; writer chung `appendProductAudit` (`./operations`)           |
+| `@base-authorization/typeorm-postgres` root (runner, gateway, provision...) | root: errors/types/helpers an toàn; `./composition` (constructors); `./operations` (CLI)            |
+| `apps/api/src/{product.controller, http-services, product-runtime,...}.ts`  | `auth/`, `document/`, `administration/`, `health/`, `openapi/`, `infrastructure/`, `authorization/` |
+| `import ... from '@base-authorization/typeorm-postgres/dist/...'`           | không còn resolve (`ERR_PACKAGE_PATH_NOT_EXPORTED`); dùng entrypoint chính thức                     |
 
 Hành vi đổi có chủ ý: timestamp strict (30/2, `24:00:00`, offset, hơn 6 chữ số lẻ nay bị từ chối); audit `policy_revision` = revision đã đánh giá, `resultingRevision` trong metadata; lệnh offline ghi actor là `PRODUCT_OFFLINE_ACTOR`. Chi tiết ở ADR 0009.
 
 ## Chưa có
 
-Delegation, generic administration (role/grant/boundary/relation API), resource-to-resource domain binding, audit sink/recovery delivery bền vững (T10), tối ưu I/O trong fence (T8), limiter/session resource bounds (T9) **chưa được triển khai**; không dùng tài liệu này làm bằng chứng chúng tồn tại.
+Delegation, generic administration và resource-to-resource domain binding chưa mở. T8 đã triển khai; T9 và T10 có phần độc lập đã triển khai và phần phụ thuộc policy/provider còn bị chặn (ADR 0010–0011, ledger của foundation hardening). Worker audit chưa wire vì thiếu sink thật; recovery delivery bền vững chưa có. Trạng thái theo kế hoạch/verification, không suy từ cấu trúc source.

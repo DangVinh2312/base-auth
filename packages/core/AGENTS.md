@@ -11,31 +11,31 @@ Lõi quyết định thuần: types, typed keys, AST, validate/plan/evaluate qua
 
 ## Bản đồ file
 
-| File                            | Trách nhiệm                                                                                               |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `authorization.types.ts`        | `TenantId`, `Key`, facts, `Expr`/`PlanExpr`, `Decision`, `TrustedInput`                                   |
-| `authorization.factory.ts`      | `createAuthorizationCore({ values })`: instance validate/plan/evaluate + scalar/key methods               |
-| `key.codec.ts`                  | Helper thuần của khóa: `keyEquals`, `keyToString`, `MAX_KEY_BYTES`, byte length/code point                |
-| `expression.helper.ts`          | Type-check/lower/simplify AST, `MAX_PATH_DEPTH` (8); normalize nhận từ instance                           |
-| `ports/value-codecs.port.ts`    | Interface `ScalarCodec`/`ValueCodecs` (chỉ type); implementation ở `packages/value-adapters`              |
-| `authorization.declarations.ts` | Kiểu `SystemDeclarations` (resource, action, policy, scope template, relation)                            |
-| `policy.validator.ts`           | `validateDeclarations` → đóng băng + `canonical`; `canonicalJson` thuần                                   |
-| `authorization.planner.ts`      | `planUser`/`planUnrestricted` (chung `resolveTarget`) → `UserAuthorizedPlan`; `plan` là wrapper tenant cũ |
-| `authorization.evaluator.ts`    | `evaluateUser` và `evaluate` dùng chung traversal AST; không thay SQL                                     |
+| File                            | Trách nhiệm                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------------- |
+| `authorization.types.ts`        | `Key`, facts, `Expr`/`PlanExpr`, contracts `User*`, `TrustedPrincipal`                       |
+| `authorization.factory.ts`      | `createAuthorizationCore({ values })`: instance validate/plan/evaluate + scalar/key methods  |
+| `key.codec.ts`                  | Helper thuần của khóa: `keyEquals`, `keyToString`, `MAX_KEY_BYTES`, byte length/code point   |
+| `expression.helper.ts`          | Type-check/lower/simplify AST, `MAX_PATH_DEPTH` (8); normalize nhận từ instance              |
+| `ports/value-codecs.port.ts`    | Interface `ScalarCodec`/`ValueCodecs` (chỉ type); implementation ở `packages/value-adapters` |
+| `authorization.declarations.ts` | Kiểu `SystemDeclarations` (resource, action, policy, scope template, relation)               |
+| `policy.validator.ts`           | `validateDeclarations` → đóng băng + `canonical`; `canonicalJson` thuần                      |
+| `authorization.planner.ts`      | `planUser`/`planUnrestricted` (chung `resolveTarget`) → `UserAuthorizedPlan`                 |
+| `authorization.evaluator.ts`    | `evaluateUser` duyệt AST thuần; không thay SQL                                               |
 
 ## Bất biến cần giữ khi sửa
 
-- `P = requiredScope AND (allow OR record allow) AND NOT (deny OR record deny)`; tenant/membership/policy/validator/obligation kiểm tra trước. Một rule hỏng → cả quyết định deny.
+- `P = requiredScope AND (allow OR record allow) AND NOT (deny OR record deny)`; principal/user/policy/validator/obligation kiểm tra trước. Một rule hỏng → cả quyết định deny.
 - Permission boundary (ADR 0003, `docs/permission-boundaries.md`) đã lower vào cùng AST, AND ngoài mọi allow; không tự grant.
-- Contract một sản phẩm dùng `UserTrustedInput`, `UserAuthoritySnapshot.user`, `UserAuthorizedPlan.userId` và facts không tenant. Không thêm tenant giả hoặc flag bỏ isolation. `plan`/`evaluate` cũ chỉ giữ compatibility trong giai đoạn chuyển đổi và kiểm tenant riêng.
+- Contract một sản phẩm dùng `UserTrustedInput`, `UserAuthoritySnapshot.user`, `UserAuthorizedPlan.userId` và facts không tenant. Không thêm tenant giả hoặc flag bỏ isolation. Tenant contracts/wrappers/parser đã bỏ theo ADR 0013.
 - Lõi không biết Root. `planUnrestricted` giữ mọi kiểm tra target/principal/user/validity của `planUser` cộng revision canonical, predicate `true`, không obligations; chỉ nhánh Root của `ProductAuthorization.access` được gọi. ESLint `no-restricted-syntax` chặn truy cập thuộc tính/destructuring tên `planUnrestricted` ngoài file `packages/typeorm-postgres/src/services/product-authority.service.ts` và `packages/core/test/**` (test ở `test/package-boundaries.spec.ts`); computed access như `core['planUnrestricted']` không bị bắt, nên đây là ranh giới developer, không phải sandbox. Tên role, kể cả `system.root`, không tạo bypass.
 - JS `number` bị từ chối cho integer; decimal so bằng chuỗi; chuỗi so theo code point (khớp `COLLATE "C"`).
 - `not`/`exception` chỉ lõi tạo. Emergency exception không cấp quyền cho tới Task 12; emergency deny vẫn có hiệu lực.
-- `core.plan`/`core.planUser` chỉ nhận output của `core.validate` của **cùng instance** (WeakSet theo instance); `core.evaluate*` chỉ nhận plan do chính instance đó phát hành (`foreign_plan`). Không có engine/codec mặc định; free function scalar/plan/evaluate đã bỏ (ADR 0009).
+- `core.planUser`/`core.planUnrestricted` chỉ nhận output của `core.validate` của **cùng instance** (WeakSet theo instance); `core.evaluateUser` chỉ nhận plan do chính instance đó phát hành (`foreign_plan`). Không có engine/codec mặc định; free function scalar/plan/evaluate đã bỏ (ADR 0009).
 
 ## Khi refactor sang codec ports
 
-- Factory `createAuthorizationCore` và ports đã có (`authorization.factory.ts`, `ports/value-codecs.port.ts`). Codec thiếu/sai hình dạng → throw khi tạo; codec throw hoặc trả ngoài contract → mọi đường quyết định thành deny, `validate` trả `{ ok: false }` (không echo input). `isCanonicalUuid`/`parseTenantId`: codec quyết định hợp lệ, core tự giữ yêu cầu chữ thường. Không tự đổi public API ngoài task được yêu cầu.
+- Factory `createAuthorizationCore` và ports đã có (`authorization.factory.ts`, `ports/value-codecs.port.ts`). Codec thiếu/sai hình dạng → throw khi tạo; codec throw hoặc trả ngoài contract → mọi đường quyết định thành deny, `validate` trả `{ ok: false }` (không echo input). `isCanonicalUuid`: codec quyết định hợp lệ, core tự giữ yêu cầu chữ thường. Không tự đổi public API ngoài task được yêu cầu.
 - Core định nghĩa interface bằng primitive/readonly data; thư viện Day.js/Moment/decimal/UUID nằm ngoài core. Test adapter qua public API từ package adapter hoặc integration harness, không tạo dependency ngược từ core source.
 - Không dùng clock, locale/timezone toàn cục hoặc mutable default codec. Một runtime phải dùng bộ codec nhất quán cho validate/plan/evaluate; dữ liệu validated không được chuyển sang runtime có semantics khác mà bỏ validation.
 - Parse strict: từ chối invalid input thay vì tự sửa ngày, trim, làm tròn hoặc đoán timezone. Giữ integer/decimal chính xác và timestamp precision theo contract; lỗi codec không sinh allow.

@@ -54,7 +54,7 @@ export default tseslint.config(
     rules: { 'no-restricted-imports': ['error', { patterns: driverImports }] },
   },
   {
-    // Infrastructure composes through ./composition only; operations/legacy are offline/legacy.
+    // Infrastructure composes through ./composition only; operations are offline.
     files: ['apps/api/src/infrastructure/**/*.ts'],
     rules: {
       'no-restricted-imports': [
@@ -62,12 +62,9 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: [
-                '@base-authorization/typeorm-postgres/operations',
-                '@base-authorization/typeorm-postgres/legacy',
-              ],
+              group: ['@base-authorization/typeorm-postgres/operations'],
               message:
-                'API infrastructure imports only the root contracts and ./composition; operations is for tools/, legacy is retired tenancy.',
+                'API infrastructure imports only the root contracts and ./composition; operations is for tools/.',
             },
           ],
         },
@@ -88,7 +85,7 @@ export default tseslint.config(
             {
               group: ['@base-authorization/typeorm-postgres/*'],
               message:
-                'Handlers use root contracts and facade tokens; composition/operations/legacy and private paths are for infrastructure and tools.',
+                'Handlers use root contracts and facade tokens; composition/operations and private paths are for infrastructure and tools.',
             },
             {
               group: [

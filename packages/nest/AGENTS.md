@@ -1,6 +1,6 @@
 # @base-authorization/nest
 
-Adapter NestJS: decorators, guard, route manifest, request context, readiness, boot coordinator. Đọc root `AGENTS.md` trước; file này chỉ bổ sung phần riêng của package.
+Adapter NestJS: decorators, guard, route manifest, request context, readiness. Đọc root `AGENTS.md` trước; file này chỉ bổ sung phần riêng của package.
 
 ## Ranh giới
 
@@ -11,15 +11,14 @@ Adapter NestJS: decorators, guard, route manifest, request context, readiness, b
 ## Hiện trạng
 
 - `src/services/readiness.service.ts`: `ReadinessGate`, mặc định chưa ready → `/health/ready` 503.
-- `src/services/bootstrap-coordinator.service.ts`: `BootstrapModule`/`BootstrapCoordinator` chạy manifest sync qua `ManifestSyncPort` (token `MANIFEST_SYNC` không export ra module ngoài) trong `onApplicationBootstrap`, trước `listen()`; tenant lỗi giữ not ready. Chưa ghép vào `apps/api`.
 - `src/product-authorization.module.ts`: `ProductAuthorizationModule.register({ declarations, requestAuth })` cài global guard và kiểm kê HTTP controller routes trong `onModuleInit` (xong trước mọi `onApplicationBootstrap`, kể cả hook của module sâu hơn như runtime sync/readiness). Mỗi handler (kể cả kế thừa) cần đúng một `@ProductPublic()`, `@ProductAuthenticated()` hoặc `@ProductAuthorize(resource, action)`; thiếu/mơ hồ hoặc permission chưa khai báo làm boot throw trước `listen()`.
 - `ProductRequestAuth.authenticate(request)` chỉ kiểm session sớm. `ProductAuthorize` không thay gateway enforcement: service dữ liệu bắt buộc kiểm lại session/authority và cùng AST trong transaction giữ application fence. Guard không giữ transaction qua response.
-- Chỉ hỗ trợ HTTP Nest controller routes; không dùng raw adapter/router/middleware để phục vụ nghiệp vụ. Context khác HTTP bị guard deny. Legacy `BootstrapModule` không tự được chuyển sang product module.
+- Chỉ hỗ trợ HTTP Nest controller routes; không dùng raw adapter/router/middleware để phục vụ nghiệp vụ. Context khác HTTP bị guard deny.
 
 ## Quy tắc khi sửa
 
 - Route thiếu hoặc mơ hồ metadata phải làm boot/CI fail, không mặc định Public.
-- Tenant, principal và roles lấy từ session/authority đã kiểm chứng, không từ header/body/param chưa kiểm chứng.
+- Principal và roles lấy từ session/authority đã kiểm chứng, không từ header/body/param chưa kiểm chứng.
 - Foreign, absent và not-visible record trả cùng status/body.
 - Readiness chỉ chuyển ready sau khi boot sync xong; sync lỗi giữ not-ready, không fallback allow.
 - Decorator/guard là kiểm tra entrypoint, không bằng chứng đủ cho object-level authorization. Mọi đường gọi service, kể cả gọi trực tiếp ngoài HTTP, vẫn cần enforcement ở gateway/command.

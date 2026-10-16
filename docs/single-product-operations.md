@@ -112,7 +112,7 @@ Docker local chạy PostgreSQL18.4 disposable. OIDC fixture có RSA signatures, 
 
 Chưa mở generic role/grant/boundary/relation administration, file/export/job, public signup, UI, IdP backchannel logout hoặc cache allow. Route không khai báo bị startup/CI tests từ chối; capability chưa có không được quảng cáo đã hoạt động. Workflow có các lệnh thực, chưa chạy trên GitHub trong phiên này. Không commit/push/deploy.
 
-## 7. Thứ tự bootstrap, legacy và phần chưa triển khai (giai đoạn A)
+## 7. Thứ tự bootstrap và phần chưa triển khai (giai đoạn A)
 
 Thứ tự khởi động API (`main.ts` → `ProductRuntime.create` → `NestFactory` → `listen`); bước nào lỗi thì listener không mở và readiness giữ `false`:
 
@@ -124,23 +124,11 @@ Thứ tự khởi động API (`main.ts` → `ProductRuntime.create` → `NestFa
 6. Domain checks (bảng resource khai báo phải tồn tại).
 7. `ReadinessGate.markReady()` rồi mới `listen`. `onApplicationShutdown` idempotent (memoized).
 
-Legacy: tenant runtime (`./legacy` của `typeorm-postgres`, `apps/api/src/legacy/audit-outbox.service.ts`, `db:*:legacy`, `tools/provision.ts`, `tools/migrate.ts`) giữ để đối chiếu/mapping lịch sử và regression; không wire vào `AppModule`, không chạy lên product database. Không xóa như dead code khi chưa có quyết định migration dữ liệu.
+Tenant runtime/CLI và compatibility đã bỏ theo [ADR 0013](decisions/0013-remove-legacy-keep-packages.md). Dùng `tools/product.ts` cho product provision/migrate/sync; không có công cụ nhập/gộp tenant cũ.
 
 Chưa triển khai (không được quảng cáo là đã có): delegation; generic administration (role/grant/boundary/relation API); resource-to-resource domain binding; sink audit thật và vòng chạy worker (adapter outbox đã có, ADR0011); recovery delivery bền vững (provider, mã hóa payload, key, TTL, ACL); adapter thời gian thứ hai (Moment); platform publishing. Phase B: T8 xong (giảm I/O trong fence, `docs/single-product-load-results.md`); T9 xong phần độc lập (thứ tự lock limiter, purge session theo batch) nhưng ngưỡng limiter, throttled touch và dọn `one_time_token` bị chặn bởi policy deployment; T10: adapter delivery audit xong và có test crash/lease/2 worker/poison, nhưng chưa wire vì thiếu sink; recovery delivery bị chặn (vẫn 503). Tài liệu này không nâng trạng thái production-ready.
 
-## 8. Nâng cấp lên migration 012 (ADR 0012)
-
-Migration `012` đưa Root ra khỏi IAM (`app_user.kind`, view `iam_account`, năm guard Root), bỏ rank và role `system.root`, rồi công bố lại `materialized_hash`. Runbook:
-
-1. Dừng/drain **mọi** instance API và writer cũ. Startup probe không bảo vệ một process cũ đang chạy.
-2. Backup DB.
-3. Provision theo quy trình hiện có (`pnpm run db:provision`: cấp tạm membership owner cho migration login, migrate bằng `product_migration`, thu hồi membership), rồi `pnpm run db:migrate` cho migration ứng dụng như mục 1. Migration kiểm drift trước (hoặc catalog code-owned rỗng ở sequence 0) và preflight Root holder/marker; lỗi thì rollback toàn bộ, repair rồi chạy lại.
-4. Sync release 2 (`pnpm run manifest:sync`).
-5. Khởi động binary mới; startup probe phải pass.
-
-`down` của `012` ném `irreversible; restore from backup`: rank, role `system.root` và grants Root không khôi phục được và `release_sequence` không giảm. Rollback vận hành là restore backup của bước 2 hoặc forward repair. Migration import `protectedStateHash` của chính package, nên migration và binary release 2 phải cùng version.
-
-## 9. Repair gỡ suspend Root
+## 8. Repair gỡ suspend Root
 
 Không đường runtime nào gỡ suspend Root. Repair offline có duyệt do owner bảng (`product_migration`) chạy trong một transaction, chỉ disable đúng trigger `guard_root_lifecycle`:
 

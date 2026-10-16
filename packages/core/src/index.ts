@@ -1,6 +1,5 @@
 export type {
   ActionDeclaration,
-  BoundaryRef,
   DeclarationLimits,
   FieldType,
   PermissionBoundary,
@@ -27,15 +26,9 @@ export { canonicalJson } from './policy.validator.js';
 export { type AuthorizationCore, createAuthorizationCore } from './authorization.factory.js';
 
 export {
-  type AuthoritySnapshot,
-  type AuthorizedPlan,
   type BoundaryBindingFact,
   type BoundaryRequirement,
-  type CompleteFacts,
   type ContextValidator,
-  type Decision,
-  type EdgeFact,
-  type ExceptionFact,
   type Expr,
   type FactObject,
   type FieldKind,
@@ -50,8 +43,6 @@ export {
   type RelationRef,
   type RuleFact,
   type Scalar,
-  type TenantId,
-  type TrustedInput,
   type TrustedPrincipal,
   type UserId,
   type UserTrustedInput,

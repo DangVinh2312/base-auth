@@ -5,42 +5,28 @@ import {
   type AuthorizationCore,
   createAuthorizationCore,
   type ScalarCodec,
+  type ValueCodecs,
   type UserAuthoritySnapshot,
   type UserCompleteFacts,
-  type UserTrustedInput,
-  type ValueCodecs,
 } from '@base-authorization/core';
 import {
   createDayjsTimestampCodec,
   createStandardValueCodecs,
 } from '@base-authorization/value-adapters';
-import { alice, declarations, input, rule, snapshot, submission } from './fixtures.ts';
+import { alice, declarations, input as userInput, rule, snapshot, submission } from './fixtures.ts';
 
 const standard = () => createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() });
 
 const reviewer = { kind: 'role', role: 'reviewer' } as const;
 
-function userInput(overrides: Partial<UserTrustedInput> = {}): UserTrustedInput {
-  const { tenant: _tenant, ...value } = input();
-  void _tenant;
-  return { ...value, ...overrides };
-}
-
 /** Snapshot whose declarations were validated by `core`; one decimal `lte` allow rule. */
 function userSnapshot(core: AuthorizationCore): UserAuthoritySnapshot {
   const result = core.validate(declarations());
   assert.ok(result.ok);
-  const {
-    tenant: _tenant,
-    membership: _membership,
-    ...value
-  } = snapshot({
+  return snapshot({
     declarations: result.declarations,
     rules: [rule('submission.read', reviewer, 'allow', 'amountAtMost@1', { limit: '50' })],
   });
-  void _tenant;
-  void _membership;
-  return { ...value, user: { id: alice, state: 'active' } };
 }
 
 function userFacts(amount = '10.00'): UserCompleteFacts {
@@ -86,7 +72,7 @@ function spy(values: ValueCodecs) {
   };
 }
 
-test('public API: no default engine; scalar/plan/evaluate free functions are gone', () => {
+test('core factory has no default engine or free scalar/plan/evaluate functions', () => {
   assert.equal(typeof api.createAuthorizationCore, 'function');
   for (const removed of [
     'validate',
@@ -106,13 +92,16 @@ test('public API: no default engine; scalar/plan/evaluate free functions are gon
   ]) {
     assert.equal(Object.hasOwn(api, removed), false, `${removed} must not be a free export`);
   }
+  // Pure, codec-free helpers stay exports through the required package entrypoint.
+  for (const pure of ['refKey', 'keyEquals', 'canonicalJson', 'MAX_PATH_DEPTH', 'MAX_KEY_BYTES'])
+    assert.ok(Object.hasOwn(api, pure), pure);
+  const core = createAuthorizationCore({ values: standard() });
+  for (const removed of ['plan', 'evaluate', 'parseTenantId'])
+    assert.equal(Object.hasOwn(core, removed), false);
   assert.deepEqual(
     Object.keys(api).filter((name) => /default/i.test(name)),
     [],
   );
-  // Pure, codec-free helpers stay exports.
-  for (const pure of ['refKey', 'keyEquals', 'canonicalJson', 'MAX_PATH_DEPTH', 'MAX_KEY_BYTES'])
-    assert.ok(Object.hasOwn(api, pure), pure);
 });
 
 test('instances are independent: declarations validated by A are refused by B', () => {
@@ -123,10 +112,6 @@ test('instances are independent: declarations validated by A are refused by B', 
   assert.equal(b.isValidated(fromA.declarations), false);
   assert.equal(a.planUser(userInput(), fromA).effect, 'allow');
   assert.deepEqual(b.planUser(userInput(), fromA), {
-    effect: 'deny',
-    internalReason: 'unvalidated_declarations',
-  });
-  assert.deepEqual(b.plan(input(), snapshot({ declarations: fromA.declarations })), {
     effect: 'deny',
     internalReason: 'unvalidated_declarations',
   });
@@ -262,7 +247,6 @@ test('canonical identity checks stay lowercase-only even if the uuid codec does 
   const upper = alice.toUpperCase();
   assert.equal(passThrough.normalizeValue('uuid', upper), upper); // the codec's own business
   assert.equal(passThrough.isCanonicalUuid(upper), false);
-  assert.throws(() => passThrough.parseTenantId(upper), TypeError);
   assert.equal(passThrough.isCanonicalUuid(alice), true);
   assert.deepEqual(
     passThrough.planUser(
@@ -357,8 +341,6 @@ test('scalar methods delegate to the instance codecs and keep their contracts', 
   assert.equal(core.compareValues('integer', '9007199254740993', '9007199254740992'), 1);
   assert.equal(core.isCanonicalUuid(alice), true);
   assert.equal(core.isCanonicalUuid(alice.toUpperCase()), false);
-  assert.equal(core.parseTenantId(alice), alice);
-  assert.throws(() => core.parseTenantId(alice.toUpperCase()), TypeError);
   assert.deepEqual(core.parseKey('uuid', alice.toUpperCase()), { kind: 'uuid', value: alice });
   assert.throws(() => core.parseKey('integer', 42), TypeError);
   assert.throws(() => core.parseKey('string', ''), TypeError);

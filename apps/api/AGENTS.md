@@ -7,7 +7,7 @@
 - Logic phân quyền nằm trong packages; app chỉ khai báo (declarations/bindings) và ghép module. Không viết lại planner/compiler ở đây.
 - Runtime mới có document fixture nhỏ (`document/document.declarations.ts`, `document/migrations/product-document.migration.ts`); không xây domain demo lớn hoặc UI.
 - Handler không nhận DataSource/QueryRunner/credential thô; truy cập dữ liệu chỉ qua gateway/command của adapter.
-- Import boundary (developer, không phải process isolation): `auth/`, `document/`, `administration/`, `health/`, `openapi/` (mọi `*.ts` kể cả thư mục con, trừ `document/migrations/`) chỉ import `@base-authorization/typeorm-postgres` root (error/type), facade token và `@nestjs/*`; ESLint `no-restricted-imports` chặn `typeorm`/`pg`, `typeorm-postgres/{composition,operations,legacy}`, `infrastructure/product-runtime|runtime.module` và đường dẫn private `packages/*/{src,dist}`. `infrastructure/` và `authorization/product.manifest.ts` (composition side) được import `./composition`; `tools/` được import `./composition` và `./operations`. `test/package-boundaries.spec.ts` chứng minh bằng ESLint thật, gồm negative check.
+- Import boundary (developer, không phải process isolation): `auth/`, `document/`, `administration/`, `health/`, `openapi/` (mọi `*.ts` kể cả thư mục con, trừ `document/migrations/`) chỉ import `@base-authorization/typeorm-postgres` root (error/type), facade token và `@nestjs/*`; ESLint `no-restricted-imports` chặn `typeorm`/`pg`, `typeorm-postgres/{composition,operations}`, `infrastructure/product-runtime|runtime.module` và đường dẫn private `packages/*/{src,dist}`. `infrastructure/` và `authorization/product.manifest.ts` (composition side) được import `./composition`; `tools/` được import `./composition` và `./operations`. `test/package-boundaries.spec.ts` chứng minh bằng ESLint thật, gồm negative check.
 - Không route HTTP cho provisioning, manifest upload hay superadmin bypass; các việc đó là CLI trong `tools/`.
 
 ## Hiện trạng
@@ -17,7 +17,7 @@
 - Handler nhận port token của capability (`AUTH_HTTP_PORT`, `DOCUMENT_HTTP_PORT` đã bind `document.read/update`, `ADMINISTRATION_HTTP_PORT`, `METRICS_SNAPSHOT`, `ReadinessGate`) chỉ gồm operations và HTTP config; không DataSource/manager/DB credentials, runner hay offline command. `ProductRuntime` là provider private của `RuntimeModule`; `apps/api/test/structure.spec.ts` kiểm DI thật và inventory route/OpenAPI.
 - Local/OIDC/session/recovery/link adapters ở package PostgreSQL; route thiếu classification làm boot fail. Guard kiểm session sớm, service vẫn recheck trong fenced transaction.
 - API có document list/detail/update title và suspend IAM user (Root, hoặc grant + boundary; resource `account` bind `iam_account`); OpenAPI examples/status ở `/openapi.json`, metrics labels hữu hạn ở `/health/metrics`.
-- Recovery delivery default unavailable; generic administration/file/export/jobs chưa mở. `src/legacy/audit-outbox.service.ts` là adapter lịch sử (chỉ test legacy dùng); product effects append audit trong transaction; adapter delivery `ProductAuditOutbox` (login `outbox`, ADR0011) có ở package nhưng chưa wire vì chưa có sink thật — không tạo sink giả, không inject vào controller.
+- Recovery delivery default unavailable; generic administration/file/export/jobs chưa mở. product effects append audit trong transaction; adapter delivery `ProductAuditOutbox` (login `outbox`, ADR0011) có ở package nhưng chưa wire vì chưa có sink thật — không tạo sink giả, không inject vào controller.
 
 ## Quy tắc khi sửa
 
@@ -42,7 +42,6 @@ src/administration/               # user.controller.ts, administration.http-port
 src/health/                       # live/ready/metrics, product-metrics.service.ts
 src/authorization/product.manifest.ts  # codecs + compose fragments + createProductRelease(core)
 src/openapi/                      # openapi.controller.ts, product-openapi.schema.ts
-src/legacy/audit-outbox.service.ts
 ```
 
 - Feature module chỉ khai báo controllers; `AppModule` import `RuntimeModule.register(runtime)` vào từng feature module. Capability mới: thêm port token + bound operations trong `runtime.module.ts`, declaration fragment vào `authorization/product.manifest.ts`; không `@Global()`, không export `ProductRuntime`.

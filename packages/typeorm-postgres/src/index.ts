@@ -1,10 +1,10 @@
 // Safe service contracts: errors, pure helpers and types. Constructors and low-level adapters are
-// in ./composition, offline capability in ./operations, historical tenant APIs in ./legacy.
-export { type PostgresConnectionSettings } from './helpers/data-source-options.helper.js';
+// in ./composition, offline capability in ./operations.
+export { type PostgresConnectionSettings } from './postgres-connection.types.js';
 
-export { TransactionConflictError } from './runners/tenant-transaction.runner.js';
+export { TransactionConflictError } from './helpers/transaction-errors.helper.js';
 
-export { ReleaseRejectedError } from './services/manifest-reconciler.service.js';
+export { ReleaseRejectedError } from './helpers/release-content.helper.js';
 
 export {
   type ProductConnectionPurpose,

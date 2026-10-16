@@ -2,11 +2,9 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { DataSource } from 'typeorm';
-import {
-  ProductBindingRegistry,
-  ProductDataGateway,
-  ProductTransactionRunner,
-} from '@base-authorization/typeorm-postgres/composition';
+import { ProductBindingRegistry } from '@base-authorization/typeorm-postgres/composition';
+import { ProductDataGateway } from '@base-authorization/typeorm-postgres/composition';
+import { ProductTransactionRunner } from '@base-authorization/typeorm-postgres/composition';
 import {
   productDataSourceOptions,
   provisionProductDatabase,
@@ -98,23 +96,15 @@ test('identity edges cannot grant through a business row pointing at another reg
       },
     });
     await runner.run('read', async (tx) => {
-      const {
-        tenant: oldTenant,
-        membership,
-        ...authority
-      } = snapshot({ declarations, revision: tx.revision });
-      void oldTenant;
-      const { tenant: oldRequestTenant, ...request } = input();
-      void oldRequestTenant;
+      const authority = snapshot({ declarations, revision: tx.revision });
       const decision = planUser(
         {
-          ...request,
+          ...input(),
           now: new Date().toISOString(),
           validUntil: new Date(Date.now() + 1500).toISOString(),
         },
         {
           ...authority,
-          user: membership && { id: membership.identity, state: membership.state },
           rules: [
             rule(
               'submission.read',

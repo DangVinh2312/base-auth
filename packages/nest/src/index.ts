@@ -1,10 +1,3 @@
-export {
-  BootstrapCoordinator,
-  BootstrapModule,
-  MANIFEST_SYNC,
-  type ManifestSyncPort,
-} from './services/bootstrap-coordinator.service.js';
-
 export { ReadinessGate } from './services/readiness.service.js';
 
 export {

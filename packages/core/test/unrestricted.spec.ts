@@ -10,20 +10,14 @@ import {
   createDayjsTimestampCodec,
   createStandardValueCodecs,
 } from '@base-authorization/value-adapters';
-import { alice, core, input, rule, snapshot, submission } from './fixtures.ts';
-
-function userInput(overrides: Partial<UserTrustedInput> = {}): UserTrustedInput {
-  const { tenant: _tenant, ...value } = input();
-  void _tenant;
-  return { ...value, ...overrides };
-}
-
-function userSnapshot(overrides: Partial<UserAuthoritySnapshot> = {}): UserAuthoritySnapshot {
-  const { tenant: _tenant, membership: _membership, ...value } = snapshot();
-  void _tenant;
-  void _membership;
-  return { ...value, user: { id: alice, state: 'active' }, ...overrides };
-}
+import {
+  alice,
+  core,
+  input as userInput,
+  rule,
+  snapshot as userSnapshot,
+  submission,
+} from './fixtures.ts';
 
 function allowed(decision: UserDecision) {
   assert.equal(decision.effect, 'allow');

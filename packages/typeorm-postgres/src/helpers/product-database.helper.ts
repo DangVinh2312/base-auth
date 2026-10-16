@@ -1,5 +1,5 @@
 import { DataSource, type DataSourceOptions } from 'typeorm';
-import type { PostgresConnectionSettings } from './data-source-options.helper.js';
+import type { PostgresConnectionSettings } from '../postgres-connection.types.js';
 import { ProductInitial1792108800000 } from '../migrations/product/001-initial.migration.js';
 import {
   ProductProtection1792108800001,

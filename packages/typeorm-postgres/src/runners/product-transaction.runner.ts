@@ -8,7 +8,7 @@ import {
   AuthorityUnavailableError,
   TransactionConflictError,
   RUNTIME_CAPABILITY,
-} from './tenant-transaction.runner.js';
+} from '../helpers/transaction-errors.helper.js';
 
 export type ProductConnectionPurpose = 'data' | 'identity' | 'authority' | 'sync' | 'bootstrap';
 

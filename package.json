@@ -23,8 +23,6 @@
     "format:code": "eslint --config eslint.format.config.js --fix . && prettier --write \"**/*.{ts,js}\"",
     "format:code:check": "eslint --config eslint.format.config.js . && prettier --check \"**/*.{ts,js}\"",
     "test:e2e": "tsc -b tsconfig.build.json && node tools/test.ts e2e",
-    "db:provision:legacy": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env tools/provision.ts",
-    "db:migrate:legacy": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env tools/migrate.ts",
     "manifest:sync": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts sync",
     "root:bootstrap": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts bootstrap",
     "root:revoke": "tsc -b tsconfig.build.json && node --env-file-if-exists=.env.ops tools/product.ts revoke-root",
@@ -45,7 +43,6 @@
     "openid-client": "6.8.8",
     "pg": "8.23.1",
     "prettier": "3.9.10",
-    "testcontainers": "12.2.0",
     "typeorm": "1.1.2",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.1"

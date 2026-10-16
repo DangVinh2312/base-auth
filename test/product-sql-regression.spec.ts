@@ -1,24 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  createAuthorizationCore,
-  type ScalarCodec,
-  type ValueCodecs,
-} from '@base-authorization/core';
-import {
-  ProductInvalidRequest,
-  type ProductStorageBindings,
-} from '@base-authorization/typeorm-postgres';
+import { createAuthorizationCore } from '@base-authorization/core';
+import type { ScalarCodec, ValueCodecs } from '@base-authorization/core';
+import { ProductInvalidRequest } from '@base-authorization/typeorm-postgres';
+import { ProductDataGateway } from '@base-authorization/typeorm-postgres/composition';
+import type { ProductStorageBindings } from '@base-authorization/typeorm-postgres';
 import {
   ProductBindingRegistry,
-  ProductDataGateway,
   compileProductPlan,
-  type ProductTransaction,
 } from '@base-authorization/typeorm-postgres/composition';
-import {
-  createDayjsTimestampCodec,
-  createStandardValueCodecs,
-} from '@base-authorization/value-adapters';
+
+import type { ProductTransaction } from '@base-authorization/typeorm-postgres/composition';
+import { createDayjsTimestampCodec } from '@base-authorization/value-adapters';
+import { createStandardValueCodecs } from '@base-authorization/value-adapters';
 import {
   alice,
   declarations as source,
@@ -86,13 +80,8 @@ test('product identity relation SQL checks source object registry type as well a
     resources,
     domains: { siteManagers: domain },
   });
-  const { tenant: oldTenant, membership, ...authority } = snapshot({ declarations });
-  void oldTenant;
-  const { tenant: requestTenant, ...request } = input();
-  void requestTenant;
-  const decision = planUser(request, {
-    ...authority,
-    user: membership && { id: membership.identity, state: membership.state },
+  const decision = planUser(input(), {
+    ...snapshot({ declarations }),
     rules: [
       rule('submission.read', { kind: 'identity', identity: alice }, 'allow', 'assignedToMe@1'),
     ],
@@ -131,19 +120,11 @@ test('gateway filters and keys are normalized by the registry core, not a privat
       siteManagers: { table: 'site_manager', sourceColumn: 'site_id', targetColumn: 'user_id' },
     },
   });
-  const {
-    tenant: _tenant,
-    membership: _membership,
-    ...facts
-  } = snapshot({
+  const facts = snapshot({
     declarations: result.declarations,
     rules: [rule('submission.read', { kind: 'role', role: 'reviewer' }, 'allow', 'all@1')],
   });
-  void _tenant;
-  void _membership;
-  const { tenant: _t, ...request } = input();
-  void _t;
-  const decision = spied.planUser(request, { ...facts, user: { id: alice, state: 'active' } });
+  const decision = spied.planUser(input(), facts);
   assert.equal(decision.effect, 'allow');
   if (decision.effect !== 'allow') return;
   const sent: unknown[][] = [];

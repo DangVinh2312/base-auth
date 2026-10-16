@@ -24,20 +24,15 @@ describe('typeorm-postgres public entrypoints', () => {
     ]);
   });
 
-  test('root excludes privileged and legacy capability', async () => {
+  test('root excludes privileged capability', async () => {
     const root = await keys(pkg);
     const forbidden = [
       // raw transaction runners / authority loaders
       'ProductTransactionRunner',
-      'TenantTransactionRunner',
-      'PostgresAuthority',
       'ProductAuthorization',
       'readProductAuthority',
       // pools and DataSource factories
       'productDataSourceOptions',
-      'identityDataSourceOptions',
-      'tenantDataSourceOptions',
-      'TenantDataSourceRegistry',
       // provision / bootstrap / migration entrypoints
       'provisionProductDatabase',
       'verifyProductPrivileges',
@@ -45,13 +40,10 @@ describe('typeorm-postgres public entrypoints', () => {
       'bootstrapProductRoot',
       'revokeProductRoot',
       'reissueRootActivation',
-      'runMigrations',
-      'TenantProvisioner',
       // audit writer and obligation registry
       'appendProductAudit',
       'PRODUCT_OFFLINE_ACTOR',
       'productObligations',
-      'fulfillObligations',
       // constructors / wiring
       'ProductIdentityService',
       'ProductOidcService',
@@ -87,8 +79,6 @@ describe('typeorm-postgres public entrypoints', () => {
         'productDataSourceOptions',
         'bootstrapProductRoot',
         'appendProductAudit',
-        'systemGrantHash',
-        'TenantProvisioner',
       ],
     },
     operations: {
@@ -102,26 +92,7 @@ describe('typeorm-postgres public entrypoints', () => {
         'appendProductAudit',
         'PRODUCT_OFFLINE_ACTOR',
       ],
-      absent: [
-        'ProductTransactionRunner',
-        'productObligations',
-        'TenantProvisioner',
-        'ProductAuditOutbox',
-      ],
-    },
-    legacy: {
-      present: [
-        'TenantProvisioner',
-        'TenantDataSourceRegistry',
-        'TenantTransactionRunner',
-        'PostgresAuthority',
-        'DataGateway',
-        'BindingRegistry',
-        'fulfillObligations',
-        'runMigrations',
-        'ManifestReconciler',
-      ],
-      absent: ['ProductTransactionRunner', 'provisionProductDatabase', 'productObligations'],
+      absent: ['ProductTransactionRunner', 'productObligations', 'ProductAuditOutbox'],
     },
   };
 
@@ -136,6 +107,10 @@ describe('typeorm-postgres public entrypoints', () => {
         assert.ok(!exported.includes(key), `${name} must not export ${key}`);
     });
   }
+
+  test('the retired tenant entrypoint no longer resolves', async () => {
+    await assert.rejects(import(`${pkg}/legacy`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
+  });
 
   test('undeclared subpaths and private dist paths do not resolve', () => {
     assert.throws(() => import.meta.resolve(`${pkg}/dist/compilers/product-sql.compiler.js`));
@@ -168,7 +143,6 @@ describe('ESLint import boundaries', () => {
     pg: "import { Pool } from 'pg';",
     composition: `import { ProductTransactionRunner } from '${pkg}/composition';`,
     operations: `import { provisionProductDatabase } from '${pkg}/operations';`,
-    legacy: `import { TenantProvisioner } from '${pkg}/legacy';`,
     'runtime provider':
       "import { ProductRuntime } from '../infrastructure/product-runtime.service.js';",
     'runtime module': "import { RuntimeModule } from '../infrastructure/runtime.module.js';",
@@ -222,14 +196,14 @@ describe('ESLint import boundaries', () => {
     }
   });
 
-  test('infrastructure keeps composition but cannot import operations or legacy', async () => {
+  test('infrastructure keeps composition but cannot import operations', async () => {
     const file = 'apps/api/src/infrastructure/product-runtime.service.ts';
     for (const code of [
       `import { ProductTransactionRunner } from '${pkg}/composition';`,
       "import { Pool } from 'pg';",
     ])
       assert.deepEqual(await violations(file, code), [], code);
-    for (const code of [forbidden.operations!, forbidden.legacy!])
+    for (const code of [forbidden.operations!])
       assert.equal((await violations(file, code)).length, 1, code);
   });
 
@@ -237,7 +211,6 @@ describe('ESLint import boundaries', () => {
     for (const code of [
       `import { ProductTransactionRunner } from '${pkg}/composition';`,
       `import { provisionProductDatabase } from '${pkg}/operations';`,
-      `import { TenantProvisioner } from '${pkg}/legacy';`,
       "import { Pool } from 'pg';",
     ])
       assert.deepEqual(await violations('tools/product.ts', code), [], code);

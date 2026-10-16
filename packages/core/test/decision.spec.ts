@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import {
-  type AuthoritySnapshot,
-  type CompleteFacts,
-  type ExceptionFact,
-  type RuleFact,
-  type TrustedInput,
+import type {
+  UserAuthoritySnapshot,
+  UserCompleteFacts,
+  UserExceptionFact,
+  RuleFact,
+  UserTrustedInput,
 } from '@base-authorization/core';
 import {
   alice,
@@ -18,14 +18,16 @@ import {
   rule,
   snapshot,
   submission,
-  tenantA,
-  tenantB,
   validated,
 } from './fixtures.ts';
 
-const { evaluate, plan } = core;
+const { evaluateUser: evaluate, planUser: plan } = core;
 
-function decide(i: TrustedInput, s: AuthoritySnapshot, f: CompleteFacts): 'allow' | 'deny' {
+function decide(
+  i: UserTrustedInput,
+  s: UserAuthoritySnapshot,
+  f: UserCompleteFacts,
+): 'allow' | 'deny' {
   const decision = plan(i, s);
   if (decision.effect === 'deny') return 'deny';
   return evaluate(decision.plan, f).effect;
@@ -42,12 +44,11 @@ const reviewer = { kind: 'role', role: 'reviewer' } as const;
 const personal = { kind: 'identity', identity: alice } as const;
 
 function exception(
-  effect: ExceptionFact['effect'],
+  effect: UserExceptionFact['effect'],
   objectId: string,
-  extra: Partial<ExceptionFact> = {},
-): ExceptionFact {
+  extra: Partial<UserExceptionFact> = {},
+): UserExceptionFact {
   return {
-    tenant: tenantA,
     objectId,
     permission: 'submission.read',
     subject: { kind: 'identity', identity: alice },
@@ -66,9 +67,9 @@ const s2 = submission('51000000-0000-4000-8000-000000000002', '2', { status: 'ap
 describe('decision precedence', () => {
   const cases: {
     name: string;
-    input?: Partial<TrustedInput>;
-    snapshot?: Partial<AuthoritySnapshot>;
-    facts: CompleteFacts;
+    input?: Partial<UserTrustedInput>;
+    snapshot?: Partial<UserAuthoritySnapshot>;
+    facts: UserCompleteFacts;
     expected: 'allow' | 'deny';
   }[] = [
     {
@@ -84,31 +85,18 @@ describe('decision precedence', () => {
       expected: 'deny',
     },
     {
-      name: 'tenant mismatch in input',
-      input: { tenant: tenantB },
-      snapshot: { rules: [read(reviewer, 'allow', 'all@1')] },
-      facts: facts(s1),
-      expected: 'deny',
-    },
-    {
-      name: 'record from another tenant',
-      snapshot: { rules: [read(reviewer, 'allow', 'all@1')] },
-      facts: { ...facts(s1), tenant: tenantB },
-      expected: 'deny',
-    },
-    {
-      name: 'inactive membership even with record allow',
+      name: 'inactive user even with record allow',
       snapshot: {
-        membership: { identity: alice, state: 'suspended' },
+        user: { id: alice, state: 'suspended' },
         rules: [read(reviewer, 'allow', 'all@1')],
       },
       facts: facts(s1, { exceptions: [exception('allow', s1.objectId)] }),
       expected: 'deny',
     },
     {
-      name: 'membership of another identity',
+      name: 'user of another identity',
       snapshot: {
-        membership: { identity: bob, state: 'active' },
+        user: { id: bob, state: 'active' },
         rules: [read(reviewer, 'allow', 'all@1')],
       },
       facts: facts(s1),
@@ -371,7 +359,7 @@ describe('fail closed', () => {
 });
 
 describe('properties (seeded)', () => {
-  // Small deterministic PRNG: no property-testing dependency needed for these two invariants.
+  // Small deterministic PRNG: no property-testing dependency needed for this invariant.
   function prng(seed: number) {
     return () => {
       seed = (seed + 0x6d2b79f5) | 0;
@@ -390,7 +378,7 @@ describe('properties (seeded)', () => {
   ];
   const subjects = [reviewer, personal, { kind: 'role', role: 'manager' } as const];
 
-  test('adding a deny never enlarges the allowed set; another tenant is never allowed', () => {
+  test('adding a deny never enlarges the allowed set', () => {
     const random = prng(20261013);
 
     const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
@@ -415,14 +403,6 @@ describe('properties (seeded)', () => {
         facts(record, { exceptions }),
       );
       if (base === 'deny') assert.equal(withDeny, 'deny', `round ${round}`);
-      assert.equal(
-        decide(input({ tenant: tenantB }), snapshot({ rules }), facts(record, { exceptions })),
-        'deny',
-      );
-      assert.equal(
-        decide(input(), snapshot({ rules }), { ...facts(record, { exceptions }), tenant: tenantB }),
-        'deny',
-      );
     }
   });
 });

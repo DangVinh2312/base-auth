@@ -1,30 +1,24 @@
-// D1-like fixture for compiler/gateway integration tests: three native PK types (bigint, uuid, text),
+// Product fixture for compiler integration tests: three native PK types (bigint, uuid, text),
 // edge-store and domain-table relations, record exceptions. Synthetic data only.
 import { randomBytes } from 'node:crypto';
 import type {
-  AuthoritySnapshot,
-  CompleteFacts,
-  EdgeFact,
-  ExceptionFact,
+  UserAuthoritySnapshot,
+  UserCompleteFacts,
+  UserEdgeFact,
+  UserExceptionFact,
   Expr,
   FactObject,
-  IdentityId,
+  UserId,
   RuleFact,
-  SystemDeclarations,
-  TenantId,
-  TrustedInput,
-  ValidatedDeclarations,
+  UserTrustedInput,
 } from '@base-authorization/core';
+import type { SystemDeclarations, ValidatedDeclarations } from '@base-authorization/core';
 import {
-  type ConnectionPurpose,
-  directoryRouteResolver,
-  identityDataSourceOptions,
-  type StorageBindings,
-  TenantDataSourceRegistry,
-  tenantDatabaseName,
-  TenantProvisioner,
-  tenantRoleName,
-} from '@base-authorization/typeorm-postgres/legacy';
+  productDataSourceOptions,
+  provisionProductDatabase,
+} from '@base-authorization/typeorm-postgres/operations';
+import type { ProductDatabasePurpose } from '@base-authorization/typeorm-postgres';
+import type { ProductStorageBindings } from '@base-authorization/typeorm-postgres';
 import type pg from 'pg';
 import { DataSource } from 'typeorm';
 import {
@@ -36,18 +30,14 @@ import {
 import { core } from '../../packages/core/test/fixtures.ts';
 
 export { core };
-const { parseTenantId, plan, validate } = core;
+const { planUser, validate } = core;
 
-export const tenantA = parseTenantId('00000000-0000-4000-8000-00000000000a');
+export const alice = 'a0000000-0000-4000-8000-000000000001' as UserId;
 
-export const tenantB = parseTenantId('00000000-0000-4000-8000-00000000000b');
-
-export const alice = 'a0000000-0000-4000-8000-000000000001' as IdentityId;
-
-export const bob = 'b0000000-0000-4000-8000-000000000002' as IdentityId;
+export const bob = 'b0000000-0000-4000-8000-000000000002' as UserId;
 
 /** Manages both sites: exercises many-to-many paths. */
-export const carol = 'c0000000-0000-4000-8000-000000000003' as IdentityId;
+export const carol = 'c0000000-0000-4000-8000-000000000003' as UserId;
 
 const principalId: Expr = {
   op: 'eq',
@@ -218,12 +208,11 @@ export function fixtureDeclarations(): ValidatedDeclarations {
   return result.declarations;
 }
 
-export const storageBindings: StorageBindings = {
+export const storageBindings: ProductStorageBindings = {
   resources: [
     {
       resource: 'submission',
       table: 'submission',
-      tenantColumn: 'tenant_id',
       objectIdColumn: 'object_id',
       keyColumn: 'id',
       columns: {
@@ -239,7 +228,6 @@ export const storageBindings: StorageBindings = {
     {
       resource: 'site',
       table: 'site',
-      tenantColumn: 'tenant_id',
       objectIdColumn: 'object_id',
       keyColumn: 'id',
       columns: { name: 'name' },
@@ -248,7 +236,6 @@ export const storageBindings: StorageBindings = {
     {
       resource: 'tag',
       table: 'tag',
-      tenantColumn: 'tenant_id',
       objectIdColumn: 'object_id',
       keyColumn: 'code',
       columns: { label: 'label' },
@@ -258,9 +245,8 @@ export const storageBindings: StorageBindings = {
   domains: {
     siteManagers: {
       table: 'site_manager',
-      tenantColumn: 'tenant_id',
       sourceColumn: 'site_id',
-      targetColumn: 'identity_id',
+      targetColumn: 'user_id',
       startsColumn: 'starts_at',
       expiresColumn: 'expires_at',
     },
@@ -284,13 +270,13 @@ interface SubmissionRow {
   archived: boolean;
   internalNote: string;
   sites: string[];
-  assignees: { identity: IdentityId; startsAt: string; expiresAt: string | null }[];
+  assignees: { identity: UserId; startsAt: string; expiresAt: string | null }[];
 }
 interface SiteRow {
   id: string;
   objectId: string;
   name: string;
-  managers: { identity: IdentityId; startsAt: string; expiresAt: string | null }[];
+  managers: { identity: UserId; startsAt: string; expiresAt: string | null }[];
 }
 interface TagRow {
   code: string;
@@ -298,19 +284,18 @@ interface TagRow {
   label: string;
 }
 
-export interface TenantFixture {
-  tenant: TenantId;
+export interface ProductFixture {
   sites: SiteRow[];
   submissions: SubmissionRow[];
   tags: TagRow[];
-  exceptions: Omit<ExceptionFact, 'tenant'>[];
+  exceptions: UserExceptionFact[];
 }
 
-const objectId = (tenantDigit: string, n: number) =>
-  `${tenantDigit}0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const objectId = (n: number) => `c0000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
-export function tenantFixture(tenant: TenantId, digit: string, label: string): TenantFixture {
-  const o = (n: number) => objectId(digit, n);
+export function productFixture(): ProductFixture {
+  const o = objectId;
+  const label = 'Product';
 
   const siteA = {
     id: 'd97eecc9-8f23-4a76-a9aa-82b9d4ef33ac',
@@ -348,7 +333,6 @@ export function tenantFixture(tenant: TenantId, digit: string, label: string): T
   });
 
   return {
-    tenant,
     sites: [siteA, siteB],
     submissions: [
       sub(10, '1', {
@@ -428,9 +412,9 @@ export function tenantFixture(tenant: TenantId, digit: string, label: string): T
 function exception(
   objectId: string,
   effect: 'allow' | 'deny',
-  subject: ExceptionFact['subject'],
-  extra: Partial<ExceptionFact> = {},
-): Omit<ExceptionFact, 'tenant'> {
+  subject: UserExceptionFact['subject'],
+  extra: Partial<UserExceptionFact> = {},
+): UserExceptionFact {
   return {
     objectId,
     permission: 'submission.read',
@@ -446,10 +430,10 @@ function exception(
 
 /** Evaluator facts for one submission, built from the same data that is inserted into PostgreSQL. */
 export function submissionFacts(
-  fixture: TenantFixture,
+  fixture: ProductFixture,
   row: SubmissionRow,
   now: string,
-): CompleteFacts {
+): UserCompleteFacts {
   const record = submissionObject(row);
   const siteObjects = fixture.sites.map((s): FactObject => ({
     type: 'site',
@@ -457,17 +441,15 @@ export function submissionFacts(
     objectId: s.objectId,
     fields: { name: s.name },
   }));
-  const edges: EdgeFact[] = [
-    ...row.sites.map((siteId): EdgeFact => ({
-      tenant: fixture.tenant,
+  const edges: UserEdgeFact[] = [
+    ...row.sites.map((siteId): UserEdgeFact => ({
       relation: { key: 'submission.site', version: 1 },
       source: row.objectId,
-      target: { kind: 'object', objectId: fixture.sites.find((s) => s.id === siteId)!.objectId },
+      target: { kind: 'object', objectId: fixtureSite(fixture, siteId).objectId },
       startsAt: past,
       expiresAt: null,
     })),
-    ...row.assignees.map((a): EdgeFact => ({
-      tenant: fixture.tenant,
+    ...row.assignees.map((a): UserEdgeFact => ({
       relation: { key: 'submission.assignee', version: 1 },
       source: row.objectId,
       target: { kind: 'identity', identity: a.identity },
@@ -475,8 +457,7 @@ export function submissionFacts(
       expiresAt: a.expiresAt,
     })),
     ...fixture.sites.flatMap((s) =>
-      s.managers.map((m): EdgeFact => ({
-        tenant: fixture.tenant,
+      s.managers.map((m): UserEdgeFact => ({
         relation: { key: 'site.manager', version: 1 },
         source: s.objectId,
         target: { kind: 'identity', identity: m.identity },
@@ -486,12 +467,11 @@ export function submissionFacts(
     ),
   ];
   return {
-    tenant: fixture.tenant,
     now,
     record,
     objects: [record, ...siteObjects],
     edges,
-    exceptions: fixture.exceptions.map((x) => ({ ...x, tenant: fixture.tenant })),
+    exceptions: fixture.exceptions,
   };
 }
 
@@ -515,67 +495,58 @@ export function submissionObject(row: SubmissionRow): FactObject {
 
 const bytes = (value: string) => Buffer.from(value, 'utf8');
 
+function fixtureSite(fixture: ProductFixture, id: string): SiteRow {
+  const site = fixture.sites.find((candidate) => candidate.id === id);
+  if (!site) throw new Error('Fixture references an unknown site');
+  return site;
+}
+
 const fixtureDdl = `
   CREATE TABLE site (
-    tenant_id uuid NOT NULL REFERENCES tenant_anchor (tenant_id),
     id uuid PRIMARY KEY,
-    object_id uuid NOT NULL,
-    name text NOT NULL,
-    UNIQUE (tenant_id, object_id),
-    FOREIGN KEY (tenant_id, object_id) REFERENCES object_ref (tenant_id, object_id)
+    object_id uuid UNIQUE NOT NULL REFERENCES object_ref (object_id),
+    name text NOT NULL
   );
   CREATE TABLE submission (
-    tenant_id uuid NOT NULL REFERENCES tenant_anchor (tenant_id),
     id bigint PRIMARY KEY,
-    object_id uuid NOT NULL,
+    object_id uuid UNIQUE NOT NULL REFERENCES object_ref (object_id),
     status text NOT NULL,
     amount numeric(20, 4) NOT NULL,
     title text,
     priority integer,
     submitted_at timestamptz(6) NOT NULL,
     archived boolean NOT NULL,
-    internal_note text NOT NULL,
-    UNIQUE (tenant_id, object_id),
-    FOREIGN KEY (tenant_id, object_id) REFERENCES object_ref (tenant_id, object_id)
+    internal_note text NOT NULL
   );
   CREATE TABLE tag (
-    tenant_id uuid NOT NULL REFERENCES tenant_anchor (tenant_id),
     code text PRIMARY KEY,
-    object_id uuid NOT NULL,
-    label text NOT NULL,
-    UNIQUE (tenant_id, object_id),
-    FOREIGN KEY (tenant_id, object_id) REFERENCES object_ref (tenant_id, object_id)
+    object_id uuid UNIQUE NOT NULL REFERENCES object_ref (object_id),
+    label text NOT NULL
   );
   CREATE TABLE site_manager (
-    tenant_id uuid NOT NULL REFERENCES tenant_anchor (tenant_id),
     site_id uuid NOT NULL REFERENCES site (id),
-    identity_id uuid NOT NULL,
+    user_id uuid NOT NULL REFERENCES app_user (id),
     starts_at timestamptz(6) NOT NULL,
     expires_at timestamptz(6),
-    PRIMARY KEY (tenant_id, site_id, identity_id)
+    PRIMARY KEY (site_id, user_id)
   );
-  CREATE INDEX ix_site_manager_identity ON site_manager (tenant_id, identity_id);
+  CREATE INDEX ix_site_manager_user ON site_manager (user_id);
 `;
 
-/** Creates fixture tables and rows (admin connection). `grants: false` for databases without tenant roles. */
-export async function seedTenant(
-  client: pg.Client,
-  fixture: TenantFixture,
-  { grants = true }: { grants?: boolean } = {},
-): Promise<void> {
-  const t = fixture.tenant;
+/** Synthetic rows in the current product schema; authority facts match evaluator fixtures. */
+async function seedProduct(client: pg.Client, fixture: ProductFixture): Promise<void> {
   await client.query(fixtureDdl);
   for (const [type, kind] of [
     ['submission', 'integer'],
     ['site', 'uuid'],
     ['tag', 'string'],
   ] as const) {
-    await client.query('INSERT INTO resource_type VALUES ($1, $2, $3, $2)', [t, bytes(type), kind]);
+    await client.query('INSERT INTO resource_type VALUES ($1, $2, $1)', [bytes(type), kind]);
   }
   const hash = Buffer.alloc(32, 7);
   await client.query(
-    `INSERT INTO permission_policy VALUES ($1, $2, 1, $3, '{}', 'active'), ($1, $4, 1, $3, '{}', 'active')`,
-    [t, bytes('baseline'), hash, bytes('approval')],
+    `INSERT INTO permission_policy VALUES ($1, 1, $2, '{}', 'active'), ($3, 1, $2, '{}', 'active')`,
+    [bytes('baseline'), hash, bytes('approval')],
   );
   for (const [permission, type, action, policy] of [
     ['submission.read', 'submission', 'read', 'baseline'],
@@ -584,39 +555,33 @@ export async function seedTenant(
     ['tag.read', 'tag', 'read', 'baseline'],
   ] as const) {
     await client.query(
-      `INSERT INTO permission_catalog VALUES ($1, $2, $3, $4, $5, 1, 'active', 'optional')`,
-      [t, bytes(permission), bytes(type), bytes(action), bytes(policy)],
+      `INSERT INTO permission_catalog VALUES ($1, $2, $3, $4, 1, 'active', 'optional')`,
+      [bytes(permission), bytes(type), bytes(action), bytes(policy)],
     );
   }
-  for (const t2 of declarationsSource.templates) {
-    await client.query('INSERT INTO scope_template VALUES ($1, $2, 1, $3)', [
-      t,
-      bytes(t2.key),
+  for (const template of declarationsSource.templates) {
+    await client.query('INSERT INTO scope_template VALUES ($1, 1, $2)', [
+      bytes(template.key),
       hash,
     ]);
   }
   for (const role of ['reviewer', 'manager']) {
-    await client.query(`INSERT INTO role_definition VALUES ($1, $2, 'code', 10, $3)`, [
-      t,
+    await client.query(`INSERT INTO role_definition VALUES ($1, 'runtime', $2)`, [
       bytes(role),
       role,
     ]);
   }
-  for (const identity of [alice, bob, carol]) {
-    await client.query(
-      `INSERT INTO membership (tenant_id, identity_id, state) VALUES ($1, $2, 'active')`,
-      [t, identity],
-    );
+  for (const user of [alice, bob, carol]) {
+    await client.query(`INSERT INTO app_user (id, state) VALUES ($1, 'active')`, [user]);
   }
-  await client.query('INSERT INTO member_role VALUES ($1, $2, $3)', [t, alice, bytes('reviewer')]);
+  await client.query('INSERT INTO user_role VALUES ($1, $2)', [alice, bytes('reviewer')]);
   await client.query(
-    `INSERT INTO resource_relation_definition VALUES ($1, $2, 1, $3, $4, 'edgeStore', $2, $5, 'active')`,
-    [t, bytes('submission.site'), bytes('submission'), bytes('site'), hash],
+    `INSERT INTO resource_relation_definition VALUES ($1, 1, $2, $3, 'edgeStore', $1, $4, 'active')`,
+    [bytes('submission.site'), bytes('submission'), bytes('site'), hash],
   );
 
   const objectRef = (id: string, type: string, kind: string, key: string) =>
-    client.query('INSERT INTO object_ref VALUES ($1, $2, $3, $4, $5)', [
-      t,
+    client.query('INSERT INTO object_ref VALUES ($1, $2, $3, $4)', [
       id,
       bytes(type),
       kind,
@@ -625,45 +590,37 @@ export async function seedTenant(
 
   for (const site of fixture.sites) {
     await objectRef(site.objectId, 'site', 'uuid', site.id);
-    await client.query('INSERT INTO site VALUES ($1, $2, $3, $4)', [
-      t,
-      site.id,
-      site.objectId,
-      site.name,
-    ]);
-    for (const m of site.managers) {
-      await client.query('INSERT INTO site_manager VALUES ($1, $2, $3, $4, $5)', [
-        t,
+    await client.query('INSERT INTO site VALUES ($1, $2, $3)', [site.id, site.objectId, site.name]);
+    for (const manager of site.managers) {
+      await client.query('INSERT INTO site_manager VALUES ($1, $2, $3, $4)', [
         site.id,
-        m.identity,
-        m.startsAt,
-        m.expiresAt,
+        manager.identity,
+        manager.startsAt,
+        manager.expiresAt,
       ]);
     }
   }
-  for (const s of fixture.submissions) {
-    await objectRef(s.objectId, 'submission', 'integer', s.id);
-    await client.query('INSERT INTO submission VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', [
-      t,
-      s.id,
-      s.objectId,
-      s.status,
-      s.amount,
-      s.title,
-      s.priority,
-      s.submittedAt,
-      s.archived,
-      s.internalNote,
+  for (const row of fixture.submissions) {
+    await objectRef(row.objectId, 'submission', 'integer', row.id);
+    await client.query('INSERT INTO submission VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)', [
+      row.id,
+      row.objectId,
+      row.status,
+      row.amount,
+      row.title,
+      row.priority,
+      row.submittedAt,
+      row.archived,
+      row.internalNote,
     ]);
-    for (const siteId of s.sites) {
-      const site = fixture.sites.find((x) => x.id === siteId)!;
+    for (const siteId of row.sites) {
+      const site = fixtureSite(fixture, siteId);
       await client.query(
-        `INSERT INTO relation_edge (tenant_id, relation_key, relation_version, source_object, source_type, target_object, target_type, starts_at)
-         VALUES ($1, $2, 1, $3, $4, $5, $6, $7)`,
+        `INSERT INTO relation_edge (relation_key, relation_version, source_object, source_type, target_object, target_type, starts_at)
+         VALUES ($1, 1, $2, $3, $4, $5, $6)`,
         [
-          t,
           bytes('submission.site'),
-          s.objectId,
+          row.objectId,
           bytes('submission'),
           site.objectId,
           bytes('site'),
@@ -671,141 +628,116 @@ export async function seedTenant(
         ],
       );
     }
-    for (const a of s.assignees) {
+    for (const assignee of row.assignees) {
       await client.query(
-        `INSERT INTO identity_relation (tenant_id, relation_key, relation_version, object_id, identity_id, starts_at, expires_at)
-         VALUES ($1, $2, 1, $3, $4, $5, $6)`,
-        [t, bytes('submission.assignee'), s.objectId, a.identity, a.startsAt, a.expiresAt],
+        `INSERT INTO user_relation (relation_key, relation_version, object_id, user_id, starts_at, expires_at)
+         VALUES ($1, 1, $2, $3, $4, $5)`,
+        [
+          bytes('submission.assignee'),
+          row.objectId,
+          assignee.identity,
+          assignee.startsAt,
+          assignee.expiresAt,
+        ],
       );
     }
   }
   for (const tag of fixture.tags) {
     await objectRef(tag.objectId, 'tag', 'string', tag.code);
-    await client.query('INSERT INTO tag VALUES ($1, $2, $3, $4)', [
-      t,
-      tag.code,
-      tag.objectId,
-      tag.label,
-    ]);
+    await client.query('INSERT INTO tag VALUES ($1, $2, $3)', [tag.code, tag.objectId, tag.label]);
   }
-  for (const x of fixture.exceptions) {
+  for (const exception of fixture.exceptions) {
     await client.query(
-      `INSERT INTO record_exception (tenant_id, exception_id, object_id, type_key, permission_key, identity_id,
+      `INSERT INTO record_exception (exception_id, object_id, type_key, permission_key, user_id,
          role_key, effect, purpose, starts_at, expires_at, reason, issued_by, revoked_at)
-       VALUES ($1, gen_random_uuid(), $2, $3, $4, $5, $6, $7, $8, $9, $10, 'fixture', $11, $12)`,
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'fixture', $10, $11)`,
       [
-        t,
-        x.objectId,
+        exception.objectId,
         bytes('submission'),
-        bytes(x.permission),
-        x.subject.kind === 'identity' ? x.subject.identity : null,
-        x.subject.kind === 'role' ? bytes(x.subject.role) : null,
-        x.effect,
-        x.purpose,
-        x.startsAt,
-        x.expiresAt,
+        bytes(exception.permission),
+        exception.subject.kind === 'identity' ? exception.subject.identity : null,
+        exception.subject.kind === 'role' ? bytes(exception.subject.role) : null,
+        exception.effect,
+        exception.purpose,
+        exception.startsAt,
+        exception.expiresAt,
         alice,
-        x.revokedAt,
+        exception.revokedAt,
       ],
     );
   }
-  for (const purpose of grants ? (['data', 'authority'] as const) : []) {
-    await client.query(
-      `GRANT SELECT ON site, submission, tag, site_manager TO ${tenantRoleName(t, purpose)}`,
-    );
-  }
+  await client.query('GRANT SELECT ON site, submission, tag, site_manager TO product_data');
 }
 
-// ---- Environment: two provisioned tenants, data-credential registry ----
-
-export interface GatewayEnvironment {
+export interface CompilerEnvironment {
   postgres: TestPostgres;
-  registry: TenantDataSourceRegistry;
-  identity: DataSource;
-  fixtures: Record<'A' | 'B', TenantFixture>;
-
-  adminOn(tenant: TenantId): Connection;
+  data: DataSource;
+  fixture: ProductFixture;
 
   stop(): Promise<void>;
 }
 
-export async function startGatewayEnvironment(): Promise<GatewayEnvironment> {
+/** Same product migrations/data login for default and ICU collation databases. */
+export async function startCompilerEnvironment(icu = false): Promise<CompilerEnvironment> {
   const postgres = await startPostgres();
-  const provisioner = new TenantProvisioner(postgres.admin, { identityDatabase: 'authz_identity' });
-  await provisioner.provisionIdentity();
-  const passwords = new Map<string, string>();
-
-  const password = (tenant: TenantId, purpose: ConnectionPurpose) => {
-    const key = `${tenant}/${purpose}`;
-    if (!passwords.has(key)) passwords.set(key, randomBytes(24).toString('base64url'));
-    return passwords.get(key)!;
-  };
-
-  const fixtures = { A: tenantFixture(tenantA, 'c', 'A'), B: tenantFixture(tenantB, 'e', 'B') };
-
-  const adminOn = (tenant: TenantId): Connection => ({
-    ...postgres.admin,
-    database: tenantDatabaseName(tenant),
-  });
-
-  for (const fixture of Object.values(fixtures)) {
-    await provisioner.provision({
-      tenantId: fixture.tenant,
-      displayLabel: `Tenant ${fixture.tenant}`,
-      passwords: {
-        data: password(fixture.tenant, 'data'),
-        authority: password(fixture.tenant, 'authority'),
-        sync: password(fixture.tenant, 'sync'),
+  let data: DataSource | undefined;
+  try {
+    const admin: Connection = icu
+      ? { ...postgres.superuser, database: 'icu_product' }
+      : postgres.superuser;
+    if (icu) {
+      await withClient(postgres.superuser, (client) =>
+        client.query(
+          `CREATE DATABASE icu_product TEMPLATE template0 ENCODING 'UTF8' LOCALE_PROVIDER icu ICU_LOCALE 'und' LOCALE 'C.UTF-8'`,
+        ),
+      );
+    }
+    const passwords = Object.fromEntries(
+      ['data', 'identity', 'authority', 'sync', 'migration', 'bootstrap', 'outbox'].map(
+        (purpose) => [purpose, randomBytes(24).toString('base64url')],
+      ),
+    ) as Record<ProductDatabasePurpose, string>;
+    const connections = await provisionProductDatabase(admin, passwords);
+    const fixture = productFixture();
+    await withClient(admin, (client) => seedProduct(client, fixture));
+    data = await new DataSource(productDataSourceOptions(connections.data)).initialize();
+    const pool = data;
+    return {
+      postgres,
+      data: pool,
+      fixture,
+      stop: async () => {
+        try {
+          await pool.destroy();
+        } finally {
+          await postgres.stop();
+        }
       },
-    });
-    await withClient(adminOn(fixture.tenant), (client) => seedTenant(client, fixture));
-  }
-  const identity = await new DataSource(
-    identityDataSourceOptions({ ...postgres.admin, database: 'authz_identity' }),
-  ).initialize();
-  const registry = new TenantDataSourceRegistry({
-    host: postgres.admin.host,
-    port: postgres.admin.port,
-    poolSize: { data: 5, authority: 2, sync: 2 },
-    maxConnections: 18,
-    idleTimeoutMs: 60_000,
-    resolveRoute: directoryRouteResolver(identity, (tenant, purpose) =>
-      Promise.resolve({ password: password(tenant, purpose), credentialVersion: 'v1' }),
-    ),
-  });
-  return {
-    postgres,
-    registry,
-    identity,
-    fixtures,
-    adminOn,
-
-    stop: async () => {
-      await registry.close();
-      await identity.destroy();
+    };
+  } catch (error) {
+    try {
+      if (data?.isInitialized) await data.destroy();
+    } finally {
       await postgres.stop();
-    },
-  };
+    }
+    throw error;
+  }
 }
 
 // ---- Plans ----
 
-export const dbNow = () => new Date().toISOString();
-
 export function readPlan(
-  tenant: TenantId,
   rules: RuleFact[],
   options: {
     resource?: string;
     action?: string;
     roles?: string[];
-    identity?: IdentityId;
+    identity?: UserId;
     validUntil?: string;
   } = {},
 ) {
   const now = new Date();
-  const input: TrustedInput = {
-    tenant,
+  const input: UserTrustedInput = {
     principal: { id: options.identity ?? alice, assurance: 2 },
     resource: options.resource ?? 'submission',
     action: options.action ?? 'read',
@@ -813,11 +745,10 @@ export function readPlan(
     now: now.toISOString(),
     validUntil: options.validUntil ?? new Date(now.getTime() + 3_600_000).toISOString(),
   };
-  const snapshot: AuthoritySnapshot = {
-    tenant,
+  const snapshot: UserAuthoritySnapshot = {
     revision: '1',
     declarations: fixtureDeclarations(),
-    membership: { identity: input.principal.id, state: 'active' },
+    user: { id: input.principal.id, state: 'active' },
     roles: options.roles ?? ['reviewer'],
     permissions: [
       {
@@ -857,7 +788,7 @@ export function readPlan(
     boundaries: [],
     registry: { validators: {}, obligationHandlers: [] },
   };
-  const decision = plan(input, snapshot);
+  const decision = planUser(input, snapshot);
   if (decision.effect !== 'allow')
     throw new Error(`fixture plan denied: ${decision.internalReason}`);
   return decision.plan;

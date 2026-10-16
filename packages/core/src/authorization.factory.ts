@@ -3,30 +3,20 @@ import type {
   ValidatedDeclarations,
   ValidationResult,
 } from './authorization.declarations.js';
-import {
-  evaluate as evaluateWith,
-  evaluateUser as evaluateUserWith,
-} from './authorization.evaluator.js';
+import { evaluateUser as evaluateUserWith } from './authorization.evaluator.js';
 import { fieldKinds } from './expression.helper.js';
 import { MAX_KEY_BYTES, utf8ByteLength } from './key.codec.js';
 import {
-  plan as planWith,
   planUnrestricted as planUnrestrictedWith,
   planUser as planUserWith,
 } from './authorization.planner.js';
 import { validateDeclarations } from './policy.validator.js';
 import type { Comparison, ValueCodecs } from './ports/value-codecs.port.js';
 import type {
-  AuthorizedPlan,
-  AuthoritySnapshot,
-  CompleteFacts,
-  Decision,
   FieldKind,
   Key,
   KeyKind,
   Scalar,
-  TenantId,
-  TrustedInput,
   UserAuthorizedPlan,
   UserAuthoritySnapshot,
   UserCompleteFacts,
@@ -59,11 +49,6 @@ export interface AuthorizationCore {
     snapshot: UserAuthoritySnapshot,
   ) => UserDecision;
 
-  /** Legacy tenant contracts; tenant is still checked. */
-  readonly plan: (input: TrustedInput, snapshot: AuthoritySnapshot) => Decision;
-
-  readonly evaluate: (plan: AuthorizedPlan, facts: CompleteFacts) => Decision;
-
   /** Canonical value of a field kind, or undefined when the input is not one. */
   readonly normalizeValue: (kind: FieldKind, input: unknown) => Scalar | undefined;
 
@@ -77,10 +62,8 @@ export interface AuthorizationCore {
   /** External key: int64 (bigint or canonical string), uuid (lowercased), text of 1..256 UTF-8 bytes. */
   readonly parseKey: (kind: KeyKind, input: unknown) => Key;
 
-  /** Canonical lowercase UUID only (identity/tenant ids are never normalized). */
+  /** Canonical lowercase UUID only (identity ids are never normalized). */
   readonly isCanonicalUuid: (input: unknown) => input is string;
-
-  readonly parseTenantId: (input: unknown) => TenantId;
 }
 
 interface Codec {
@@ -153,13 +136,13 @@ export function createAuthorizationCore(options: {
   const canonicalInt64 = text('integer');
 
   // Validity is the codec's; the lowercase-only identity invariant is the core's own, so a codec
-  // that keeps uppercase cannot relax identity/tenant checks.
+  // that keeps uppercase cannot relax identity checks.
   const isCanonicalUuid = (input: unknown): input is string =>
     typeof input === 'string' &&
     input === input.toLowerCase() &&
     normalizeValue('uuid', input) === input;
 
-  const issue = <D extends Decision | UserDecision>(decision: D): D => {
+  const issue = <D extends UserDecision>(decision: D): D => {
     if (decision.effect === 'allow') issued.add(decision.plan);
     return decision;
   };
@@ -190,12 +173,6 @@ export function createAuthorizationCore(options: {
 
     planUnrestricted: (input: UserTrustedInput, snapshot: UserAuthoritySnapshot) =>
       issue(planUnrestrictedWith(core, input, snapshot)),
-
-    plan: (input: TrustedInput, snapshot: AuthoritySnapshot) =>
-      issue(planWith(core, input, snapshot)),
-
-    evaluate: (plan: AuthorizedPlan, facts: CompleteFacts) =>
-      isRecord(plan) && issued.has(plan) ? evaluateWith(core, plan, facts) : foreign(),
 
     normalizeValue,
     compareValues,
@@ -230,12 +207,6 @@ export function createAuthorizationCore(options: {
     },
 
     isCanonicalUuid,
-
-    parseTenantId(input: unknown): TenantId {
-      if (!isCanonicalUuid(input))
-        throw new TypeError('Tenant id must be a canonical lowercase UUID');
-      return input as TenantId;
-    },
   });
   return core;
 }

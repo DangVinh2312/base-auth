@@ -22,7 +22,7 @@ import {
   provisionProductDatabase,
 } from '@base-authorization/typeorm-postgres/operations';
 import { startPostgres, withClient, type TestPostgres } from './setup-postgres.ts';
-import { core } from './fixtures/resources.ts';
+import { core } from '../packages/core/test/fixtures.ts';
 
 const datasetRows = 10_000;
 const extraActions = Array.from({ length: 38 }, (_, i) => `act${String(i).padStart(2, '0')}`);

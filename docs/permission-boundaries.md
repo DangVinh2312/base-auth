@@ -1,6 +1,6 @@
 # Permission boundary tổng quát
 
-Trạng thái: core/planner/evaluator/SQL/sync đã enforce và có regression tests; runtime một sản phẩm bind theo user/permission. Các ví dụ tenant/membership trong phần lịch sử dưới đây áp dụng compatibility cũ. `ApplicationRoleBoundary` chỉ là ví dụ cấu hình của một hệ thống, không phải abstraction hoặc class bắt buộc trong lõi.
+Trạng thái: core/planner/evaluator/SQL/sync đã enforce và có regression tests; runtime một sản phẩm bind theo user/permission. Tenant compatibility đã bỏ theo [ADR 0013](decisions/0013-remove-legacy-keep-packages.md); các ví dụ tenant/membership bên dưới là thiết kế lịch sử. Runtime bind theo `(user_id, permission_key)`. `ApplicationRoleBoundary` chỉ là ví dụ cấu hình của một hệ thống, không phải abstraction hoặc class bắt buộc trong lõi.
 
 ## Ngữ nghĩa
 

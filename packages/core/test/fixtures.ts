@@ -1,15 +1,15 @@
 // Synthetic declarations shared by core tests. Names are fixture data, not core concepts.
 import {
-  type AuthoritySnapshot,
-  type CompleteFacts,
-  createAuthorizationCore,
+  type UserAuthoritySnapshot,
+  type UserCompleteFacts,
   type Expr,
   type FactObject,
   type IdentityId,
   type Key,
   type RuleFact,
+  type UserTrustedInput,
+  createAuthorizationCore,
   type SystemDeclarations,
-  type TrustedInput,
   type ValidatedDeclarations,
 } from '@base-authorization/core';
 import {
@@ -21,10 +21,6 @@ import {
 export const core = createAuthorizationCore({
   values: createStandardValueCodecs({ timestamp: createDayjsTimestampCodec() }),
 });
-
-export const tenantA = core.parseTenantId('00000000-0000-4000-8000-00000000000a');
-
-export const tenantB = core.parseTenantId('00000000-0000-4000-8000-00000000000b');
 
 export const alice = 'a0000000-0000-4000-8000-000000000001' as IdentityId;
 
@@ -200,12 +196,11 @@ export function rule(
   };
 }
 
-export function snapshot(overrides: Partial<AuthoritySnapshot> = {}): AuthoritySnapshot {
+export function snapshot(overrides: Partial<UserAuthoritySnapshot> = {}): UserAuthoritySnapshot {
   return {
-    tenant: tenantA,
     revision: '7',
     declarations: validated(),
-    membership: { identity: alice, state: 'active' },
+    user: { id: alice, state: 'active' },
     roles: ['reviewer'],
     permissions: [
       {
@@ -246,9 +241,8 @@ export function snapshot(overrides: Partial<AuthoritySnapshot> = {}): AuthorityS
   };
 }
 
-export function input(overrides: Partial<TrustedInput> = {}): TrustedInput {
+export function input(overrides: Partial<UserTrustedInput> = {}): UserTrustedInput {
   return {
-    tenant: tenantA,
     principal: { id: alice, assurance: 1 },
     resource: 'submission',
     action: 'read',
@@ -274,6 +268,9 @@ export function submission(
   };
 }
 
-export function facts(record: FactObject, extra: Partial<CompleteFacts> = {}): CompleteFacts {
-  return { tenant: tenantA, now, record, objects: [record], edges: [], exceptions: [], ...extra };
+export function facts(
+  record: FactObject,
+  extra: Partial<UserCompleteFacts> = {},
+): UserCompleteFacts {
+  return { now, record, objects: [record], edges: [], exceptions: [], ...extra };
 }
