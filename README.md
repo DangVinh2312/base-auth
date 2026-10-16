@@ -28,7 +28,7 @@ Giữ tên entrypoint `index.ts`, `main.ts`, `composition.ts`, `operations.ts`, 
 
 ## Format code
 
-Prettier dùng cấu hình chung tại `.prettierrc.json`: thụt lề 2 spaces, nháy đơn, dấu chấm phẩy, trailing comma, độ rộng mục tiêu 100 cột và xuống dòng LF. ESLint tại `eslint.format.config.js` thêm dòng trống sau nhóm import, giữa các khai báo export (kể cả const/interface/type/class) và giữa các function, arrow function, class/object method và chữ ký method trong interface/type. Comment và decorator của class/method được giữ cùng khai báo. Chạy từ thư mục root:
+Prettier dùng cấu hình chung tại `.prettierrc.json`: thụt lề 2 spaces, nháy đơn, dấu chấm phẩy, trailing comma, độ rộng mục tiêu 100 cột và xuống dòng LF. ESLint tại `eslint.format.config.js` thêm dòng trống sau nhóm import, giữa các khai báo export (kể cả const/interface/type/class) và giữa các function, arrow function độc lập, class method và chữ ký method trong interface/type. Rule không tự thêm dòng trống giữa các property trong object, kể cả callback/method. Comment và decorator của class/method được giữ cùng khai báo. Chạy từ thư mục root:
 
 ```sh
 # Format các file TypeScript/JavaScript, gồm cả tests và tools.

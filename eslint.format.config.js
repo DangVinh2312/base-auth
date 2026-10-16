@@ -34,10 +34,8 @@ const functionSpacing = {
     const source = context.sourceCode;
 
     return {
-      ':matches(Program, BlockStatement, ClassBody, TSInterfaceBody, TSTypeLiteral, ObjectExpression):exit'(
-        node,
-      ) {
-        const members = node.body ?? node.members ?? node.properties;
+      ':matches(Program, BlockStatement, ClassBody, TSInterfaceBody, TSTypeLiteral):exit'(node) {
+        const members = node.body ?? node.members;
         for (let i = 1; i < members.length; i++) {
           const previous = members[i - 1];
           const next = members[i];

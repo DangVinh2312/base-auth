@@ -57,11 +57,6 @@ const cases = [
     'interface A {\n  a(): void;\n\n  b(): void;\n}',
   ],
   [
-    'object methods',
-    'const a = {\n  a() {},\n  b() {},\n};',
-    'const a = {\n  a() {},\n\n  b() {},\n};',
-  ],
-  [
     'class arrow methods',
     'class A {\n  a = () => 1;\n  b = () => 2;\n}',
     'class A {\n  a = () => 1;\n\n  b = () => 2;\n}',
@@ -100,6 +95,27 @@ for (const [name, input, expected] of cases) {
     assert.equal(again.output, undefined);
   });
 }
+
+test('format leaves object properties together, including nested callbacks and methods', async () => {
+  const eslint = new ESLint({ overrideConfig: tseslint.configs.disableTypeChecked, fix: true });
+  for (const input of [
+    'const a = {\n  a() {},\n  b() {},\n};',
+    `const provider = {
+  provide: PORT,
+  useFactory: () => ({
+    config,
+    list: () => authorization.list(),
+    detail: function () { return authorization.detail(); },
+    update() { return authorization.update(); },
+  }),
+};`,
+  ]) {
+    const [result] = await eslint.lintText(input, { filePath: 'tools/format-fixture.ts' });
+    assert.ok(result);
+    assert.equal(result.messages.filter((m) => m.ruleId === 'format/function-spacing').length, 0);
+    assert.equal(result.output, undefined);
+  }
+});
 
 test('format preserves existing spacing and leaves ordinary variables together', async () => {
   const eslint = new ESLint({ overrideConfig: tseslint.configs.disableTypeChecked, fix: true });
